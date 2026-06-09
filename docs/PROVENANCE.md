@@ -27,6 +27,7 @@ Named in full, with the reason each is pinned, in
 [`REFERENCES.md`](REFERENCES.md). Repeated here only as identifiers:
 
 - donor: `rockchip-linux/kernel@b4ef083dc0c3608e744deabb43dc6b781aadbe6e`
+- vendor backlog: `rockchip-linux/kernel@58a65098a6e9b2be6a08bccd45aa861850d7b8c6`
 - forward-port record: `yisding/rock-5b-ysp@ca3da04280c48c004e522c15f31862bf88a2d1b9`
 - realized series: `yisding/linux-rock5b@e7ff978398825b63ddcb13e0572d77564034c1e2`
 - historical comparison only: `armbian/linux-rockchip@fd9f82366e235b8afbdf516765210e97d24dce93`
@@ -169,7 +170,7 @@ to name the donor directly.
 | `drivers/video/rockchip/rga3/include/rga_job.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/include/rga_mm.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga2_reg_info.c` | realized series | same | REBASED | Make the file-local immutable ROP table explicit for sparse. | `GPL-2.0` |
-| `drivers/video/rockchip/rga3/rga3_reg_info.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga3_reg_info.c` | vendor backlog | same | ADAPTED | Preserve the 7.2/yisding port and enable frame-end auto-reset so one frame cannot leave stale FIFO state for the next. | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_common.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_debugger.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_dma_buf.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
@@ -208,6 +209,7 @@ negative behaviour is also part of the maintained contract.
 | A1 | `mpp/Kconfig`, `mpp/Makefile`, `rga3/Kconfig` | Select exactly RKVENC2, RKVDEC2, JPGDEC and multi_rga as modules; retain every other client as unselectable source. | MNH-23, the exact-selectable-symbol assertion and `configs/rk3588-media-island.fragment`. | A later ownership wave supplies explicit scope, userspace capability gating and board evidence for another client. |
 | A2 | `mpp/compat/soc/rockchip/vsi_iommu.h` | Return `-ENODEV` or no-op for an AV1-only provider that this release intentionally omits. | AV1 is `BROKEN`; the manifest drops `drivers/iommu/vsi-iommu.c`; `docs/COMPAT.md` classes this surface STUB-SAFE only for the unselectable client. | AV1 becomes a supported client and the real provider is imported and linked. |
 | A3 | `mpp/mpp_jpgdec.c` | Bound register translation, publish the translation-table count and propagate offset-validation errors. | JPGDEC is selected, while the replayed shared MPP translator requires explicit array/count bounds after the hardening series. | The shared translator changes contract while retaining equivalent bounds and error propagation. |
+| A4 | `rga3/rga3_reg_info.c` | Enable RGA3 frame-end auto-reset in every submitted job while retaining yisding's deliberate logic-clock setting. | Rockchip commit `58a65098a6e9b2be6a08bccd45aa861850d7b8c6` documents a read-FIFO exception when an upscale frame is followed by a downscale frame at affected resolutions. | A later measured fix prevents cross-frame FIFO state without frame-end auto-reset. |
 
 ## Integration patches
 
