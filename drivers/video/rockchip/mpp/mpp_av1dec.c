@@ -7,6 +7,7 @@
  *
  */
 
+#undef pr_fmt
 #define pr_fmt(fmt) "mpp_av1dec: " fmt
 
 #include <asm/cacheflush.h>
@@ -15,6 +16,7 @@
 #include <linux/delay.h>
 #include <linux/iopoll.h>
 #include <linux/interrupt.h>
+#include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/of_platform.h>
@@ -34,6 +36,7 @@
 #define AV1DEC_DRIVER_NAME		"mpp_av1dec"
 
 #define	AV1DEC_SESSION_MAX_BUFFERS		40
+#define AV1DEC_MAX_REQ_NUM			(MPP_MAX_MSG_NUM * AV1DEC_CLASS_BUTT)
 
 /* REG_DEC_INT, bits for interrupt */
 #define	AV1DEC_INT_PIC_INF		BIT(24)
@@ -131,9 +134,9 @@ struct av1dec_task {
 	u32 irq_status;
 	/* req for current task */
 	u32 w_req_cnt;
-	struct mpp_request w_reqs[MPP_MAX_MSG_NUM];
+	struct mpp_request w_reqs[AV1DEC_MAX_REQ_NUM];
 	u32 r_req_cnt;
-	struct mpp_request r_reqs[MPP_MAX_MSG_NUM];
+	struct mpp_request r_reqs[AV1DEC_MAX_REQ_NUM];
 };
 
 struct av1dec_dev {
@@ -234,20 +237,42 @@ static struct mpp_trans_info trans_av1dec[] = {
 static bool req_over_class(struct mpp_request *req,
 			   struct av1dec_task *task, int class)
 {
-	bool ret;
 	u32 base_s, base_e, req_e;
 	struct av1dec_hw_info *hw = task->hw_info;
 
-	if (class > hw->reg_class_num)
+	if (class >= hw->reg_class_num)
 		return false;
 
 	base_s = hw->reg_class[class].base_s;
 	base_e = hw->reg_class[class].base_e;
 	req_e = req->offset + req->size - sizeof(u32);
 
-	ret = (req->offset <= base_e && req_e >= base_s) ? true : false;
+	return req->offset <= base_e && req_e >= base_s;
+}
 
-	return ret;
+static int av1dec_validate_reg_req(struct mpp_request *req)
+{
+	u32 req_e;
+
+	if (req->size < sizeof(u32) ||
+	    !IS_ALIGNED(req->offset, sizeof(u32)) ||
+	    !IS_ALIGNED(req->size, sizeof(u32))) {
+		mpp_err("invalid reg req offset %08x size %u\n",
+			req->offset, req->size);
+		return -EINVAL;
+	}
+
+	if (req->offset > U32_MAX - (req->size - sizeof(u32))) {
+		mpp_err("overflow reg req offset %08x size %u\n",
+			req->offset, req->size);
+		return -EINVAL;
+	}
+
+	req_e = req->offset + req->size - sizeof(u32);
+	if (req_e < req->offset)
+		return -EINVAL;
+
+	return 0;
 }
 
 static int av1dec_alloc_reg_class(struct av1dec_task *task)
@@ -284,7 +309,7 @@ static int av1dec_update_req(struct av1dec_task *task, int class,
 	u32 base_s, base_e, req_e, s, e;
 	struct av1dec_hw_info *hw = task->hw_info;
 
-	if (class > hw->reg_class_num)
+	if (class >= hw->reg_class_num)
 		return -EINVAL;
 
 	base_s = hw->reg_class[class].base_s;
@@ -292,6 +317,8 @@ static int av1dec_update_req(struct av1dec_task *task, int class,
 	req_e = req_in->offset + req_in->size - sizeof(u32);
 	s = max(req_in->offset, base_s);
 	e = min(req_e, base_e);
+	if (s > e)
+		return -EINVAL;
 
 	req_out->offset = s;
 	req_out->size = e - s + sizeof(u32);
@@ -328,21 +355,34 @@ static int av1dec_extract_task_msg(struct av1dec_task *task,
 			u32 base, *regs;
 			struct mpp_request *wreq;
 
+			ret = av1dec_validate_reg_req(req);
+			if (ret)
+				goto fail;
+
 			for (class = 0; class < hw->reg_class_num; class++) {
 				if (!req_over_class(req, task, class))
 					continue;
 				mpp_debug(DEBUG_TASK_INFO, "found write_calss %d\n", class);
+				if (task->w_req_cnt >= ARRAY_SIZE(task->w_reqs)) {
+					mpp_err("too many write requests %u\n",
+						task->w_req_cnt);
+					ret = -EINVAL;
+					goto fail;
+				}
 				wreq = &task->w_reqs[task->w_req_cnt];
-				av1dec_update_req(task, class, req, wreq);
+				ret = av1dec_update_req(task, class, req, wreq);
+				if (ret)
+					goto fail;
 
 				base = task->reg_class[class].base;
 				regs = (u32 *)task->reg_class[class].data;
-				regs += MPP_BASE_TO_IDX(req->offset - base);
+				regs += MPP_BASE_TO_IDX(wreq->offset - base);
 				if (copy_from_user(regs, wreq->data, wreq->size)) {
 					mpp_err("copy_from_user fail, offset %08x\n", wreq->offset);
 					ret = -EIO;
 					goto fail;
 				}
+				task->reg_class[class].valid = 1;
 				task->w_req_cnt++;
 			}
 		} break;
@@ -350,17 +390,31 @@ static int av1dec_extract_task_msg(struct av1dec_task *task,
 			u32 class;
 			struct mpp_request *rreq;
 
+			ret = av1dec_validate_reg_req(req);
+			if (ret)
+				goto fail;
+
 			for (class = 0; class < hw->reg_class_num; class++) {
 				if (!req_over_class(req, task, class))
 					continue;
 				mpp_debug(DEBUG_TASK_INFO, "found read_calss %d\n", class);
+				if (task->r_req_cnt >= ARRAY_SIZE(task->r_reqs)) {
+					mpp_err("too many read requests %u\n",
+						task->r_req_cnt);
+					ret = -EINVAL;
+					goto fail;
+				}
 				rreq = &task->r_reqs[task->r_req_cnt];
-				av1dec_update_req(task, class, req, rreq);
+				ret = av1dec_update_req(task, class, req, rreq);
+				if (ret)
+					goto fail;
 				task->r_req_cnt++;
 			}
 		} break;
 		case MPP_CMD_SET_REG_ADDR_OFFSET: {
-			mpp_extract_reg_offset_info(&task->off_inf, req);
+			ret = mpp_extract_reg_offset_info(&task->off_inf, req);
+			if (ret)
+				goto fail;
 		} break;
 		default:
 			break;
@@ -381,7 +435,7 @@ static void *av1dec_alloc_task(struct mpp_session *session,
 			       struct mpp_task_msgs *msgs)
 {
 	int ret;
-	u32 i, j;
+	u32 i, k;
 	struct mpp_task *mpp_task = NULL;
 	struct av1dec_task *task = NULL;
 	struct mpp_dev *mpp = session->mpp;
@@ -414,35 +468,32 @@ static void *av1dec_alloc_task(struct mpp_session *session,
 		u32 offset;
 		struct av1dec_hw_info *hw = task->hw_info;
 
-		for (i = 0; i < task->w_req_cnt; i++) {
-			struct mpp_request *req = &task->w_reqs[i];
+		for (i = 0; i < hw->trans_class_num; i++) {
+			u32 class = hw->trans_class[i].class;
+			u32 fmt = hw->trans_class[i].trans_fmt;
+			u32 *reg = task->reg_class[class].data;
+			u32 base_idx = MPP_BASE_TO_IDX(task->reg_class[class].base);
 
-			for (i = 0; i < hw->trans_class_num; i++) {
-				u32 class = hw->trans_class[i].class;
-				u32 fmt = hw->trans_class[i].trans_fmt;
-				u32 *reg = task->reg_class[class].data;
-				u32 base_idx = MPP_BASE_TO_IDX(task->reg_class[class].base);
+			if (!task->reg_class[class].valid)
+				continue;
+			mpp_debug(DEBUG_TASK_INFO, "class=%d, base_idx=%d\n",
+				  class, base_idx);
+			if (!reg)
+				continue;
 
-				if (!req_over_class(req, task, i))
-					continue;
-				mpp_debug(DEBUG_TASK_INFO, "class=%d, base_idx=%d\n",
-					  class, base_idx);
-				if (!reg)
-					continue;
+			ret = mpp_translate_reg_address(session, mpp_task, fmt, reg, NULL);
+			if (ret)
+				goto fail;
 
-				ret = mpp_translate_reg_address(session, mpp_task, fmt, reg, NULL);
-				if (ret)
-					goto fail;
-
-				cnt = mpp->var->trans_info[fmt].count;
-				tbl = mpp->var->trans_info[fmt].table;
-				for (j = 0; j < cnt; j++) {
-					offset = mpp_query_reg_offset_info(&task->off_inf,
-									tbl[j] + base_idx);
-					mpp_debug(DEBUG_IOMMU,
-						"reg[%d] + offset %d\n", tbl[j] + base_idx, offset);
-					reg[tbl[j]] += offset;
-				}
+			cnt = mpp->var->trans_info[fmt].count;
+			tbl = mpp->var->trans_info[fmt].table;
+			for (k = 0; k < cnt; k++) {
+				offset = mpp_query_reg_offset_info(&task->off_inf,
+								   tbl[k] + base_idx);
+				mpp_debug(DEBUG_IOMMU,
+					  "reg[%d] + offset %d\n",
+					  tbl[k] + base_idx, offset);
+				reg[tbl[k]] += offset;
 			}
 		}
 	}
@@ -642,8 +693,8 @@ static int av1dec_isr(struct mpp_dev *mpp)
 {
 	struct mpp_task *mpp_task = mpp->cur_task;
 	struct av1dec_dev *dec = to_av1dec_dev(mpp);
-	struct av1dec_task *task = to_av1dec_task(mpp_task);
-	u32 *regs = (u32 *)task->reg_class[0].data;
+	struct av1dec_task *task;
+	u32 *regs;
 
 	mpp_debug_enter();
 
@@ -652,6 +703,9 @@ static int av1dec_isr(struct mpp_dev *mpp)
 		dev_err(mpp->dev, "no current task\n");
 		return IRQ_HANDLED;
 	}
+
+	task = to_av1dec_task(mpp_task);
+	regs = (u32 *)task->reg_class[0].data;
 
 	mpp_time_diff(mpp_task);
 	mpp->cur_task = NULL;
@@ -780,7 +834,7 @@ static int av1dec_free_task(struct mpp_session *session,
 	return 0;
 }
 
-#ifdef CONFIG_PROC_FS
+#ifdef CONFIG_ROCKCHIP_MPP_PROC_FS
 static int av1dec_procfs_remove(struct mpp_dev *mpp)
 {
 	struct av1dec_dev *dec = to_av1dec_dev(mpp);
@@ -865,13 +919,13 @@ static int av1dec_reset(struct mpp_dev *mpp)
 	mpp_debug_enter();
 
 	if (dec->rst_a && dec->rst_h) {
-		rockchip_pmu_idle_request(mpp->dev, true);
+		mpp_pmu_idle_request(mpp, true);
 		mpp_safe_reset(dec->rst_a);
 		mpp_safe_reset(dec->rst_h);
 		udelay(5);
 		mpp_safe_unreset(dec->rst_a);
 		mpp_safe_unreset(dec->rst_h);
-		rockchip_pmu_idle_request(mpp->dev, false);
+		mpp_pmu_idle_request(mpp, false);
 	}
 
 	mpp_debug_leave();
@@ -1006,6 +1060,7 @@ static int av1dec_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
+	dec->hw_info = to_av1dec_info(mpp->var->hw_info);
 	dec->reg_base[AV1DEC_CLASS_VCD] = mpp->reg_base;
 	ret = devm_request_threaded_irq(dev, mpp->irq,
 					mpp_dev_irq,
@@ -1026,7 +1081,6 @@ static int av1dec_probe(struct platform_device *pdev)
 	if (ret)
 		goto failed_get_irq;
 	mpp->session_max_buffers = AV1DEC_SESSION_MAX_BUFFERS;
-	dec->hw_info = to_av1dec_info(mpp->var->hw_info);
 	av1dec_procfs_init(mpp);
 	mpp_dev_register_srv(mpp, mpp->srv);
 	dev_info(dev, "probing finish\n");
@@ -1039,7 +1093,7 @@ failed_get_irq:
 	return ret;
 }
 
-static int av1dec_remove(struct platform_device *pdev)
+static void av1dec_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct mpp_dev *mpp = platform_get_drvdata(pdev);
@@ -1047,8 +1101,6 @@ static int av1dec_remove(struct platform_device *pdev)
 	dev_info(dev, "remove device\n");
 	mpp_dev_remove(mpp);
 	av1dec_procfs_remove(mpp);
-
-	return 0;
 }
 
 struct platform_driver rockchip_av1dec_driver = {
