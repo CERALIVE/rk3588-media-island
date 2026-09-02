@@ -35,10 +35,10 @@ ROOT = Path(__file__).resolve().parents[2]
 VENDOR_FIXTURE = ROOT / "tests" / "board" / "uapi" / "rk-mpp-uapi.h"
 ISLAND_HEADER = ROOT / "include" / "uapi" / "linux" / "rk-mpp.h"
 
-# The values both pinned sources agree on. Written out rather than read from the
-# fixture, because a test that derives its expectations from the file under test
-# can only ever prove the file agrees with itself.
-EXPECTED_COMMANDS = {
+# The userspace commands whose values both pinned sources agree on. The kernel
+# calls command zero QUERY_HW_SUPPORT while libmpp calls the same wire value
+# PROBE_HW_SUPPORT, so spelling and value are checked separately.
+EXPECTED_USERSPACE_COMMANDS = {
     "MPP_CMD_QUERY_BASE": 0x000,
     "MPP_CMD_PROBE_HW_SUPPORT": 0x000,
     "MPP_CMD_QUERY_HW_ID": 0x001,
@@ -54,6 +54,38 @@ EXPECTED_COMMANDS = {
     "MPP_CMD_POLL_HW_FINISH": 0x300,
     "MPP_CMD_CONTROL_BASE": 0x400,
     "MPP_CMD_RESET_SESSION": 0x400,
+}
+
+EXPECTED_KERNEL_COMMANDS = {
+    "MPP_CMD_QUERY_BASE": 0x000,
+    "MPP_CMD_QUERY_HW_SUPPORT": 0x000,
+    "MPP_CMD_QUERY_HW_ID": 0x001,
+    "MPP_CMD_QUERY_CMD_SUPPORT": 0x002,
+    "MPP_CMD_QUERY_BUTT": 0x003,
+    "MPP_CMD_INIT_BASE": 0x100,
+    "MPP_CMD_INIT_CLIENT_TYPE": 0x100,
+    "MPP_CMD_INIT_DRIVER_DATA": 0x101,
+    "MPP_CMD_INIT_TRANS_TABLE": 0x102,
+    "MPP_CMD_INIT_BUTT": 0x103,
+    "MPP_CMD_SEND_BASE": 0x200,
+    "MPP_CMD_SET_REG_WRITE": 0x200,
+    "MPP_CMD_SET_REG_READ": 0x201,
+    "MPP_CMD_SET_REG_ADDR_OFFSET": 0x202,
+    "MPP_CMD_SET_RCB_INFO": 0x203,
+    "MPP_CMD_SET_SESSION_FD": 0x204,
+    "MPP_CMD_SEND_BUTT": 0x205,
+    "MPP_CMD_POLL_BASE": 0x300,
+    "MPP_CMD_POLL_HW_FINISH": 0x300,
+    "MPP_CMD_POLL_HW_IRQ": 0x301,
+    "MPP_CMD_POLL_BUTT": 0x302,
+    "MPP_CMD_CONTROL_BASE": 0x400,
+    "MPP_CMD_RESET_SESSION": 0x400,
+    "MPP_CMD_TRANS_FD_TO_IOVA": 0x401,
+    "MPP_CMD_RELEASE_FD": 0x402,
+    "MPP_CMD_SEND_CODEC_INFO": 0x403,
+    "MPP_CMD_SET_ERR_REF_HACK": 0x404,
+    "MPP_CMD_CONTROL_BUTT": 0x405,
+    "MPP_CMD_BUTT": 0x406,
 }
 
 # The three MPP clients the island compiles, and nothing else. Their values are
@@ -137,7 +169,7 @@ class VendorFixtureTests(unittest.TestCase):
         cls.defines = parse_defines(cls.text)
 
     def test_every_expected_command_is_present_with_its_pinned_value(self) -> None:
-        for name, expected in sorted(EXPECTED_COMMANDS.items()):
+        for name, expected in sorted(EXPECTED_USERSPACE_COMMANDS.items()):
             with self.subTest(command=name):
                 self.assertIn(name, self.enumerators, f"{name} is absent from the fixture")
                 self.assertEqual(
@@ -152,7 +184,7 @@ class VendorFixtureTests(unittest.TestCase):
             name for name in self.enumerators if name.startswith("MPP_CMD_")
         }
         self.assertEqual(
-            commands - set(EXPECTED_COMMANDS),
+            commands - set(EXPECTED_USERSPACE_COMMANDS),
             set(),
             "the fixture carries a command this test has no pinned value for -- "
             "add it to EXPECTED_COMMANDS with its source, or drop it",
@@ -229,7 +261,7 @@ class IslandHeaderParityTests(unittest.TestCase):
         cls.island_defines = parse_defines(ISLAND_HEADER.read_text(encoding="utf-8"))
 
     def test_island_command_values_match_the_pinned_sources(self) -> None:
-        for name, expected in sorted(EXPECTED_COMMANDS.items()):
+        for name, expected in sorted(EXPECTED_KERNEL_COMMANDS.items()):
             with self.subTest(command=name):
                 self.assertIn(
                     name,
@@ -244,10 +276,16 @@ class IslandHeaderParityTests(unittest.TestCase):
     def test_island_adds_no_command_outside_the_pinned_contract(self) -> None:
         commands = {name for name in self.island if name.startswith("MPP_CMD_")}
         self.assertEqual(
-            commands - set(EXPECTED_COMMANDS),
-            set(),
-            "the island header adds a command neither pinned source carries; a new "
-            "ioctl value is an ABI change and needs its own record",
+            commands,
+            set(EXPECTED_KERNEL_COMMANDS),
+            "the island command enum differs from the realized pinned kernel "
+            "contract; an added, removed, or renamed ioctl command is an ABI change",
+        )
+
+    def test_kernel_query_name_matches_libmpp_probe_value(self) -> None:
+        self.assertEqual(
+            self.island["MPP_CMD_QUERY_HW_SUPPORT"],
+            EXPECTED_USERSPACE_COMMANDS["MPP_CMD_PROBE_HW_SUPPORT"],
         )
 
 
