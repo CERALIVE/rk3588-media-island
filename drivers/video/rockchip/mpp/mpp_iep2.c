@@ -7,18 +7,14 @@
  *	Alpha Lin, alpha.lin@rock-chips.com
  *
  */
-#include <asm/cacheflush.h>
 #include <linux/delay.h>
+#include <linux/highmem.h>
 #include <linux/iopoll.h>
 #include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/types.h>
-#include <linux/of_platform.h>
 #include <linux/slab.h>
-#include <linux/dma-buf.h>
 #include <linux/uaccess.h>
-#include <linux/regmap.h>
-#include <linux/pm_runtime.h>
 #include <linux/proc_fs.h>
 #include <soc/rockchip/pm_domains.h>
 #include <soc/rockchip/rockchip_iommu.h>
@@ -208,12 +204,10 @@ struct iep_task {
 	struct reg_offset_info off_inf;
 	u32 irq_status;
 	/* req for current task */
-	u32 w_req_cnt;
-	struct mpp_request w_reqs[MPP_MAX_MSG_NUM];
 	u32 r_req_cnt;
-	struct mpp_request r_reqs[MPP_MAX_MSG_NUM];
+	struct mpp_request r_req;
 	/* for I1O1T page fault hack */
-	u32 src_iova_end;
+	unsigned long src_iova_end;
 };
 
 struct iep2_dev {
@@ -290,15 +284,55 @@ static int iep2_process_reg_fd(struct mpp_session *session,
 
 		mpp_debug(DEBUG_IOMMU, "reg[%3d]: %3d => %pad + offset %u\n",
 			  iep2_addr_rnum[i], usr_fd, &mem_region->iova, offset);
-		paddr[i] = mem_region->iova + offset;
+		if (offset >= mem_region->len ||
+		    (u64)mem_region->iova + offset > U32_MAX) {
+			mpp_err("reg[%03d]: iova %pad offset %u len %lu out of range\n",
+				iep2_addr_rnum[i], &mem_region->iova,
+				offset, mem_region->len);
+			return -ERANGE;
+		}
+		paddr[i] = (u32)mem_region->iova + offset;
 
 		/* workaround for invalid access to src image */
 		if (task->params.dil_mode == ROCKCHIP_IEP2_DIL_MODE_I1O1T &&
-			iep2_addr_rnum[i] == 24) {
+		    iep2_addr_rnum[i] == 24) {
 			task->src_iova_end = mem_region->iova + mem_region->len;
 		}
-
 	}
+
+	return 0;
+}
+
+#define IEP2_TILE_W_MAX		120
+#define IEP2_TILE_H_MAX		272
+
+static int iep2_validate_params(const struct iep2_params *params)
+{
+	if (params->src_fmt < ROCKCHIP_IEP2_FMT_YUV422 ||
+	    params->src_fmt > ROCKCHIP_IEP2_FMT_YUV420 ||
+	    params->dst_fmt < ROCKCHIP_IEP2_FMT_YUV422 ||
+	    params->dst_fmt > ROCKCHIP_IEP2_FMT_YUV420)
+		return -EINVAL;
+
+	if (params->src_yuv_swap > ROCKCHIP_IEP2_YUV_SWAP_P ||
+	    params->dst_yuv_swap > ROCKCHIP_IEP2_YUV_SWAP_SP_VU)
+		return -EINVAL;
+
+	if (!params->tile_cols || params->tile_cols > IEP2_TILE_W_MAX ||
+	    !params->tile_rows || params->tile_rows > IEP2_TILE_H_MAX)
+		return -EINVAL;
+
+	if (!params->src_y_stride || params->src_y_stride > U16_MAX ||
+	    !params->src_uv_stride || params->src_uv_stride > U16_MAX ||
+	    !params->dst_y_stride || params->dst_y_stride > U16_MAX)
+		return -EINVAL;
+
+	if (params->dil_mode > ROCKCHIP_IEP2_DIL_MODE_DECT ||
+	    params->dil_out_mode > 1 ||
+	    params->dil_field_order > ROCKCHIP_IEP2_DIL_FF_ORDER_BT ||
+	    params->osd_area_num > ARRAY_SIZE(params->osd_x_sta) ||
+	    params->roi_layer_num > ARRAY_SIZE(params->roi_mode))
+		return -EINVAL;
 
 	return 0;
 }
@@ -307,6 +341,7 @@ static int iep2_extract_task_msg(struct iep_task *task,
 				 struct mpp_task_msgs *msgs)
 {
 	u32 i;
+	bool have_write = false;
 	struct mpp_request *req;
 
 	for (i = 0; i < msgs->req_cnt; i++) {
@@ -316,25 +351,50 @@ static int iep2_extract_task_msg(struct iep_task *task,
 
 		switch (req->cmd) {
 		case MPP_CMD_SET_REG_WRITE: {
+			if (have_write || req->offset ||
+			    req->size != sizeof(task->params)) {
+				mpp_err("invalid IEP2 write offset %u size %u\n",
+					req->offset, req->size);
+				return -EINVAL;
+			}
 			if (copy_from_user(&task->params,
 					   req->data, req->size)) {
 				mpp_err("copy_from_user params failed\n");
-				return -EIO;
+				return -EFAULT;
 			}
+			have_write = true;
 		} break;
 		case MPP_CMD_SET_REG_READ: {
-			memcpy(&task->r_reqs[task->r_req_cnt++],
-			       req, sizeof(*req));
+			if (task->r_req_cnt || req->offset ||
+			    req->size != sizeof(task->output)) {
+				mpp_err("invalid IEP2 read offset %u size %u\n",
+					req->offset, req->size);
+				return -EINVAL;
+			}
+			task->r_req = *req;
+			task->r_req_cnt = 1;
 		} break;
 		case MPP_CMD_SET_REG_ADDR_OFFSET: {
-			mpp_extract_reg_offset_info(&task->off_inf, req);
+			int ret = mpp_extract_reg_offset_info(&task->off_inf, req);
+
+			if (ret)
+				return ret;
 		} break;
 		default:
 			break;
 		}
 	}
-	mpp_debug(DEBUG_TASK_INFO, "w_req_cnt %d, r_req_cnt %d\n",
-		  task->w_req_cnt, task->r_req_cnt);
+	if (!have_write) {
+		mpp_err("IEP2 task has no parameter block\n");
+		return -EINVAL;
+	}
+
+	if (iep2_validate_params(&task->params)) {
+		mpp_err("invalid IEP2 parameters\n");
+		return -EINVAL;
+	}
+
+	mpp_debug(DEBUG_TASK_INFO, "r_req_cnt %d\n", task->r_req_cnt);
 
 	return 0;
 }
@@ -672,11 +732,11 @@ static int iep2_isr(struct mpp_dev *mpp)
 	mpp_debug_enter();
 
 	mpp_task = mpp->cur_task;
-	task = to_iep_task(mpp_task);
-	if (!task) {
+	if (!mpp_task) {
 		dev_err(iep->mpp.dev, "no current task\n");
 		return IRQ_HANDLED;
 	}
+	task = to_iep_task(mpp_task);
 
 	mpp_time_diff(mpp_task);
 	mpp->cur_task = NULL;
@@ -698,9 +758,11 @@ static int iep2_isr(struct mpp_dev *mpp)
 static void iep2_osd_done(struct mpp_dev *mpp, struct iep_task *task)
 {
 	int i;
+	u32 count = min_t(u32, task->output.dect_osd_cnt,
+			  ARRAY_SIZE(task->output.x_sta));
 	u32 reg;
 
-	for (i = 0; i < task->output.dect_osd_cnt; ++i) {
+	for (i = 0; i < count; ++i) {
 		reg = mpp_read(mpp, IEP2_REG_RO_OSD_AREA_X(i));
 		task->output.x_sta[i] = IEP2_REG_RO_X_STA(reg) / 16;
 		task->output.x_end[i] = IEP2_REG_RO_X_END(reg) / 16;
@@ -763,18 +825,13 @@ static int iep2_result(struct mpp_dev *mpp,
 		       struct mpp_task *mpp_task,
 		       struct mpp_task_msgs *msgs)
 {
-	u32 i;
-	struct mpp_request *req;
 	struct iep_task *task = to_iep_task(mpp_task);
 
-	/* FIXME may overflow the kernel */
-	for (i = 0; i < task->r_req_cnt; i++) {
-		req = &task->r_reqs[i];
-
-		if (copy_to_user(req->data, (u8 *)&task->output, req->size)) {
-			mpp_err("copy_to_user reg fail\n");
-			return -EIO;
-		}
+	if (task->r_req_cnt &&
+	    copy_to_user(task->r_req.data, &task->output,
+			 sizeof(task->output))) {
+		mpp_err("copy_to_user result failed\n");
+		return -EFAULT;
 	}
 
 	return 0;
@@ -837,9 +894,6 @@ static inline int iep2_procfs_init(struct mpp_dev *mpp)
 }
 #endif
 
-#define IEP2_TILE_W_MAX		120
-#define IEP2_TILE_H_MAX		272
-
 static void iep2_iommu_handle_work(struct work_struct *work_s)
 {
 	int ret = 0;
@@ -860,36 +914,47 @@ static void iep2_iommu_handle_work(struct work_struct *work_s)
 	page_iova = round_down(iep->fault_iova, AUX_PAGE_SIZE);
 	ret = iommu_map(mpp->iommu_info->domain, page_iova,
 			page_to_phys(iep->aux_page), AUX_PAGE_SIZE,
-			IOMMU_READ);
-	if (ret)
+			IOMMU_READ, GFP_KERNEL);
+	if (ret) {
 		mpp_err("iommu_map iova %lx error.\n", page_iova);
-	else
+		atomic_inc(&mpp->reset_request);
+	} else {
 		iep->aux_iova = page_iova;
+		rockchip_iommu_unmask_irq(mpp->dev);
+	}
 
-	rockchip_iommu_unmask_irq(mpp->dev);
 	mpp_iommu_up_write(mpp->iommu_info);
 
 	mpp_debug_leave();
 }
 
 static int iep2_iommu_fault_handle(struct iommu_domain *iommu,
-				     struct device *iommu_dev,
-				     unsigned long iova, int status, void *arg)
+				   struct device *iommu_dev,
+				   unsigned long iova, int status, void *arg)
 {
 	struct mpp_dev *mpp = (struct mpp_dev *)arg;
 	struct iep2_dev *iep = to_iep2_dev(mpp);
 	struct mpp_task *mpp_task = mpp->cur_task;
-	struct iep_task *task = to_iep_task(mpp_task);
+	struct iep_task *task;
 
 	mpp_debug_enter();
 	mpp_debug(DEBUG_IOMMU, "IOMMU_GET_BUS_ID(status)=%d\n", IOMMU_GET_BUS_ID(status));
 	rockchip_iommu_mask_irq(mpp->dev);
+	if (!mpp_task) {
+		dev_err(iommu_dev, "IEP2 IOMMU fault without a current task: iova %#lx status %#x\n",
+			iova, status);
+		atomic_inc(&mpp->reset_request);
+		return 0;
+	}
+	task = to_iep_task(mpp_task);
 	if (IOMMU_GET_BUS_ID(status) &&
 	    task->params.dil_mode == ROCKCHIP_IEP2_DIL_MODE_I1O1T &&
 	    task->src_iova_end == iova) {
 		iep->fault_iova = iova;
 		queue_work(iep->iommu_wq, &iep->iommu_work);
 	} else {
+		dev_err(iommu_dev, "IEP2 IOMMU fault: iova %#lx status %#x\n",
+			iova, status);
 		mpp_task_dump_mem_region(mpp, mpp_task);
 		atomic_inc(&mpp->reset_request);
 	}
@@ -937,30 +1002,51 @@ static int iep2_init(struct mpp_dev *mpp)
 		dev_err(mpp->dev, "allocate roi buffer failed\n");
 		return -ENOMEM;
 	}
+	if ((u64)iep->roi.iova > U32_MAX) {
+		dev_err(mpp->dev, "ROI IOVA %pad exceeds IEP2 address width\n",
+			&iep->roi.iova);
+		ret = -ERANGE;
+		goto err_free_roi;
+	}
+	memset(iep->roi.vaddr, 0, iep->roi.size);
 
 	/* for mmu pagefault */
 	iep->aux_page = alloc_page(GFP_KERNEL | GFP_DMA32);
 	if (!iep->aux_page) {
 		dev_err(mpp->dev, "allocate a page for auxiliary usage\n");
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto err_free_roi;
 	}
+	clear_highpage(iep->aux_page);
 	iep->aux_iova = -1;
 
-	iep->iommu_wq = create_singlethread_workqueue("iommu_wq");
+	iep->iommu_wq = alloc_ordered_workqueue("iep2-iommu", WQ_MEM_RECLAIM);
 	if (!iep->iommu_wq) {
 		mpp_err("failed to create workqueue\n");
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto err_free_aux_page;
 	}
 	INIT_WORK(&iep->iommu_work, iep2_iommu_handle_work);
 
 	mpp->fault_handler = iep2_iommu_fault_handle;
 
 	return 0;
+
+err_free_aux_page:
+	__free_page(iep->aux_page);
+	iep->aux_page = NULL;
+err_free_roi:
+	dma_free_coherent(mpp->dev, iep->roi.size, iep->roi.vaddr,
+			  iep->roi.iova);
+	iep->roi.vaddr = NULL;
+	return ret;
 }
 
 static int iep2_exit(struct mpp_dev *mpp)
 {
 	struct iep2_dev *iep = to_iep2_dev(mpp);
+
+	mpp->fault_handler = NULL;
 
 	if (iep->iommu_wq) {
 		destroy_workqueue(iep->iommu_wq);
@@ -977,6 +1063,11 @@ static int iep2_exit(struct mpp_dev *mpp)
 		iep->aux_page = NULL;
 	}
 
+	if (iep->roi.vaddr) {
+		dma_free_coherent(mpp->dev, iep->roi.size, iep->roi.vaddr,
+				  iep->roi.iova);
+		iep->roi.vaddr = NULL;
+	}
 
 	return 0;
 }
@@ -1081,12 +1172,6 @@ static const struct of_device_id mpp_iep2_match[] = {
 		.compatible = "rockchip,iep-v2",
 		.data = &iep2_v2_data,
 	},
-#ifdef CONFIG_CPU_RV1126
-	{
-		.compatible = "rockchip,rv1126-iep",
-		.data = &iep2_v2_data,
-	},
-#endif
 	{},
 };
 
@@ -1111,11 +1196,13 @@ static int iep2_probe(struct platform_device *pdev)
 		if (match)
 			mpp->var = (struct mpp_dev_var *)match->data;
 	}
+	if (!mpp->var)
+		return -ENODEV;
 
 	ret = mpp_dev_probe(mpp, pdev);
 	if (ret) {
 		dev_err(dev, "probe sub driver failed\n");
-		return -EINVAL;
+		return ret;
 	}
 
 	ret = devm_request_threaded_irq(dev, mpp->irq,
@@ -1125,7 +1212,8 @@ static int iep2_probe(struct platform_device *pdev)
 					dev_name(dev), mpp);
 	if (ret) {
 		dev_err(dev, "register interrupter runtime failed\n");
-		return -EINVAL;
+		mpp_dev_remove(mpp);
+		return ret;
 	}
 
 	mpp->session_max_buffers = IEP2_SESSION_MAX_BUFFERS;
@@ -1137,19 +1225,14 @@ static int iep2_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int iep2_remove(struct platform_device *pdev)
+static void iep2_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct mpp_dev *mpp = dev_get_drvdata(dev);
-	struct iep2_dev *iep = to_iep2_dev(mpp);
-
-	dma_free_coherent(dev, iep->roi.size, iep->roi.vaddr, iep->roi.iova);
 
 	dev_info(dev, "remove device\n");
 	mpp_dev_remove(mpp);
 	iep2_procfs_remove(mpp);
-
-	return 0;
 }
 
 struct platform_driver rockchip_iep2_driver = {
@@ -1163,4 +1246,3 @@ struct platform_driver rockchip_iep2_driver = {
 	},
 };
 EXPORT_SYMBOL(rockchip_iep2_driver);
-

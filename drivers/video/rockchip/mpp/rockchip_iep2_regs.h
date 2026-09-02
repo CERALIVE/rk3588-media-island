@@ -181,4 +181,3 @@
 #define     IEP2_REG_RO_MV_HIST_EVEN(x)			((x) & 0xffff)
 
 #endif
-
