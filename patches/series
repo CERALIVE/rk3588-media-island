@@ -1,0 +1,4 @@
+0001-rk3588-media-island-drivers.patch
+0002-video-rockchip-kconfig-makefile-hooks.patch
+0003-iommu-rockchip-export-for-mpp.patch
+0004-iommu-dma-expose-iova-domain.patch
