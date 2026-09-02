@@ -99,6 +99,7 @@ rebase remains todo 8.
 | `rockchip_monitor_check_rate_volt` | callback assigned at `mpp/mpp_rkvenc2.c:2467@e7ff978398825b63ddcb13e0572d77564034c1e2` | Vendor validates current clock rate/voltage under OPP lock (`drivers/soc/rockchip/rockchip_system_monitor.c:1374-1402@b4ef083dc0c3608e744deabb43dc6b781aadbe6e`). | STUB-SAFE(-ENODEV/no-op) | Mainline cooling adapter + clock/OPP validation. | No rate/voltage validation today; fixed assigned clock. | MEDIUM (1–3 day adapter) | Thermal/monitor event. | Detectable safe throttling if thermal evidence demands it. | 40→55. |
 | `rockchip_monitor_dev_high_temp_adjust` | callback assigned at `mpp/mpp_rkvenc2.c:2469; mpp/mpp_rkvdec2.c:1097@e7ff978398825b63ddcb13e0572d77564034c1e2` | Vendor constrains max OPP/voltage at high temperature (`include/soc/rockchip/rockchip_system_monitor.h:58-126,149-152@b4ef083dc0c3608e744deabb43dc6b781aadbe6e`). | STUB-SAFE(-ENODEV/no-op) | `thermal_cooling_device_ops.set_cur_state` selecting safe clock steps. | No media-specific hot throttle today. | MEDIUM (1–3 day adapter) | Thermal event. | Protects sustained workloads if passive trips are observed. | 40→55. |
 | `rockchip_monitor_dev_low_temp_adjust` | callback assigned at `mpp/mpp_rkvenc2.c:2468; mpp/mpp_rkvdec2.c:1096@e7ff978398825b63ddcb13e0572d77564034c1e2` | Vendor applies low-temperature voltage margin (`include/soc/rockchip/rockchip_system_monitor.h:58-126,149-150@b4ef083dc0c3608e744deabb43dc6b781aadbe6e`). | STUB-SAFE(-ENODEV/no-op) | No safe clock-only equivalent for voltage margin; cooling adapter can only cap rates. | Fixed rate/board regulator policy; no low-temp voltage uplift. | HARD-DEFER | Thermal event. | None now; full gain requires regulator/OPP contract, not a cosmetic adapter. | 40 memo; reopen with OPP scope. |
+| `rockchip_nvmem_cell_read_u8` | Donor-only `mpp/mpp_rkvenc.c:969@b4ef083dc0c3608e744deabb43dc6b781aadbe6e`, inside the RV1126 OPP path | Reads the vendor `performance` NVMEM cell by device-tree node to select an RV1126 process bin. | STUB-SAFE(-ENODEV/no-op) | No RK3588 replacement is needed; a future legacy-client port can acquire the cell and call mainline `nvmem_cell_read_u8()` from `include/linux/nvmem-consumer.h`. | None on RK3588; the RKVENC-v1 client is `BROKEN`-gated. | HARD-DEFER | Probe-time on RV1126 only. | No GA gain; the row closes the complete-donor lexical census without pretending the legacy client is supported. | 8 keeps RKVENC v1 source-complete and unselectable. |
 | `rockchip_opp_dvfs_lock` | `mpp/mpp_rkvenc2.c:2368@e7ff978398825b63ddcb13e0572d77564034c1e2` | Serializes vendor voltage and clock transition (`include/soc/rockchip/rockchip_opp_select.h:69-72,160-161@b4ef083dc0c3608e744deabb43dc6b781aadbe6e`). | STUB-SAFE(-ENODEV/no-op) | Future adapter mutex around regulator + `dev_pm_opp_set_rate`. | Inert because devfreq init fails; clock fixed. | HARD-DEFER | Per frequency transition; no current calls after failed probe. | Future race-free adaptive frequency. | 40. |
 | `rockchip_opp_dvfs_unlock` | `mpp/mpp_rkvenc2.c:2378@e7ff978398825b63ddcb13e0572d77564034c1e2` | Completes serialized voltage/clock transition. | STUB-SAFE(-ENODEV/no-op) | Future adapter mutex. | Inert; fixed clock. | HARD-DEFER | Per frequency transition; disabled today. | Future race-free adaptive frequency. | 40. |
 | `rockchip_pmu_block` | lexical-census only (comments): `mpp/compat/rockchip_pmu_idle.h:6; mpp/compat/rockchip_qos_compat.h:8@e7ff978398825b63ddcb13e0572d77564034c1e2` | Vendor/mainline can block concurrent domain transitions; imported driver has no call. | STUB-SAFE(-ENODEV/no-op) | Already present in v7.2 `include/soc/rockchip/pm_domains.h:11-21@8d3ae59288f1e7d58d76558a6ee96d533bc5019f`. | None. | KEEP-STUB | Never called. | No gain; records grep false-positive. | 54 ledger. |
@@ -178,7 +179,7 @@ the later repository bootstrap.
 ## Completeness and count reconciliation
 
 The exact required lexical command (extended only to recurse and normalize the
-opening parenthesis) produced **32** unique `rockchip_*` names; every one has an
+opening parenthesis) produced **33** unique `rockchip_*` names; every one has an
 individual row above. Four are explicit lexical-census-only entries
 (`rockchip_dmcfreq_lock_nested`, both `rockchip_ipa_*`, and
 `rockchip_pmu_block`).
@@ -200,11 +201,11 @@ phantom row was created. MPP procfs and the RGA debugger are imported internal
 code, not shims or unresolved externs; todo 54 makes them required-on rather
 than classifying them here as dependencies.
 
-Expected Markdown data-row count is therefore **70** = 17 header-identity rows
+Expected Markdown data-row count is therefore **71** = 17 header-identity rows
 (8 original compat paths plus all 8 current `<soc/rockchip/...>` include
 spellings plus the island-local VSI shim; four include spellings resolve to
-compat files and are intentionally shown both ways) + 32 required Rockchip lexical symbols + 1 SIP + 7 VSI + 2 IOVA + 11 fence rows. This exceeds
-the 32-symbol grep denominator for the documented reasons above; `wc -l` alone
+compat files and are intentionally shown both ways) + 33 required Rockchip lexical symbols + 1 SIP + 7 VSI + 2 IOVA + 11 fence rows. This exceeds
+the 33-symbol grep denominator for the documented reasons above; `wc -l` alone
 is not used to confuse document lines with table rows.
 
 ## Todo-7 CI check specification: REAL-DEPENDENCY stubs are forbidden
