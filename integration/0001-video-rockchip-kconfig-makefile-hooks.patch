@@ -6,10 +6,10 @@ They are re-anchored to the pinned v7.2 tree in the CeraLive port commits.
 Origin: yisding/rock-5b-ysp@ca3da04280c48c004e522c15f31862bf88a2d1b9:kernel-drivers/patches/forward-port-rk3588/rk3588-fwport-0001-video-rockchip-RK3588-vendor-MPP-rkvenc2-rkvdec2-RGA.patch
 
 diff --git a/drivers/video/Kconfig b/drivers/video/Kconfig
-index d51777df12d164d3ed937775664586a006c3e300..cef0d381a7254a113fefe3de6515abef3ce5e686 100644
+index a7144d275f54e295c530e50012472ade1169ccd4..7f2f3cc74921050e5edf218a69ffae5408bd8e07 100644
 --- a/drivers/video/Kconfig
 +++ b/drivers/video/Kconfig
-@@ -49,6 +49,8 @@ endmenu
+@@ -50,6 +50,8 @@ endmenu
  
  source "drivers/video/backlight/Kconfig"
  
