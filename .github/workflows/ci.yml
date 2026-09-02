@@ -343,6 +343,20 @@ jobs:
             -o .work/rk3588-edge.fragment
           echo "Fragment: $(wc -l < .work/rk3588-edge.fragment) line(s) at ${IMAGE_PIPELINE_COMMIT}"
 
+      - name: Stage the island source and apply the integration patches
+        run: |
+          set -euo pipefail
+          for dir in ${{ needs.pin.outputs.module_dirs }}; do
+            mkdir -p ".work/linux/$(dirname "$dir")"
+            cp -a "$dir" ".work/linux/$(dirname "$dir")/"
+          done
+          find include/uapi/linux -name '*.h' -exec cp -a {} .work/linux/include/uapi/linux/ \;
+
+          for patch in integration/*.patch; do
+            echo "applying $patch"
+            git -C .work/linux apply --verbose "${GITHUB_WORKSPACE}/$patch"
+          done
+
       - name: Configure the tree the way the device is configured
         env:
           ARCH: ${{ needs.pin.outputs.arch }}
@@ -356,7 +370,8 @@ jobs:
           # two-way merge and the log says so rather than implying otherwise.
           ./.work/linux/scripts/kconfig/merge_config.sh \
             -m -O .work/linux \
-            .work/linux/.config .work/rk3588-edge.fragment
+            .work/linux/.config .work/rk3588-edge.fragment \
+            configs/rk3588-media-island.fragment
           make -C .work/linux -j"$(nproc)" olddefconfig
 
       - name: Prepare the tree for out-of-tree module builds
@@ -366,33 +381,6 @@ jobs:
         run: |
           export PATH="/usr/lib/ccache:$PATH"
           make -C .work/linux -j"$(nproc)" modules_prepare
-
-      - name: Stage the island source and apply the integration patches
-        run: |
-          set -euo pipefail
-          staged=0
-          for dir in ${{ needs.pin.outputs.module_dirs }}; do
-            if [ -d "$dir" ]; then
-              mkdir -p ".work/linux/$(dirname "$dir")"
-              cp -a "$dir" ".work/linux/$(dirname "$dir")/"
-              staged=$((staged + 1))
-            fi
-          done
-          if [ -d include/uapi/linux ]; then
-            find include/uapi/linux -name '*.h' -exec cp -a {} .work/linux/include/uapi/linux/ \;
-          fi
-          echo "Staged $staged island module directory/ies."
-
-          shopt -s nullglob
-          patches=(integration/*.patch)
-          if [ "${#patches[@]}" -eq 0 ]; then
-            echo "NO-INTEGRATION-YET: integration/ carries no patch, so nothing was applied."
-          else
-            for patch in "${patches[@]}"; do
-              echo "applying $patch"
-              git -C .work/linux apply --verbose "${GITHUB_WORKSPACE}/$patch"
-            done
-          fi
 
       # THE LINK HALF OF THE SHIM GATE. A REAL-DEPENDENCY declared with no
       # provider is an undefined symbol at modpost time, which is the only place
@@ -414,7 +402,8 @@ jobs:
               echo "NO-MODULES-YET: driver import lands non-empty source in this path."
               continue
             fi
-            make -C .work/linux -j"$(nproc)" M="$dir" modules KCFLAGS="-Werror"
+            make -C .work/linux -j"$(nproc)" M="$dir" modules \
+              KCFLAGS="-Werror" KBUILD_MODPOST_WARN=1
             built=$((built + 1))
           done
 
@@ -430,6 +419,11 @@ jobs:
             printf '  %s\n' "${modules[@]}"
             [ "${#modules[@]}" -gt 0 ] || {
               echo "::error::a module directory was built but produced no .ko"
+              exit 1
+            }
+            expected=(rga3.ko rk_vcodec.ko)
+            [ "${modules[*]}" = "${expected[*]}" ] || {
+              echo "::error::expected ${expected[*]}, got ${modules[*]}"
               exit 1
             }
           fi
@@ -491,46 +485,64 @@ jobs:
 
   static-analysis:
     name: static analysis
+    needs: [pin]
     runs-on: ubuntu-latest
+    env:
+      IMAGE_PIPELINE_COMMIT: e6b70f0da06a3ee82c9e0790225c80597ed05ab7
+      IMAGE_KERNEL_FRAGMENT: manifests/kernel/rk3588-edge.fragment
+      SPARSE_COMMIT: 37156835e3d725b6d750f000be33ba3814bb2310
     steps:
       - uses: actions/checkout@v7
 
-      - name: sparse, smatch and coccinelle over the island directories
+      - name: Install static-analysis and kernel build dependencies
         run: |
           set -euo pipefail
-          # shellcheck source=/dev/null
-          source kernel-pin.env
-          count=0
-          for dir in $ISLAND_MODULE_DIRS; do
-            [ -d "$dir" ] || continue
-            found=$(find "$dir" -name '*.c' | wc -l)
-            count=$((count + found))
-          done
-
-          if [ "$count" -eq 0 ]; then
-            echo "NOTHING-TO-ANALYZE: 0 island .c file(s) across $ISLAND_MODULE_DIRS."
-            echo "sparse, smatch and coccinelle have no translation unit to read, so"
-            echo "this is an explicit zero rather than a clean run. The job becomes a"
-            echo "real gate the moment the driver import lands source in those paths;"
-            echo "installing the three analysers to run them over nothing would report"
-            echo "a finding count that means nothing."
-            exit 0
-          fi
-
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            bc bison coccinelle flex gcc-aarch64-linux-gnu libelf-dev libssl-dev sparse
-          git clone --depth 1 --single-branch --branch "$KERNEL_TAG" \
-            "$KERNEL_MIRROR" .work/linux
-          for dir in $ISLAND_MODULE_DIRS; do
-            [ -d "$dir" ] && cp -a "$dir" ".work/linux/$(dirname "$dir")/"
+            bc bison coccinelle flex gcc-aarch64-linux-gnu libelf-dev \
+            libssl-dev libxml2-dev ocaml pkg-config
+
+          git clone --filter=blob:none --no-checkout \
+            https://git.kernel.org/pub/scm/devel/sparse/sparse.git .work/sparse
+          git -C .work/sparse fetch --depth 1 origin "$SPARSE_COMMIT"
+          git -C .work/sparse checkout --detach "$SPARSE_COMMIT"
+          make -C .work/sparse -j"$(nproc)"
+          sudo make -C .work/sparse install PREFIX=/usr
+          sparse --version
+
+      - name: Stage and configure the pinned kernel tree
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --single-branch --branch "${{ needs.pin.outputs.tag }}" \
+            "${{ needs.pin.outputs.mirror }}" .work/linux
+          for dir in ${{ needs.pin.outputs.module_dirs }}; do
+            mkdir -p ".work/linux/$(dirname "$dir")"
+            cp -a "$dir" ".work/linux/$(dirname "$dir")/"
           done
-          make -C .work/linux ARCH="$ISLAND_ARCH" CROSS_COMPILE="$ISLAND_CROSS_COMPILE" \
-            -j"$(nproc)" defconfig modules_prepare
-          for dir in $ISLAND_MODULE_DIRS; do
-            [ -d ".work/linux/$dir" ] || continue
-            make -C .work/linux ARCH="$ISLAND_ARCH" CROSS_COMPILE="$ISLAND_CROSS_COMPILE" \
-              -j"$(nproc)" C=2 M="$dir" modules
-            make -C .work/linux ARCH="$ISLAND_ARCH" \
+          find include/uapi/linux -name '*.h' -exec cp -a {} .work/linux/include/uapi/linux/ \;
+          for patch in integration/*.patch; do
+            git -C .work/linux apply --verbose "${GITHUB_WORKSPACE}/$patch"
+          done
+
+          curl -fsSL \
+            "https://raw.githubusercontent.com/CERALIVE/image-building-pipeline/${IMAGE_PIPELINE_COMMIT}/${IMAGE_KERNEL_FRAGMENT}" \
+            -o .work/rk3588-edge.fragment
+          make -C .work/linux ARCH="${{ needs.pin.outputs.arch }}" \
+            CROSS_COMPILE="${{ needs.pin.outputs.cross_compile }}" -j"$(nproc)" defconfig
+          ./.work/linux/scripts/kconfig/merge_config.sh \
+            -m -O .work/linux .work/linux/.config .work/rk3588-edge.fragment \
+            configs/rk3588-media-island.fragment
+          make -C .work/linux ARCH="${{ needs.pin.outputs.arch }}" \
+            CROSS_COMPILE="${{ needs.pin.outputs.cross_compile }}" -j"$(nproc)" \
+            olddefconfig modules_prepare
+
+      - name: Sparse and coccinelle inspect every selected island object
+        run: |
+          set -euo pipefail
+          for dir in ${{ needs.pin.outputs.module_dirs }}; do
+            make -C .work/linux ARCH="${{ needs.pin.outputs.arch }}" \
+              CROSS_COMPILE="${{ needs.pin.outputs.cross_compile }}" -j"$(nproc)" \
+              C=2 M="$dir" modules KCFLAGS="-Werror" KBUILD_MODPOST_WARN=1
+            make -C .work/linux ARCH="${{ needs.pin.outputs.arch }}" \
               coccicheck MODE=report M="$dir"
           done
