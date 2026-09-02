@@ -1,0 +1,111 @@
+name: upstream-watch
+
+# Weekly check: has an upstream the island is pinned to moved since we pinned it?
+#
+# ISSUE-ONLY, BY DESIGN. This workflow opens or updates ONE labelled issue and
+# does nothing else. It never edits docs/REFERENCES.md, never opens a pull
+# request, and never dispatches a build. Moving a pin means re-reading the
+# series, re-running the shim census in docs/COMPAT.md and re-verifying the
+# licence inventory; a robot that moved a SHA would be asserting it had done all
+# three. A human decides every bump. That is why the job escalates only
+# `issues: write` and holds no dispatch token.
+#
+# GITHUB DISABLES SCHEDULED WORKFLOWS AFTER 60 DAYS OF REPOSITORY INACTIVITY.
+# If this watch goes quiet, that is the first thing to check: re-enable it from
+# the Actions tab (or push a commit), then confirm with a manual dispatch. A
+# silent watch reads exactly like an up-to-date one, which is the failure mode
+# worth knowing about.
+on:
+  schedule:
+    # Mondays, 05:23 UTC. Off the hour on purpose -- GitHub's scheduler is
+    # heavily contended at :00 and delays a run that has no deadline anyway.
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+# Schedule + manual dispatch, never a PR gate: a run in flight is doing the real
+# check and must not be cancelled by the next trigger.
+concurrency:
+  group: upstream-watch
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    name: Compare docs/REFERENCES.md against the watched upstream tips
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The ONLY escalation in this repository's workflows. Needed to create the
+      # `upstream-freshness` label and to open/edit the single tracking issue.
+      issues: write
+    env:
+      ISSUE_LABEL: upstream-freshness
+      ISSUE_TITLE: "Upstream freshness: a pinned island upstream has moved"
+    steps:
+      - uses: actions/checkout@v7
+
+      # `runner.temp` is unavailable in a job-level `env:` block, so the body
+      # path is declared per step. It stays out of the checkout so the workspace
+      # is never dirtied by a watch that is supposed to change nothing.
+      - name: Resolve every watched upstream and compare against the pins
+        id: check
+        env:
+          ISSUE_BODY_FILE: ${{ runner.temp }}/upstream-freshness-issue.md
+        run: |
+          set -uo pipefail
+          rc=0
+          python3 scripts/check-upstream-freshness.py --issue-body "$ISSUE_BODY_FILE" || rc=$?
+          case "$rc" in
+            0)  echo "Every watched upstream is still at its pinned object."
+                echo "behind=false" >> "$GITHUB_OUTPUT" ;;
+            10) echo "At least one watched upstream has moved past its pin."
+                echo "behind=true" >> "$GITHUB_OUTPUT" ;;
+            *)  echo "::error::check-upstream-freshness.py could not complete (exit $rc)."
+                echo "::error::A watch that cannot resolve an upstream reports nothing;"
+                echo "::error::it must never report 'current'."
+                exit "$rc" ;;
+          esac
+
+      - name: Open or update the single tracking issue
+        if: steps.check.outputs.behind == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_BODY_FILE: ${{ runner.temp }}/upstream-freshness-issue.md
+        run: |
+          set -euo pipefail
+          # The label is what makes re-runs UPDATE instead of duplicate, so it is
+          # created on demand rather than assumed to have been pre-created.
+          gh label create "$ISSUE_LABEL" \
+            --description "Scheduled watch: a pinned island upstream has moved" \
+            --color "0E8A16" >/dev/null 2>&1 || true
+
+          existing="$(gh issue list --label "$ISSUE_LABEL" --state open --limit 1 \
+            --json number --jq '.[0].number // empty')"
+
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --title "$ISSUE_TITLE" --body-file "$ISSUE_BODY_FILE"
+            echo "Updated existing issue #$existing."
+          else
+            gh issue create --title "$ISSUE_TITLE" --label "$ISSUE_LABEL" \
+              --body-file "$ISSUE_BODY_FILE"
+          fi
+
+      - name: Close the tracking issue once every pin is current again
+        if: steps.check.outputs.behind == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          existing="$(gh issue list --label "$ISSUE_LABEL" --state open --limit 1 \
+            --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            gh issue close "$existing" \
+              --comment "Every watched upstream is current again — closed by the scheduled upstream-freshness watch."
+            echo "Closed issue #$existing."
+          else
+            echo "Nothing to close."
+          fi

@@ -1,0 +1,530 @@
+name: ci
+
+# Trigger hygiene: `push` is constrained to branches because a `pull_request`
+# trigger exists. A bare `push:` -- or one filtered only on `paths:` -- fires a
+# second, duplicate run for every PR-branch push, and `concurrency` does NOT
+# dedupe that: the push event's ref (refs/heads/<branch>) and the PR event's ref
+# (refs/pull/N/merge) hash to different concurrency groups, so the fix is the
+# trigger filter and nothing else.
+on:
+  pull_request:
+  push:
+    branches: [main, "release/**"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # --------------------------------------------------------------------
+  # Cheap gates first. Every one of these answers in seconds, so a mistake
+  # fails before the ~2 GB kernel clone rather than after it.
+  # --------------------------------------------------------------------
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Every tracked shell script lints clean
+        run: |
+          set -euo pipefail
+          # -S style is the strictest severity; -e SC1091 excludes only "not
+          # following sourced file", which is unavoidable for a runtime-resolved
+          # `source lib/harness-lib.sh`, and -x follows the ones it can.
+          shellcheck -S style -e SC1091 -x \
+            tests/board/*.sh tests/board/lib/*.sh scripts/*.sh
+
+  # SHELLCHECK IS NOT ENOUGH, AND THIS JOB IS WHY IT EXISTS SEPARATELY.
+  # The harness bootstrap found a real defect shellcheck cannot see: an ERE
+  # bracket expression containing a literal `\t`, which is valid shell, valid
+  # regex syntax, and matches a backslash and a `t` rather than a tab. Only
+  # executing the script's own scored fixtures catches that class. So every
+  # harness and every tool carries a `--self-test`, and CI runs all of them as
+  # a first-class job rather than trusting the linter.
+  self-tests:
+    name: harness + tooling self-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install what the board-harness self-tests execute
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Every board harness proves itself against its own fixtures
+        run: |
+          set -euo pipefail
+          rc=0
+          for script in tests/board/*.sh; do
+            printf '=== %s --self-test ===\n' "$script"
+            bash "$script" --self-test || rc=1
+          done
+          exit "$rc"
+
+      - name: Every CI tool proves itself against its own fixtures
+        run: |
+          set -euo pipefail
+          rc=0
+          for tool in \
+            scripts/build-series.py \
+            scripts/verify-series-parity.py \
+            scripts/check-compat-shims.py \
+            scripts/check-dt-ownership.py \
+            scripts/check-upstream-freshness.py; do
+            printf '=== %s --self-test ===\n' "$tool"
+            python3 "$tool" --self-test || rc=1
+          done
+          printf '=== scripts/check-action-pins.sh --self-test ===\n'
+          bash scripts/check-action-pins.sh --self-test || rc=1
+          exit "$rc"
+
+  series-integrity:
+    name: series integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: patches/ is generated from source, not hand-edited
+        run: python3 scripts/build-series.py --check
+
+      - name: an independent checker agrees, without importing the generator
+        run: python3 scripts/verify-series-parity.py
+
+  shim-lint:
+    name: shim lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # docs/COMPAT.md is the machine-owned allow/deny list. This is the LINT
+      # half of the shim gate -- it catches a REAL-DEPENDENCY given a body in a
+      # compat header. The LINK half lives in cross-compile-modules and catches
+      # a declaration with no provider. Neither alone is sufficient.
+      - name: no REAL-DEPENDENCY is satisfied by a compatibility stub
+        run: python3 scripts/check-compat-shims.py
+
+  dt-ownership-lint:
+    name: dt ownership lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The one-compatible rule, checked without a kernel tree so it answers in
+      # seconds. The second arm -- "and no mainline of_match_table lists that
+      # string" -- needs the pinned tree and therefore runs inside
+      # cross-compile-modules, where the tree already is. The script prints an
+      # explicit SKIP note here rather than implying it checked.
+      - name: every island-owned node carries exactly one compatible
+        run: python3 scripts/check-dt-ownership.py
+
+  uapi-parity:
+    name: uapi parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Layers 1 and 2 (the pinned vendor/libmpp fixture and an independent
+      # _IOC re-derivation) run today. Layer 3 -- the island's own
+      # include/uapi/linux/rk-mpp.h against that fixture -- SKIPS with a named
+      # reason until the driver import creates the header, and the suite refuses
+      # to report a pass for a comparison it did not make.
+      - name: the MPP ioctl contract matches both pinned sources
+        run: python3 -m unittest discover -s tests/uapi -v
+
+  board-probes:
+    name: board probes cross-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the aarch64 cross toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
+
+      # The probes carry _Static_assert layout checks over the MPP and RGA UAPI
+      # structs, and are built -Werror. A drifted header is therefore a failed
+      # COMPILE rather than a malformed ioctl on a board.
+      - name: The board probes cross-build for the device target
+        run: make -C tests/board CROSS_COMPILE=aarch64-linux-gnu- clean all
+
+      - name: ...and their host build passes its own self-tests
+        run: make -C tests/board selftest
+
+  # Non-blocking BY DESIGN. An action publishing a new major must not turn an
+  # unrelated pull request red -- that is the same floating-runtime failure the
+  # CI/CD canon bans `bun-version: latest` for. Dependabot opens the bump, a
+  # human reviews it, and this job is the standing report that says one is due.
+  action-pins:
+    name: action pins (report)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Every `uses:` is at the current latest major
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/check-action-pins.sh
+
+  # --------------------------------------------------------------------
+  # The kernel coordinate. No workflow restates a pinned tag: a literal
+  # anywhere under .github/ would leave CI proving the island against a
+  # kernel nobody ships the moment the pin is bumped -- green, which is the
+  # worst kind of failure.
+  # --------------------------------------------------------------------
+
+  pin:
+    name: resolve kernel pin
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.read.outputs.tag }}
+      tag_object: ${{ steps.read.outputs.tag_object }}
+      commit: ${{ steps.read.outputs.commit }}
+      mirror: ${{ steps.read.outputs.mirror }}
+      module_dirs: ${{ steps.read.outputs.module_dirs }}
+      arch: ${{ steps.read.outputs.arch }}
+      cross_compile: ${{ steps.read.outputs.cross_compile }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read every coordinate out of kernel-pin.env
+        id: read
+        run: |
+          set -euo pipefail
+          # shellcheck source=/dev/null
+          source kernel-pin.env
+          : "${KERNEL_TAG:?KERNEL_TAG is not set in kernel-pin.env}"
+          : "${KERNEL_TAG_OBJECT:?KERNEL_TAG_OBJECT is not set in kernel-pin.env}"
+          : "${KERNEL_COMMIT:?KERNEL_COMMIT is not set in kernel-pin.env}"
+          : "${KERNEL_MIRROR:?KERNEL_MIRROR is not set in kernel-pin.env}"
+          : "${ISLAND_MODULE_DIRS:?ISLAND_MODULE_DIRS is not set in kernel-pin.env}"
+          {
+            echo "tag=$KERNEL_TAG"
+            echo "tag_object=$KERNEL_TAG_OBJECT"
+            echo "commit=$KERNEL_COMMIT"
+            echo "mirror=$KERNEL_MIRROR"
+            echo "module_dirs=$ISLAND_MODULE_DIRS"
+            echo "arch=$ISLAND_ARCH"
+            echo "cross_compile=$ISLAND_CROSS_COMPILE"
+          } >> "$GITHUB_OUTPUT"
+          echo "Building against $KERNEL_TAG ($KERNEL_COMMIT)"
+
+  # kernel-pin.env's four KERNEL_* values are a MIRROR, not a decision. A
+  # hand-edit here is a red build, and that is the whole point: a modules-only
+  # cross-compile proves nothing if it ran against a kernel the device never
+  # boots. Bumping the kernel is a change to the consumer repository FIRST.
+  pin-equality:
+    name: pin equality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: The mirrored block equals the consumer's
+        run: |
+          set -euo pipefail
+          # docs/REFERENCES.md records the consumer commit as "not yet pinned"
+          # until the island/ lane is created. Until it is, the comparison runs
+          # against the consumer's canonical branch head -- which is still a
+          # real gate on a hand-edit here, and which correctly goes red if the
+          # consumer moves the kernel first, because this file is meant to
+          # follow it.
+          curl -fsSL \
+            https://raw.githubusercontent.com/CERALIVE/rk3588-kernel-patches/main/kernel-pin.env \
+            -o consumer-kernel-pin.env
+
+          mirrored() {
+            grep -E '^(KERNEL_TAG|KERNEL_TAG_OBJECT|KERNEL_COMMIT|KERNEL_MIRROR)=' "$1" \
+              | sed -E 's/[[:space:]]*#.*$//' \
+              | sort
+          }
+
+          if diff -u <(mirrored consumer-kernel-pin.env) <(mirrored kernel-pin.env); then
+            echo "ok: the four mirrored KERNEL_* values match the consumer's"
+          else
+            echo "::error::kernel-pin.env has drifted from CERALIVE/rk3588-kernel-patches."
+            echo "::error::That file is a MIRROR. Bump the consumer first, then follow it here."
+            exit 1
+          fi
+
+  # --------------------------------------------------------------------
+  # The heavy gate. It clones the pinned kernel (cached on the immutable
+  # commit), configures it the way the device is configured, and runs the
+  # modules-only build.
+  # --------------------------------------------------------------------
+
+  cross-compile-modules:
+    name: cross-compile modules
+    needs: [pin, series-integrity, shim-lint, dt-ownership-lint]
+    runs-on: ubuntu-latest
+    env:
+      # Pinned in docs/REFERENCES.md § Image-pipeline coordinate. The device's
+      # own Kconfig fragment, at an immutable commit -- building against a bare
+      # defconfig would prove the island against a configuration nobody ships.
+      IMAGE_PIPELINE_COMMIT: e6b70f0da06a3ee82c9e0790225c80597ed05ab7
+      IMAGE_KERNEL_FRAGMENT: manifests/kernel/rk3588-edge.fragment
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the cross toolchain and kernel build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            bc bison ccache flex gcc-aarch64-linux-gnu libelf-dev libssl-dev
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-${{ needs.pin.outputs.commit }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ needs.pin.outputs.commit }}-
+
+      # The kernel clone dominates this job. Key on the IMMUTABLE commit, so the
+      # cache is only ever reused for the exact source it was built from.
+      - name: Cache the pinned kernel tree
+        id: kernel-cache
+        uses: actions/cache@v6
+        with:
+          path: .work/linux
+          key: linux-${{ runner.os }}-${{ needs.pin.outputs.commit }}
+
+      - name: Clone the kernel at the pinned tag
+        if: steps.kernel-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --single-branch \
+            --branch "${{ needs.pin.outputs.tag }}" \
+            "${{ needs.pin.outputs.mirror }}" .work/linux
+
+      # BOTH objects are verified. A peeled commit alone cannot detect a tag
+      # object that was re-created -- re-signed, re-dated, re-worded -- while
+      # still pointing at the same commit, and the tag object is what a
+      # signature verifies against.
+      - name: Verify the tag object AND the peeled commit
+        run: |
+          set -euo pipefail
+          cd .work/linux
+          git fetch --depth 1 origin "refs/tags/${{ needs.pin.outputs.tag }}:refs/tags/${{ needs.pin.outputs.tag }}" --force
+          actual_tag_object="$(git rev-parse "refs/tags/${{ needs.pin.outputs.tag }}")"
+          actual_commit="$(git rev-parse "refs/tags/${{ needs.pin.outputs.tag }}^{commit}")"
+          [ "$actual_tag_object" = "${{ needs.pin.outputs.tag_object }}" ] || {
+            echo "::error::tag object is $actual_tag_object, pinned ${{ needs.pin.outputs.tag_object }}"
+            exit 1
+          }
+          [ "$actual_commit" = "${{ needs.pin.outputs.commit }}" ] || {
+            echo "::error::peeled commit is $actual_commit, pinned ${{ needs.pin.outputs.commit }}"
+            exit 1
+          }
+          echo "ok: both pinned objects resolve"
+
+      - name: Reset the cached tree to the pinned tag
+        run: |
+          git -C .work/linux checkout -f "${{ needs.pin.outputs.tag }}"
+          git -C .work/linux clean -fdxq
+
+      - name: Fetch the device's Kconfig fragment at its pinned commit
+        run: |
+          set -euo pipefail
+          curl -fsSL \
+            "https://raw.githubusercontent.com/CERALIVE/image-building-pipeline/${IMAGE_PIPELINE_COMMIT}/${IMAGE_KERNEL_FRAGMENT}" \
+            -o .work/rk3588-edge.fragment
+          echo "Fragment: $(wc -l < .work/rk3588-edge.fragment) line(s) at ${IMAGE_PIPELINE_COMMIT}"
+
+      - name: Configure the tree the way the device is configured
+        env:
+          ARCH: ${{ needs.pin.outputs.arch }}
+          CROSS_COMPILE: ${{ needs.pin.outputs.cross_compile }}
+        run: |
+          set -euo pipefail
+          export PATH="/usr/lib/ccache:$PATH"
+          make -C .work/linux -j"$(nproc)" defconfig
+          # The island's OWN Kconfig symbols are the third input the README
+          # names. They arrive with the driver import; until then this is a
+          # two-way merge and the log says so rather than implying otherwise.
+          ./.work/linux/scripts/kconfig/merge_config.sh \
+            -m -O .work/linux \
+            .work/linux/.config .work/rk3588-edge.fragment
+          make -C .work/linux -j"$(nproc)" olddefconfig
+
+      - name: Prepare the tree for out-of-tree module builds
+        env:
+          ARCH: ${{ needs.pin.outputs.arch }}
+          CROSS_COMPILE: ${{ needs.pin.outputs.cross_compile }}
+        run: |
+          export PATH="/usr/lib/ccache:$PATH"
+          make -C .work/linux -j"$(nproc)" modules_prepare
+
+      - name: Stage the island source and apply the integration patches
+        run: |
+          set -euo pipefail
+          staged=0
+          for dir in ${{ needs.pin.outputs.module_dirs }}; do
+            if [ -d "$dir" ]; then
+              mkdir -p ".work/linux/$(dirname "$dir")"
+              cp -a "$dir" ".work/linux/$(dirname "$dir")/"
+              staged=$((staged + 1))
+            fi
+          done
+          if [ -d include/uapi/linux ]; then
+            find include/uapi/linux -name '*.h' -exec cp -a {} .work/linux/include/uapi/linux/ \;
+          fi
+          echo "Staged $staged island module directory/ies."
+
+          shopt -s nullglob
+          patches=(integration/*.patch)
+          if [ "${#patches[@]}" -eq 0 ]; then
+            echo "NO-INTEGRATION-YET: integration/ carries no patch, so nothing was applied."
+          else
+            for patch in "${patches[@]}"; do
+              echo "applying $patch"
+              git -C .work/linux apply --verbose "${GITHUB_WORKSPACE}/$patch"
+            done
+          fi
+
+      # THE LINK HALF OF THE SHIM GATE. A REAL-DEPENDENCY declared with no
+      # provider is an undefined symbol at modpost time, which is the only place
+      # it can be caught -- the lint catches a stub with a body, this catches a
+      # declaration with nothing behind it.
+      - name: Modules-only cross-build
+        env:
+          ARCH: ${{ needs.pin.outputs.arch }}
+          CROSS_COMPILE: ${{ needs.pin.outputs.cross_compile }}
+        run: |
+          set -euo pipefail
+          export PATH="/usr/lib/ccache:$PATH"
+          built=0
+          for dir in ${{ needs.pin.outputs.module_dirs }}; do
+            if [ ! -f ".work/linux/$dir/Makefile" ]; then
+              echo "NO-MODULES-YET: $dir carries no kernel Makefile, so it compiles"
+              echo "NO-MODULES-YET: zero modules. The .ko assertion below is SKIPPED,"
+              echo "NO-MODULES-YET: not passed. It becomes required the moment the"
+              echo "NO-MODULES-YET: driver import lands non-empty source in this path."
+              continue
+            fi
+            make -C .work/linux -j"$(nproc)" M="$dir" modules KCFLAGS="-Werror"
+            built=$((built + 1))
+          done
+
+          mapfile -t modules < <(find .work/linux -name '*.ko' -printf '%f\n' | sort)
+          if [ "$built" -eq 0 ]; then
+            echo "NO-MODULES-YET: 0 module directory/ies built; ${#modules[@]} .ko produced."
+            [ "${#modules[@]}" -eq 0 ] || {
+              echo "::error::no module directory was built, yet .ko files exist"
+              exit 1
+            }
+          else
+            echo "Built $built module directory/ies:"
+            printf '  %s\n' "${modules[@]}"
+            [ "${#modules[@]}" -gt 0 ] || {
+              echo "::error::a module directory was built but produced no .ko"
+              exit 1
+            }
+          fi
+
+      # The second arm of dt-ownership-lint, run where the pinned tree already
+      # is: no island compatible string may appear in a mainline of_match_table.
+      - name: No island compatible collides with a mainline of_match_table
+        run: python3 scripts/check-dt-ownership.py --kernel-tree .work/linux
+
+      # Cache the PRISTINE tree, never a patched or built one: the staged island
+      # source and the applied integration patches would poison the next run's
+      # reset, and a poisoned cache fails green.
+      - name: Restore the tree to the pinned tag before caching
+        if: always()
+        run: |
+          git -C .work/linux checkout -f "${{ needs.pin.outputs.tag }}" || true
+          git -C .work/linux reset --hard "${{ needs.pin.outputs.tag }}" || true
+          git -C .work/linux clean -fdxq || true
+
+  # --------------------------------------------------------------------
+  # Test tiers that have nothing to run yet. Each states that in words and
+  # exits 0; neither fabricates a result, and both become required the
+  # moment their inputs exist.
+  # --------------------------------------------------------------------
+
+  kunit:
+    name: kunit
+    needs: [pin]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run the island's in-kernel unit tests
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          suites=(tests/kunit/*.c)
+          if [ "${#suites[@]}" -eq 0 ]; then
+            echo "0 tests. NO-KUNIT-CASES-YET: tests/kunit/ carries no suite, so"
+            echo "there is nothing to build a UML kernel for. This is an explicit"
+            echo "zero, not a pass -- the job becomes a real gate the moment the"
+            echo "first KUnit case lands, and it will then build the pinned tree"
+            echo "with the island applied rather than reporting this."
+            exit 0
+          fi
+
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bc bison flex libelf-dev libssl-dev
+          # shellcheck source=/dev/null
+          source kernel-pin.env
+          git clone --depth 1 --single-branch --branch "$KERNEL_TAG" \
+            "$KERNEL_MIRROR" .work/linux
+          for dir in $ISLAND_MODULE_DIRS; do
+            [ -d "$dir" ] && cp -a "$dir" ".work/linux/$(dirname "$dir")/"
+          done
+          cp -a tests/kunit ".work/linux/drivers/video/rockchip/"
+          ./.work/linux/tools/testing/kunit/kunit.py run \
+            --kunitconfig=tests/kunit --build_dir=.work/kunit
+
+  static-analysis:
+    name: static analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: sparse, smatch and coccinelle over the island directories
+        run: |
+          set -euo pipefail
+          # shellcheck source=/dev/null
+          source kernel-pin.env
+          count=0
+          for dir in $ISLAND_MODULE_DIRS; do
+            [ -d "$dir" ] || continue
+            found=$(find "$dir" -name '*.c' | wc -l)
+            count=$((count + found))
+          done
+
+          if [ "$count" -eq 0 ]; then
+            echo "NOTHING-TO-ANALYZE: 0 island .c file(s) across $ISLAND_MODULE_DIRS."
+            echo "sparse, smatch and coccinelle have no translation unit to read, so"
+            echo "this is an explicit zero rather than a clean run. The job becomes a"
+            echo "real gate the moment the driver import lands source in those paths;"
+            echo "installing the three analysers to run them over nothing would report"
+            echo "a finding count that means nothing."
+            exit 0
+          fi
+
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            bc bison coccinelle flex gcc-aarch64-linux-gnu libelf-dev libssl-dev sparse
+          git clone --depth 1 --single-branch --branch "$KERNEL_TAG" \
+            "$KERNEL_MIRROR" .work/linux
+          for dir in $ISLAND_MODULE_DIRS; do
+            [ -d "$dir" ] && cp -a "$dir" ".work/linux/$(dirname "$dir")/"
+          done
+          make -C .work/linux ARCH="$ISLAND_ARCH" CROSS_COMPILE="$ISLAND_CROSS_COMPILE" \
+            -j"$(nproc)" defconfig modules_prepare
+          for dir in $ISLAND_MODULE_DIRS; do
+            [ -d ".work/linux/$dir" ] || continue
+            make -C .work/linux ARCH="$ISLAND_ARCH" CROSS_COMPILE="$ISLAND_CROSS_COMPILE" \
+              -j"$(nproc)" C=2 M="$dir" modules
+            make -C .work/linux ARCH="$ISLAND_ARCH" \
+              coccicheck MODE=report M="$dir"
+          done

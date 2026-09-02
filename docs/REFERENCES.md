@@ -84,7 +84,20 @@ Kconfig fragment at a pinned revision.
 |---|---|
 | Repository | `CERALIVE/image-building-pipeline` |
 | Fragment | `manifests/kernel/rk3588-edge.fragment` |
-| Pinned commit | *not yet pinned — recorded when the cross-compile job is added* |
+| Pinned commit | `e6b70f0da06a3ee82c9e0790225c80597ed05ab7` |
+
+`cross-compile-modules` fetches that one file at that one commit and merges it
+over the in-tree arm64 `defconfig` with the kernel's own
+`scripts/kconfig/merge_config.sh` — the same mechanism the image build uses, so
+the modules are compiled against the configuration the device actually boots.
+Fetching the fragment from the repository's branch head instead would mean a
+green build proving the island against a configuration nobody ships, which is the
+failure this whole file exists to prevent.
+
+The island's own Kconfig symbols are the third input the README names. They do
+not exist yet — the driver import creates `drivers/video/rockchip/{mpp,rga3}/
+Kconfig` — so today the merge is `defconfig` + the image fragment, and the job
+says so rather than implying a three-way merge it did not perform.
 
 ## How to add a row
 

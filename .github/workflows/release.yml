@@ -1,0 +1,345 @@
+name: release
+
+# workflow_dispatch ONLY. There is no tag trigger, deliberately: the release
+# CLAIMS its tag atomically at a verified commit, so a tag that already exists is
+# the failure this workflow refuses, never its input. A `push: tags:` trigger
+# would invert that -- the tag would already be there, and the claim it exists to
+# make would be unmakeable.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "CalVer version, YYYY.MINOR.PATCH (no leading v)"
+        required: true
+        type: string
+      publish:
+        description: >-
+          Publish. Leave FALSE to validate only: gates + series generation +
+          checksum, uploaded as a workflow artifact. No tag, no release.
+        required: true
+        type: boolean
+        default: false
+
+concurrency:
+  group: release
+  # A release in flight is doing the real work and must never be cancelled by
+  # the next dispatch -- a half-claimed tag is the one state with no clean undo.
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ------------------------------------------------------------------
+  # ONE canonical commit, established before anything is built, carried
+  # by every later job. A release that resolved its own ref twice could
+  # build one commit and tag another.
+  # ------------------------------------------------------------------
+  release-source:
+    name: resolve release source
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - name: Refuse any ref except canonical main
+        run: |
+          set -euo pipefail
+          [ "${GITHUB_REF}" = "refs/heads/main" ] || {
+            echo "::error::release dispatched from ${GITHUB_REF}; only refs/heads/main releases"
+            exit 1
+          }
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Validate the version and resolve the commit
+        id: resolve
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          # CalVer, YYYY.MINOR.PATCH, matching the rest of the CeraLive stack.
+          # A pre-release or build-metadata suffix fails closed here rather than
+          # producing a tag the consumer's island/ lane cannot name.
+          printf '%s' "$VERSION" | grep -qE '^[0-9]{4}\.[0-9]+\.[0-9]+$' || {
+            echo "::error::version '$VERSION' is not CalVer YYYY.MINOR.PATCH"
+            exit 1
+          }
+          sha="$(git rev-parse HEAD)"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$sha" origin/main || {
+            echo "::error::$sha is not reachable from origin/main"
+            exit 1
+          }
+          {
+            echo "sha=$sha"
+            echo "tag=v$VERSION"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing v$VERSION from $sha"
+
+  # ------------------------------------------------------------------
+  # Test before publish. The release re-runs the gates against the exact
+  # commit it will tag, rather than trusting that the last CI run on main
+  # covered it.
+  # ------------------------------------------------------------------
+  gates:
+    name: gates
+    needs: [release-source]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-source.outputs.sha }}
+
+      - name: Assert the checkout is the resolved commit
+        run: |
+          [ "$(git rev-parse HEAD)" = "${{ needs.release-source.outputs.sha }}" ] || {
+            echo "::error::checkout drifted from the resolved release commit"
+            exit 1
+          }
+
+      - name: Shell lint
+        run: shellcheck -S style -e SC1091 -x tests/board/*.sh tests/board/lib/*.sh scripts/*.sh
+
+      - name: Tooling self-tests
+        run: |
+          set -euo pipefail
+          for tool in \
+            scripts/build-series.py \
+            scripts/verify-series-parity.py \
+            scripts/check-compat-shims.py \
+            scripts/check-dt-ownership.py \
+            scripts/check-upstream-freshness.py; do
+            python3 "$tool" --self-test
+          done
+          bash scripts/check-action-pins.sh --self-test
+
+      - name: Series integrity, both opinions
+        run: |
+          python3 scripts/build-series.py --check
+          python3 scripts/verify-series-parity.py
+
+      - name: Shim lint
+        run: python3 scripts/check-compat-shims.py
+
+      - name: DT ownership lint
+        run: python3 scripts/check-dt-ownership.py
+
+      - name: UAPI parity
+        run: python3 -m unittest discover -s tests/uapi -v
+
+  # ------------------------------------------------------------------
+  # The artifact. The series is REGENERATED here and byte-compared with
+  # the checked-in patches/ -- publishing a tarball of a hand-edited
+  # patches/ is exactly the defect series-integrity exists to catch.
+  # ------------------------------------------------------------------
+  build-series:
+    name: build series asset
+    needs: [release-source, gates]
+    runs-on: ubuntu-latest
+    outputs:
+      asset: ${{ steps.pack.outputs.asset }}
+      sha256: ${{ steps.pack.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-source.outputs.sha }}
+
+      - name: Regenerate and byte-compare before packing
+        run: python3 scripts/build-series.py --check
+
+      - name: Pack the git-am series and its checksum
+        id: pack
+        env:
+          TAG: ${{ needs.release-source.outputs.tag }}
+        run: |
+          set -euo pipefail
+          asset="rk3588-media-island-${TAG}.mbox.tar"
+          mkdir -p dist
+          # Deterministic tar: sorted names, no owner/group, a fixed mtime. The
+          # consumer's island/ lane records this asset's digest, so two runs of
+          # one commit producing two digests would make that record unverifiable.
+          tar --sort=name --owner=0 --group=0 --numeric-owner \
+            --mtime='UTC 2020-01-01' --format=gnu \
+            -cf "dist/${asset}" -C patches .
+          ( cd dist && sha256sum "${asset}" > "${asset}.sha256" )
+          digest="$(cut -d' ' -f1 < "dist/${asset}.sha256")"
+          {
+            echo "asset=${asset}"
+            echo "sha256=${digest}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Packed ${asset} (${digest})"
+          tar -tvf "dist/${asset}"
+
+      - name: Prove the checksum verifies from the packed bytes
+        run: ( cd dist && sha256sum -c "${{ steps.pack.outputs.asset }}.sha256" )
+
+      # An artifact upload is NOT a publication. This is what a dry run
+      # (`publish: false`) produces, and it is deliberately the same bytes the
+      # publish path uploads, so validating a release cannot validate something
+      # other than what would ship.
+      - name: Upload the series as a workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: rk3588-media-island-series
+          path: dist/
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------
+  # VALIDATION MODE STOPS ABOVE. With `publish: false` everything runs --
+  # the gates, the regeneration, the byte-compare, the checksum, the
+  # artifact upload -- and no tag is created, no release exists, and
+  # nothing reaches the consumer. A dry run therefore cannot publish by
+  # accident, which is why `publish` defaults to false.
+  # ------------------------------------------------------------------
+  publish:
+    name: claim the tag and publish
+    if: ${{ inputs.publish }}
+    needs: [release-source, gates, build-series]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-source.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Download the built series
+        uses: actions/download-artifact@v8
+        with:
+          name: rk3588-media-island-series
+          path: dist
+
+      - name: Refuse an occupied release namespace before any claim
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-source.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::release $TAG already exists; refusing to claim its tag"
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::tag $TAG already exists; a published tag is immutable"
+            exit 1
+          fi
+
+      # ATOMIC. The create-reference API either creates the tag at this exact
+      # commit or fails; there is no read-then-write window for a concurrent
+      # run to land in. The tag is then fetched back and re-verified, because
+      # "the API returned 201" and "the tag points where we asked" are two
+      # different claims.
+      - name: Claim the release tag atomically
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-source.outputs.tag }}
+          SOURCE_SHA: ${{ needs.release-source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          created="$(gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/tags/${TAG}" -f sha="${SOURCE_SHA}" --jq '.object.sha')"
+          [ "$created" = "$SOURCE_SHA" ] || {
+            echo "::error::GitHub created ${TAG} at ${created}, expected ${SOURCE_SHA}"
+            exit 1
+          }
+          git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          [ "$(git rev-parse "refs/tags/${TAG}^{commit}")" = "$SOURCE_SHA" ] || {
+            echo "::error::${TAG} does not resolve to ${SOURCE_SHA} after fetch"
+            exit 1
+          }
+
+      - name: Write the release notes
+        env:
+          TAG: ${{ needs.release-source.outputs.tag }}
+          SOURCE_SHA: ${{ needs.release-source.outputs.sha }}
+          ASSET: ${{ needs.build-series.outputs.asset }}
+          DIGEST: ${{ needs.build-series.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          patches=$(find patches -name '*.patch' | wc -l)
+          cat > dist/NOTES.md <<EOF
+          ## rk3588-media-island ${TAG}
+
+          The CeraLive RK3588 multimedia island, released as a \`git am\` mailbox
+          series. The series is an OUTPUT, generated from
+          \`drivers/video/rockchip/{mpp,rga3}/\`, \`include/uapi/linux/\` and
+          \`integration/\` by \`scripts/build-series.py\`, byte-compared against the
+          checked-in \`patches/\` before this release was packed.
+
+          ### Asset
+          | | |
+          |---|---|
+          | Series | \`${ASSET}\` (${patches} patch(es)) |
+          | SHA-256 | \`${DIGEST}\` |
+          | Source commit | \`${SOURCE_SHA}\` on canonical \`main\` |
+          | Target kernel | see \`kernel-pin.env\` — mirrored, never decided here |
+
+          ### How this becomes a kernel change
+          Three merges, not one: this tag → the \`rk3588-kernel-patches\`
+          \`island/\` lane bump that consumes the asset byte-preserved → the image's
+          single \`kernel_source.patches_commit\` bump. The island produces no
+          \`.deb\` and rides inside \`linux-image\`.
+
+          The tag was claimed atomically at \`${SOURCE_SHA}\` and verified before
+          this release was created; every asset is byte-compared after upload.
+          EOF
+          cat dist/NOTES.md
+
+      - name: Create the release as a draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-source.outputs.tag }}
+          ASSET: ${{ needs.build-series.outputs.asset }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --draft \
+            --title "rk3588-media-island $TAG" \
+            --notes-file dist/NOTES.md \
+            "dist/${ASSET}" "dist/${ASSET}.sha256"
+
+      # Download what GitHub actually stored and compare it with what was built.
+      # An upload that silently truncated would otherwise ship a digest the
+      # consumer's lane records for bytes nobody can reproduce.
+      - name: Byte-compare every published asset against the build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-source.outputs.tag }}
+          ASSET: ${{ needs.build-series.outputs.asset }}
+          DIGEST: ${{ needs.build-series.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          mkdir -p verify
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir verify --clobber
+          cmp "dist/${ASSET}" "verify/${ASSET}"
+          cmp "dist/${ASSET}.sha256" "verify/${ASSET}.sha256"
+          [ "$(sha256sum "verify/${ASSET}" | cut -d' ' -f1)" = "$DIGEST" ] || {
+            echo "::error::the published asset does not match the built digest"
+            exit 1
+          }
+          echo "ok: every published asset is byte-identical to the build"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release-source.outputs.tag }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+
+      - name: Re-verify the tag after publication
+        env:
+          TAG: ${{ needs.release-source.outputs.tag }}
+          SOURCE_SHA: ${{ needs.release-source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          [ "$(git rev-parse "refs/tags/${TAG}^{commit}")" = "$SOURCE_SHA" ] || {
+            echo "::error::${TAG} moved between the claim and publication"
+            exit 1
+          }
+          echo "ok: ${TAG} still resolves to ${SOURCE_SHA}"
