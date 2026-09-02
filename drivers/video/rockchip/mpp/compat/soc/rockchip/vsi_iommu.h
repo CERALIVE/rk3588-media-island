@@ -1,0 +1,45 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+#ifndef __COMPAT_SOC_ROCKCHIP_VSI_IOMMU_H
+#define __COMPAT_SOC_ROCKCHIP_VSI_IOMMU_H
+
+#include <linux/errno.h>
+#include <linux/iommu.h>
+
+struct device;
+
+static inline int vsi_iommu_refresh(struct device *dev)
+{
+	return -ENODEV;
+}
+
+static inline void vsi_iommu_mask_irq(struct device *dev)
+{
+}
+
+static inline void vsi_iommu_unmask_irq(struct device *dev)
+{
+}
+
+static inline int vsi_iommu_prepare_irq(struct device *dev)
+{
+	return -ENODEV;
+}
+
+static inline int vsi_iommu_enable_irq_delivery(struct device *dev)
+{
+	return -ENODEV;
+}
+
+static inline int vsi_iommu_set_fault_handler(struct device *dev,
+					      iommu_fault_handler_t handler,
+					      void *token)
+{
+	return -ENODEV;
+}
+
+static inline int vsi_iommu_sync_fault_handler(struct device *dev)
+{
+	return -ENODEV;
+}
+
+#endif

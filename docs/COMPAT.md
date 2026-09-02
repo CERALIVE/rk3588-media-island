@@ -78,6 +78,7 @@ rebase remains todo 8.
 | `soc/rockchip/rockchip_sip.h` | `mpp/mpp_rkvdec2.h:28@e7ff978398825b63ddcb13e0572d77564034c1e2` | No declaration from this header is consumed; `sip_smc_vpu_reset` comes from the separate Linux-path shim. | STUB-SAFE(-ENODEV/no-op) | Keep v7.2's existing header or delete this dead include during rebase; `include/soc/rockchip/rockchip_sip.h`. | None. | KEEP-STUB | Probe-time include only. | No operator-visible change. | 8 rebase; 54 ledger. |
 | `soc/rockchip/rockchip_system_monitor.h` | `mpp/mpp_rkvdec2.c:23; mpp/mpp_rkvenc2.c:34@e7ff978398825b63ddcb13e0572d77564034c1e2` | BSP temperature/voltage policy service. | STUB-SAFE(-ENODEV/no-op) | Mainline thermal cooling adapter; `include/linux/thermal.h`. | No device-specific throttling until evidence asks for it. | MEDIUM (1–3 day adapter) | Probe/thermal-event. | Honest thermal integration without the BSP-wide monitor. | 40→55. |
 | `soc/rockchip/vsi_iommu.h` | `mpp/mpp_iommu.c:30@e7ff978398825b63ddcb13e0572d77564034c1e2` | Selects Verisilicon/AV1 provider refresh, IRQ, and callback hooks; disabled branch returns `-ENODEV` (`include/soc/rockchip/vsi_iommu.h:10-52@e7ff978398825b63ddcb13e0572d77564034c1e2`). | STUB-SAFE(-ENODEV/no-op) | Keep a local disabled-client shim; importing `drivers/iommu/vsi-iommu.c` is outside GA scope. | None for RKVENC2/RKVDEC2/JPGDEC/RGA; AV1 remains disabled. | KEEP-STUB | Branch-tested during MPP fault setup; resolves immediately to Rockchip provider. | No accidental AV1/provider promise. | 8 drops VSI provider/marks AV1 BROKEN; 54 ledger. |
+| `compat/soc/rockchip/vsi_iommu.h` | Local resolution of `mpp/mpp_iommu.c:30` after the manifest drops the AV1-only provider/header from `0005` | Carries only the provider-disabled `-ENODEV`/no-op branch; selected Rockchip clients take the real Rockchip provider path first. | STUB-SAFE(-ENODEV/no-op) | Island-local disabled-client shim under the MPP `$(src)/compat` include root. | None; AV1 and IEP2 remain unselectable. | KEEP-STUB | Branch-tested fallback after the Rockchip provider probe. | Lets the selected clients compile without importing or pretending to support the Verisilicon provider. | 8. |
 | `rockchip_dmcfreq_lock` | `mpp/mpp_rkvdec2.c:1473; mpp/mpp_rkvdec2_link.c:2069,2761@e7ff978398825b63ddcb13e0572d77564034c1e2` | Read-locks DMC frequency changes around firmware reset (`drivers/devfreq/rockchip_dmc_common.c:20-24@b4ef083dc0c3608e744deabb43dc6b781aadbe6e`). | STUB-SAFE(-ENODEV/no-op) | No replacement; CRU reset is the live path. | No DDR-frequency exclusion; media clocks unchanged. | KEEP-STUB | Fault/reset path. | Avoids board-wide DMC dependency. | 40/54. |
 | `rockchip_dmcfreq_lock_nested` | lexical-census only: `mpp/compat/soc/rockchip/rockchip_dmc.h:20@e7ff978398825b63ddcb13e0572d77564034c1e2` | Nested form of vendor DMC read lock; no imported caller. | STUB-SAFE(-ENODEV/no-op) | None; delete if shim is narrowed. | None. | KEEP-STUB | Never called. | No gain; census closure only. | 54 ledger. |
 | `rockchip_dmcfreq_unlock` | `mpp/mpp_rkvdec2.c:1475; mpp/mpp_rkvdec2_link.c:2071,2763@e7ff978398825b63ddcb13e0572d77564034c1e2` | Releases vendor DMC read semaphore (`drivers/devfreq/rockchip_dmc_common.c:32-36@b4ef083dc0c3608e744deabb43dc6b781aadbe6e`). | STUB-SAFE(-ENODEV/no-op) | No replacement. | No DDR-frequency exclusion. | KEEP-STUB | Fault/reset path. | Same reset behavior without BSP DMC stack. | 40/54. |
@@ -184,9 +185,10 @@ The source has **8** unique `<soc/rockchip/...>` includes:
 `pm_domains.h`, `rockchip_dmc.h`, `rockchip_iommu.h`, `rockchip_ipa.h`,
 `rockchip_opp_select.h`, `rockchip_sip.h`, `rockchip_system_monitor.h`, and
 `vsi_iommu.h`; each has a header row. Patch `0001` created **8** compat headers;
-the current tree has **7** because `rockchip_iommu.h` graduated into the real
-provider contract in `0005`. The historical shim and current real header both
-have rows, deliberately.
+the replayed tree has **7** because `rockchip_iommu.h` graduated into the real
+provider contract in `0005`. The island adds the eighth current compat header,
+the deliberately disabled VSI provider branch above. The historical Rockchip
+shim and current real header both have rows, deliberately.
 
 The additional non-`rockchip_*` external dependency census is closed by one
 `sip_smc_vpu_reset` row, seven `vsi_iommu_*` rows, and eleven RGA fence rows.
@@ -195,10 +197,10 @@ phantom row was created. MPP procfs and the RGA debugger are imported internal
 code, not shims or unresolved externs; todo 54 makes them required-on rather
 than classifying them here as dependencies.
 
-Expected Markdown data-row count is therefore **67** = 16 header-identity rows
+Expected Markdown data-row count is therefore **68** = 17 header-identity rows
 (8 original compat paths plus all 8 current `<soc/rockchip/...>` include
-spellings; four include spellings resolve to compat files and are intentionally
-shown both ways) + 32 required Rockchip lexical symbols + 1 SIP + 7 VSI + 11 fence rows. This exceeds
+spellings plus the island-local VSI shim; four include spellings resolve to
+compat files and are intentionally shown both ways) + 32 required Rockchip lexical symbols + 1 SIP + 7 VSI + 11 fence rows. This exceeds
 the 32-symbol grep denominator for the documented reasons above; `wc -l` alone
 is not used to confuse document lines with table rows.
 
