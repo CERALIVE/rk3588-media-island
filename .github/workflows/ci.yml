@@ -144,10 +144,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install the aarch64 cross toolchain
+      # `gcc-aarch64-linux-gnu` is the compiler and NOT the target headers. The
+      # probes include <stdint.h> and <sys/ioctl.h>, so without
+      # `libc6-dev-arm64-cross` the cross compiler falls back to the runner's own
+      # /usr/include and dies on `bits/wordsize.h`. The kernel job needs no such
+      # package -- a kernel build is freestanding.
+      - name: Install the aarch64 cross toolchain and its target libc headers
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu libc6-dev-arm64-cross
 
       # The probes carry _Static_assert layout checks over the MPP and RGA UAPI
       # structs, and are built -Werror. A drifted header is therefore a failed

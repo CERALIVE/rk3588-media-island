@@ -409,7 +409,8 @@ asset's digest. Two runs of one commit producing two digests would make that
 record unverifiable.
 
 **Not exercised in this change.** No release has been dispatched in either mode.
-The workflow is written and reviewed; it has not run.
+The workflow is written and reviewed; it has not run. `ci.yml` has, which is a
+different claim — see §9.
 
 ---
 
@@ -451,12 +452,31 @@ exit=0
 
 ## 9. Timings
 
-**Not yet measured.** The plan asks for `cross-compile-modules` under 25 minutes
-cold and 8 minutes warm; no run has happened, because the workflows are being
-introduced by this change and nothing has executed on GitHub's runners yet. The
-numbers go here after the first cold and first warm run on `main`, and until then
-this section says so rather than carrying an estimate that would read like a
-measurement.
+Measured on GitHub's `ubuntu-latest` runners, first run on `main`
+(`33685651864`, 2026-09-02) — a **cold** cache, so the kernel clone and every
+apt install were paid in full:
+
+| Job | Cold |
+|---|---|
+| `cross-compile-modules` | **140 s** |
+| `self-tests` | 35 s |
+| `board-probes` | 22 s |
+| `shellcheck` | 8 s |
+| `dt-ownership-lint` | 7 s |
+| `series-integrity` / `pin` / `pin-equality` | 6 s each |
+| `uapi-parity` | 5 s |
+| `shim-lint` / `action-pins` | 4 s |
+| `kunit` / `static-analysis` | 3 s |
+
+The plan's budget for `cross-compile-modules` is 25 minutes cold and 8 warm;
+the cold run came in at 2 m 20 s. That is **not** a warm-cache figure and it is
+not the steady-state number either — it is fast because the module build itself
+is skipped (`NO-MODULES-YET`) while everything around it runs. Expect it to grow
+substantially when the import lands real source, and re-measure then rather than
+carrying this row forward as if it still applied.
+
+The warm-cache figure is not recorded yet: the first run populated the cache and
+nothing has re-run against it.
 
 ---
 
@@ -480,7 +500,7 @@ Recorded so the import is not surprised by them:
    and this document's §1 item 2 stops being a two-way merge.
 5. **`kunit` builds nothing today.** Its first real run will need a
    `tests/kunit/.kunitconfig`; the job passes `--kunitconfig=tests/kunit` already.
-6. **No workflow has ever run.** Every transcript in this document was produced
-   locally, against the same scripts CI invokes. That is a real proof of the
-   gates and *not* a proof of the YAML around them; the first push is what
-   validates the workflow files themselves.
+6. **The warm-cache path is unmeasured**, and `release.yml` has never been
+   dispatched in either mode. `ci.yml` has now run end to end on GitHub's
+   runners (§9), which validates the YAML as well as the gates; the release
+   workflow is written and reviewed but unexecuted, and §7 says so.
