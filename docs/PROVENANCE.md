@@ -1,9 +1,10 @@
 # Provenance — where every line of this repository's driver source came from
 
-**Status: scaffold.** The audit tables below are empty because no driver source
-has been imported yet. This document is written now, ahead of the import, so the
-import has a shape to fill rather than a blank page to invent — and so nobody can
-later argue about what provenance was supposed to be recorded.
+**Status: import in progress.** The donor snapshot and the complete 97-member
+manifest replay are committed. The equality proof below freezes the 6.18
+checkpoint before any CeraLive 7.2 adaptation begins; the per-file tables are
+filled after that adaptation so they describe the maintained result rather than
+an intermediate tree.
 
 The source import fills every table here in the same change that adds the code.
 A file landing in `drivers/video/rockchip/` without its row is a review blocker,
@@ -31,6 +32,68 @@ Named in full, with the reason each is pinned, in
 - realized series: `yisding/linux-rock5b@e7ff978398825b63ddcb13e0572d77564034c1e2`
 - historical comparison only: `armbian/linux-rockchip@fd9f82366e235b8afbdf516765210e97d24dce93`
 - mainline baseline: Linux `v7.2@8d3ae59288f1e7d58d76558a6ee96d533bc5019f`
+
+## 6.18 manifest-replay equality checkpoint
+
+The replay used the 97 commits in
+`yisding/linux-rock5b@e7ff978398825b63ddcb13e0572d77564034c1e2` as the
+reference tree and selected paths only through
+[`IMPORT-MANIFEST.tsv`](IMPORT-MANIFEST.tsv). No patch mailbox was applied in
+this repository. `fwport-0001` was materialized as the donor-to-post-0001
+delta, and every later member advanced only the `SOURCE` paths named for that
+member. The three temporary 6.18-context integration patches accumulated the
+`INTEGRATION` paths in the same member order.
+
+The manifest census at the pinned patch-record object was:
+
+```text
+$ python3 scripts/import-manifest.py --patch-dir <pinned-forward-port-rk3588>
+OK: 81 unique diff path(s) across 97 members; classes=DROP,INTEGRATION,SOURCE; none unclassified.
+
+SOURCE paths:       57
+INTEGRATION paths:   8
+DROP paths:         16
+```
+
+Before starting the 7.2 rebase, the integration patches were applied to a
+fresh detached `Linux 6.18@7d0a66e4bb908` worktree and the island `SOURCE`
+paths were overlaid. Every manifest-selected `SOURCE` and `INTEGRATION` path
+was then byte-compared with the realized tip:
+
+```text
+Checking patch drivers/video/Kconfig...
+Checking patch drivers/video/Makefile...
+Checking patch drivers/video/rockchip/Kconfig...
+Checking patch drivers/video/rockchip/Makefile...
+Applied patch drivers/video/Kconfig cleanly.
+Applied patch drivers/video/Makefile cleanly.
+Applied patch drivers/video/rockchip/Kconfig cleanly.
+Applied patch drivers/video/rockchip/Makefile cleanly.
+Checking patch drivers/iommu/rockchip-iommu.c...
+Checking patch include/soc/rockchip/rockchip_iommu.h...
+Applied patch drivers/iommu/rockchip-iommu.c cleanly.
+Applied patch include/soc/rockchip/rockchip_iommu.h cleanly.
+Checking patch drivers/iommu/dma-iommu.c...
+Checking patch include/linux/iommu.h...
+Applied patch drivers/iommu/dma-iommu.c cleanly.
+Applied patch include/linux/iommu.h cleanly.
+step2-equality=PASS compared=65 source+integration paths
+```
+
+Commit provenance was checked independently across the replay range:
+
+```text
+b-series-provenance=PASS commits=97 order=0001..0097 origins=97
+b-series-source-parity=PASS manifest_source_paths=57 donor_only_retained=9
+```
+
+The complete donor import deliberately retains nine clients that the maintained
+series never touched: `mpp_jpgdec.c`, `mpp_jpgenc.c`, `mpp_rkvdec.c`,
+`mpp_rkvenc.c`, `mpp_vdpp.c`, `mpp_vdpu1.c`, `mpp_vdpu2.c`, `mpp_vepu1.c`,
+and `mpp_vepu2.c`. `mpp_jpgdec.c` is ported for the selected JPGDEC client in
+the CeraLive 7.2 commits. The other eight remain source-complete but are made
+unselectable with `depends on BROKEN`; retaining them is not a claim that they
+compile or own silicon.
 
 ## Per-file import ledger — TO BE FILLED AT IMPORT
 
