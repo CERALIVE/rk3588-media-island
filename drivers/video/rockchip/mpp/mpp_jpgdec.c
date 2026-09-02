@@ -135,13 +135,14 @@ static int jpgdec_process_reg_fd(struct mpp_session *session,
 	int ret = 0;
 
 	ret = mpp_translate_reg_address(session, &task->mpp_task,
-					JPEGDEC_FMT_DEFAULT, task->reg, &task->off_inf);
+					JPEGDEC_FMT_DEFAULT, task->reg,
+					ARRAY_SIZE(task->reg), &task->off_inf);
 	if (ret)
 		return ret;
 
-	mpp_translate_reg_offset_info(&task->mpp_task,
-				      &task->off_inf, task->reg);
-	return 0;
+	return mpp_translate_reg_offset_info(&task->mpp_task,
+					     &task->off_inf, task->reg,
+					     ARRAY_SIZE(task->reg));
 }
 
 static int jpgdec_extract_task_msg(struct jpgdec_task *task,
@@ -587,6 +588,7 @@ static const struct mpp_dev_var jpgdec_v1_data = {
 	.device_type = MPP_DEVICE_RKJPEGD,
 	.hw_info = &jpgdec_v1_hw_info,
 	.trans_info = jpgdec_v1_trans,
+	.trans_count = ARRAY_SIZE(jpgdec_v1_trans),
 	.hw_ops = &jpgdec_v1_hw_ops,
 	.dev_ops = &jpgdec_v1_dev_ops,
 };
