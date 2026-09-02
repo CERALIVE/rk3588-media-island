@@ -51,8 +51,8 @@ $ python3 scripts/import-manifest.py --patch-dir <pinned-forward-port-rk3588>
 OK: 81 unique diff path(s) across 97 members; classes=DROP,INTEGRATION,SOURCE; none unclassified.
 
 SOURCE paths:       57
-INTEGRATION paths:   8
-DROP paths:         16
+INTEGRATION paths:  10
+DROP paths:         14
 ```
 
 Before starting the 7.2 rebase, the integration patches were applied to a
@@ -77,7 +77,7 @@ Checking patch drivers/iommu/dma-iommu.c...
 Checking patch include/linux/iommu.h...
 Applied patch drivers/iommu/dma-iommu.c cleanly.
 Applied patch include/linux/iommu.h cleanly.
-step2-equality=PASS compared=65 source+integration paths
+step2-equality=PASS compared=67 source+integration paths
 ```
 
 Commit provenance was checked independently across the replay range:
@@ -94,6 +94,15 @@ and `mpp_vepu2.c`. `mpp_jpgdec.c` is ported for the selected JPGDEC client in
 the CeraLive 7.2 commits. The other eight remain source-complete but are made
 unselectable with `depends on BROKEN`; retaining them is not a claim that they
 compile or own silicon.
+
+The first 7.2 compile corrected one STEP-0 classification before the rebase
+continued. `drivers/iommu/iova.c` and `include/linux/iova.h` were initially
+marked `DROP:IEP2-only`, but `mpp_iommu_reserve_iova()` is also called by the
+selected RKVENC2 and RKVDEC2 RCB-SRAM paths. Without the `0089` exclusive
+reservation helper, the MPP core fails to compile and, more importantly, plain
+`reserve_iova()` would not prove ownership before teardown. Both paths are now
+`INTEGRATION`, `integration/0003` carries the narrow helper, and the equality
+check above was rerun over the corrected 67-path set.
 
 ## Per-file import ledger — TO BE FILLED AT IMPORT
 

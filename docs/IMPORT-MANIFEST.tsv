@@ -14,7 +14,7 @@ arch/arm64/boot/dts/rockchip/rk3588-rock-5b.dtsi	DROP:todo-10-device-tree-integr
 drivers/iommu/Kconfig	DROP:AV1-only-Verisilicon-provider	0005
 drivers/iommu/Makefile	DROP:AV1-only-Verisilicon-provider	0005
 drivers/iommu/dma-iommu.c	INTEGRATION	0015
-drivers/iommu/iova.c	DROP:IEP2-only-exclusive-IOVA-reservation	0089
+drivers/iommu/iova.c	INTEGRATION	0089
 drivers/iommu/rockchip-iommu.c	INTEGRATION	0005,0012,0014,0089,0091,0096
 drivers/iommu/vsi-iommu.c	DROP:AV1-only-Verisilicon-provider	0005,0014,0089,0091,0096
 drivers/media/platform/verisilicon/Kconfig	DROP:AV1-only-Verisilicon-provider	0005
@@ -79,7 +79,7 @@ drivers/video/rockchip/rga3/rga_job.c	SOURCE	0001,0018,0021,0044,0045,0046,0050,
 drivers/video/rockchip/rga3/rga_mm.c	SOURCE	0001,0015,0018,0023,0024,0025,0026,0038,0039,0049,0050,0065,0066,0067,0070,0071,0073,0079,0080,0085,0086,0087,0093,0094,0095,0097
 drivers/video/rockchip/rga3/rga_policy.c	SOURCE	0001,0018,0036,0046,0068,0072,0094
 include/linux/iommu.h	INTEGRATION	0015
-include/linux/iova.h	DROP:IEP2-only-exclusive-IOVA-reservation	0089
+include/linux/iova.h	INTEGRATION	0089
 include/soc/rockchip/rockchip_iommu.h	INTEGRATION	0005,0014,0089,0096
 include/soc/rockchip/vsi_iommu.h	DROP:AV1-only-Verisilicon-provider	0005,0089,0096
 include/uapi/linux/rk-mpp.h	SOURCE	0001,0006

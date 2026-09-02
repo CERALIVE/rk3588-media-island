@@ -119,6 +119,8 @@ rebase remains todo 8.
 | `vsi_iommu_enable_irq_delivery` | `mpp/mpp_iommu.c:1315@e7ff978398825b63ddcb13e0572d77564034c1e2` | Commits VSI fault delivery after START. | STUB-SAFE(-ENODEV/no-op) | Disabled inline. | None. | KEEP-STUB | Per task fallback branch. | No unsupported AV1 promise. | 8/54. |
 | `vsi_iommu_set_fault_handler` | `mpp/mpp_iommu.c:1079,1172@e7ff978398825b63ddcb13e0572d77564034c1e2` | Installs/removes VSI provider-local callback. | STUB-SAFE(-ENODEV/no-op) | Disabled inline; generic handler remains fallback for cookie-less providers. | None. | KEEP-STUB | Activate/teardown fallback. | No unsupported provider lifetime. | 8/54. |
 | `vsi_iommu_sync_fault_handler` | `mpp/mpp_iommu.c:1104,1366@e7ff978398825b63ddcb13e0572d77564034c1e2` | Quiesces VSI callback token. | STUB-SAFE(-ENODEV/no-op) | Disabled inline. | None. | KEEP-STUB | Teardown fallback. | No unsupported provider dependency. | 8/54. |
+| `iommu_dma_get_iova_domain` | `rga3/rga_dma_buf.c:232@e7ff978398825b63ddcb13e0572d77564034c1e2` | Exposes the DMA domain's real IOVA allocator so scattered USERPTR pages can be mapped into one byte-contiguous hardware span without shadowing the private cookie layout. | REAL-DEPENDENCY | Narrow export from `drivers/iommu/dma-iommu.c` in `integration/0003`; v7.2 has no public equivalent. | Allocation only; no clock or PM effect. | QUICK-WIN (≤1 day drop-in) | RGA USERPTR fallback mapping. | Preserves the validated scattered-page mapping without coupling RGA to a private struct definition. | 8. |
+| `reserve_iova_exclusive` | `mpp/mpp_iommu.c:1448`, reached by RKVENC2 RCB SRAM (`mpp_rkvenc2.c:3430`) and RKVDEC2 RCB SRAM (`mpp_rkvdec2.c:1899`) at `e7ff978398825b63ddcb13e0572d77564034c1e2` | Reserves a fixed IOVA only when the entire range is unowned, so teardown cannot free another DMA allocation's overlapping node. | REAL-DEPENDENCY | Narrow `drivers/iommu/iova.c` export in `integration/0003`; plain `reserve_iova()` treats overlap as success and does not preserve ownership. | Probe/task setup only; no clock policy. | QUICK-WIN (≤1 day drop-in) | Encoder/decoder RCB setup and disabled IEP2 auxiliary mapping. | Prevents cross-owner IOVA removal and keeps selected encoder/decoder SRAM mappings safe. | 8; discovered by the first 7.2 compile. |
 | `rga_fence_context_init` | `rga3/rga_drv.c:1822@e7ff978398825b63ddcb13e0572d77564034c1e2` | Allocates dma-fence context/sequence state (`rga3/rga_fence.c:26-41@e7ff978398825b63ddcb13e0572d77564034c1e2`). | REAL-DEPENDENCY | Mainline `dma_fence_context_alloc`; `include/linux/dma-fence.h:753@8d3ae59288f1e7d58d76558a6ee96d533bc5019f`. | Negligible probe allocation; independent of clocks/PM. | QUICK-WIN (≤1 day drop-in) | Probe. | Enables real async request timelines if pinned librga emits fences. | 54 probe decides ON; 26 validates if ON. |
 | `rga_fence_context_remove` | `rga3/rga_drv.c:1867@e7ff978398825b63ddcb13e0572d77564034c1e2` | Frees fence context (`rga3/rga_fence.c:44-51@e7ff978398825b63ddcb13e0572d77564034c1e2`). | REAL-DEPENDENCY | Normal driver/devm teardown around dma-fence context. | None. | QUICK-WIN (≤1 day drop-in) | Remove. | Balanced async lifetime. | 54/26 if ON. |
 | `rga_dma_fence_alloc` | `rga3/rga_job.c:1666@e7ff978398825b63ddcb13e0572d77564034c1e2` | Allocates and initializes one release fence (`rga3/rga_fence.c:53-70@e7ff978398825b63ddcb13e0572d77564034c1e2`). | REAL-DEPENDENCY | `dma_fence_init`; `include/linux/dma-fence.h:275@8d3ae59288f1e7d58d76558a6ee96d533bc5019f`. | Small per-request allocation; no PM impact. | QUICK-WIN (≤1 day drop-in) | Per async request/job. | Nonblocking RGA submissions with completion dependency. | 54/26 if ON. |
@@ -191,16 +193,17 @@ the deliberately disabled VSI provider branch above. The historical Rockchip
 shim and current real header both have rows, deliberately.
 
 The additional non-`rockchip_*` external dependency census is closed by one
-`sip_smc_vpu_reset` row, seven `vsi_iommu_*` rows, and eleven RGA fence rows.
+`sip_smc_vpu_reset` row, seven `vsi_iommu_*` rows, two IOVA-provider rows, and
+eleven RGA fence rows.
 `rk_dma_heap_*` has **zero hits** in both donor and realized MPP/RGA paths; no
 phantom row was created. MPP procfs and the RGA debugger are imported internal
 code, not shims or unresolved externs; todo 54 makes them required-on rather
 than classifying them here as dependencies.
 
-Expected Markdown data-row count is therefore **68** = 17 header-identity rows
+Expected Markdown data-row count is therefore **70** = 17 header-identity rows
 (8 original compat paths plus all 8 current `<soc/rockchip/...>` include
 spellings plus the island-local VSI shim; four include spellings resolve to
-compat files and are intentionally shown both ways) + 32 required Rockchip lexical symbols + 1 SIP + 7 VSI + 11 fence rows. This exceeds
+compat files and are intentionally shown both ways) + 32 required Rockchip lexical symbols + 1 SIP + 7 VSI + 2 IOVA + 11 fence rows. This exceeds
 the 32-symbol grep denominator for the documented reasons above; `wc -l` alone
 is not used to confuse document lines with table rows.
 
