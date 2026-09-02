@@ -1,0 +1,64 @@
+Subject: iommu: dma: expose the domain IOVA allocator for multi_rga
+
+Manifest-selected integration hunks replayed from the pinned 6.18 series.
+They are re-anchored to the pinned v7.2 tree in the CeraLive port commits.
+
+Origin: yisding/rock-5b-ysp@ca3da04280c48c004e522c15f31862bf88a2d1b9:kernel-drivers/patches/forward-port-rk3588/rk3588-fwport-0015-media-rockchip-rga3-map-scattered-userptr-through-IO.patch
+
+diff --git a/drivers/iommu/dma-iommu.c b/drivers/iommu/dma-iommu.c
+index f1fb27681b0bdc1ad57d409df4a43684f9a63032..b470c181c03cfe9eebcf039d169cdf065edd267e 100644
+--- a/drivers/iommu/dma-iommu.c
++++ b/drivers/iommu/dma-iommu.c
+@@ -382,6 +382,20 @@ int iommu_get_dma_cookie(struct iommu_domain *domain)
+ 	return 0;
+ }
+ 
++/**
++ * iommu_dma_get_iova_domain - Return the DMA-API IOVA allocator for a domain
++ * @domain: IOMMU domain prepared for DMA-API usage
++ */
++struct iova_domain *iommu_dma_get_iova_domain(struct iommu_domain *domain)
++{
++	if (!domain || domain->cookie_type != IOMMU_COOKIE_DMA_IOVA ||
++	    !domain->iova_cookie)
++		return NULL;
++
++	return &domain->iova_cookie->iovad;
++}
++EXPORT_SYMBOL_GPL(iommu_dma_get_iova_domain);
++
+ /**
+  * iommu_get_msi_cookie - Acquire just MSI remapping resources
+  * @domain: IOMMU domain to prepare
+diff --git a/include/linux/iommu.h b/include/linux/iommu.h
+index c30d12e16473df31c816b62f255fd57a3e4d00f1..2007a9058608f9636edf62e4b7bf086356357258 100644
+--- a/include/linux/iommu.h
++++ b/include/linux/iommu.h
+@@ -43,6 +43,7 @@ struct notifier_block;
+ struct iommu_sva;
+ struct iommu_dma_cookie;
+ struct iommu_dma_msi_cookie;
++struct iova_domain;
+ struct iommu_fault_param;
+ struct iommufd_ctx;
+ struct iommufd_viommu;
+@@ -1555,11 +1556,19 @@ static inline void iommu_debugfs_setup(void) {}
+ 
+ #ifdef CONFIG_IOMMU_DMA
+ int iommu_get_msi_cookie(struct iommu_domain *domain, dma_addr_t base);
++struct iova_domain *
++iommu_dma_get_iova_domain(struct iommu_domain *domain);
+ #else /* CONFIG_IOMMU_DMA */
+ static inline int iommu_get_msi_cookie(struct iommu_domain *domain, dma_addr_t base)
+ {
+ 	return -ENODEV;
+ }
++
++static inline struct iova_domain *
++iommu_dma_get_iova_domain(struct iommu_domain *domain)
++{
++	return NULL;
++}
+ #endif	/* CONFIG_IOMMU_DMA */
+ 
+ /*
