@@ -15,16 +15,16 @@
 #include <linux/dma-mapping.h>
 #include <linux/interrupt.h>
 #include <linux/iova.h>
+#include <linux/stddef.h>
 
-enum iommu_dma_cookie_type {
-	IOMMU_DMA_IOVA_COOKIE,
-	IOMMU_DMA_MSI_COOKIE,
-};
-
-/* Keep in mind: member order must keep align with struct iommu_dma_cookie */
+/*
+ * 6.18: struct iommu_dma_cookie (drivers/iommu/dma-iommu.c) dropped its
+ * leading "enum iommu_dma_cookie_type type" member (the enum type itself was
+ * deleted), so iovad now sits at offset 0. This shadow struct only exists to
+ * reach iovad via iommu_domain->iova_cookie; the layout MUST keep iovad first.
+ */
 struct mpp_iommu_dma_cookie {
-	enum iommu_dma_cookie_type type;
-	/* Full allocator for IOMMU_DMA_IOVA_COOKIE */
+	/* Full allocator for the IOVA cookie; must stay at offset 0 */
 	struct iova_domain iovad;
 };
 

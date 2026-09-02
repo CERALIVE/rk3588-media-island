@@ -23,7 +23,7 @@
 #include <soc/rockchip/rockchip_system_monitor.h>
 #include <soc/rockchip/rockchip_iommu.h>
 
-#ifdef CONFIG_PM_DEVFREQ
+#ifdef CONFIG_ROCKCHIP_MPP_RKVDEC2_DEVFREQ
 #include "../drivers/devfreq/governor.h"
 #endif
 
@@ -971,7 +971,7 @@ static inline int rkvdec2_procfs_init(struct mpp_dev *mpp)
 }
 #endif
 
-#ifdef CONFIG_PM_DEVFREQ
+#ifdef CONFIG_ROCKCHIP_MPP_RKVDEC2_DEVFREQ
 static int rkvdec2_devfreq_target(struct device *dev,
 				  unsigned long *freq, u32 flags)
 {
@@ -1691,12 +1691,17 @@ static const struct of_device_id mpp_rkvdec2_dt_match[] = {
 		.data = &rkvdec_rk3568_data,
 	},
 #endif
-#ifdef CONFIG_CPU_RK3588
 	{
+		/*
+		 * RK3588 dual-core RKVDEC2 CCU. Kept unconditional (was behind
+		 * CONFIG_CPU_RK3588, which mainline/Armbian configs do not define)
+		 * so rkvdec2_ccu_probe binds and the cores can attach_ccu; harmless
+		 * on non-RK3588 SoCs since the DT simply has no matching nodes.
+		 * rkvdec_rk3588_data is always defined.
+		 */
 		.compatible = "rockchip,rkv-decoder-v2-ccu",
 		.data = &rkvdec_rk3588_data,
 	},
-#endif
 #ifdef CONFIG_CPU_RK3528
 	{
 		.compatible = "rockchip,rkv-decoder-rk3528",
@@ -1844,7 +1849,7 @@ static int rkvdec2_alloc_rcbbuf(struct platform_device *pdev, struct rkvdec2_dev
 	sram_size = rcb_size < sram_size ? rcb_size : sram_size;
 	/* iova map to sram */
 	domain = dec->mpp.iommu_info->domain;
-	ret = iommu_map(domain, iova, sram_start, sram_size, IOMMU_READ | IOMMU_WRITE);
+	ret = iommu_map(domain, iova, sram_start, sram_size, IOMMU_READ | IOMMU_WRITE, GFP_KERNEL);
 	if (ret) {
 		dev_err(dev, "sram iommu_map error.\n");
 		return ret;
@@ -1862,7 +1867,7 @@ static int rkvdec2_alloc_rcbbuf(struct platform_device *pdev, struct rkvdec2_dev
 		}
 		/* iova map to dma */
 		ret = iommu_map(domain, iova + sram_size, page_to_phys(page),
-				page_size, IOMMU_READ | IOMMU_WRITE);
+				page_size, IOMMU_READ | IOMMU_WRITE, GFP_KERNEL);
 		if (ret) {
 			dev_err(dev, "page iommu_map error.\n");
 			__free_pages(page, get_order(page_size));
@@ -2068,9 +2073,18 @@ static int rkvdec2_probe(struct platform_device *pdev)
 
 	dev_info(dev, "%s, probing start\n", np->name);
 
-	if (strstr(np->name, "ccu"))
+	/*
+	 * Dispatch by compatible first, falling back to the vendor's node-name
+	 * heuristic. The compatible check lets a node keep a generic name (e.g.
+	 * Armbian's mainline "video-codec@..." decoder nodes, converted in place
+	 * to the vendor binding) and still reach the correct ccu/core probe;
+	 * vendor DTs that name nodes "...-ccu"/"...-core" keep working via strstr.
+	 */
+	if (of_device_is_compatible(np, "rockchip,rkv-decoder-v2-ccu") ||
+	    strstr(np->name, "ccu"))
 		ret = rkvdec2_ccu_probe(pdev);
-	else if (strstr(np->name, "core"))
+	else if (of_device_is_compatible(np, "rockchip,rkv-decoder-v2") ||
+		 strstr(np->name, "core"))
 		ret = rkvdec2_core_probe(pdev);
 	else
 		ret = rkvdec2_probe_default(pdev);
@@ -2086,7 +2100,7 @@ static int rkvdec2_free_rcbbuf(struct platform_device *pdev, struct rkvdec2_dev 
 
 	if (dec->rcb_page) {
 		size_t page_size = PAGE_ALIGN(dec->rcb_size - dec->sram_size);
-		int order = min(get_order(page_size), MAX_ORDER);
+		int order = min(get_order(page_size), MAX_PAGE_ORDER);
 
 		__free_pages(dec->rcb_page, order);
 	}
@@ -2098,7 +2112,7 @@ static int rkvdec2_free_rcbbuf(struct platform_device *pdev, struct rkvdec2_dev 
 	return 0;
 }
 
-static int rkvdec2_remove(struct platform_device *pdev)
+static void rkvdec2_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 
@@ -2119,8 +2133,6 @@ static int rkvdec2_remove(struct platform_device *pdev)
 		rkvdec2_procfs_remove(mpp);
 		rkvdec2_link_remove(mpp, dec->link_dec);
 	}
-
-	return 0;
 }
 
 static void rkvdec2_shutdown(struct platform_device *pdev)

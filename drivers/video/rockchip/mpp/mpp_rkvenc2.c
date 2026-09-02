@@ -2274,7 +2274,13 @@ static int rkvenc_devfreq_init(struct mpp_dev *mpp)
 	rockchip_get_opp_data(rockchip_rkvenc_of_match, opp_info);
 	ret = rockchip_init_opp_table(dev, opp_info, "clk_core", "venc");
 	if (ret) {
-		dev_err(dev, "failed to init_opp_table\n");
+		/*
+		 * No DVFS in this forward-port: the rockchip PVTM/leakage OPP
+		 * voltage stack is not available on mainline, and the core clock
+		 * is already pinned to its nominal max (800 MHz) via DT
+		 * assigned-clock-rates, so devfreq would add nothing. Skip quietly.
+		 */
+		dev_dbg(dev, "OPP/devfreq not configured; core clock pinned via DT\n");
 		return ret;
 	}
 
@@ -2336,6 +2342,16 @@ static int rkvenc_devfreq_remove(struct mpp_dev *mpp)
 {
 	struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
 
+	/*
+	 * DVFS is disabled in this forward-port (rockchip_init_opp_table is a
+	 * no-op), so rkvenc_devfreq_init() bails before registering anything and
+	 * leaves enc->devfreq NULL. Skip teardown entirely -- otherwise the
+	 * symmetric "--venc_governor_count" would underflow a count that was
+	 * never incremented.
+	 */
+	if (!enc->devfreq)
+		return 0;
+
 	if (enc->mdev_info) {
 		rockchip_system_monitor_unregister(enc->mdev_info);
 		enc->mdev_info = NULL;
@@ -2391,7 +2407,7 @@ static int rkvenc_init(struct mpp_dev *mpp)
 #ifdef CONFIG_PM_DEVFREQ
 	ret = rkvenc_devfreq_init(mpp);
 	if (ret)
-		mpp_err("failed to add venc devfreq\n");
+		dev_dbg(mpp->dev, "venc devfreq not enabled (core clock pinned via DT)\n");
 #endif
 
 	return 0;
@@ -2845,15 +2861,19 @@ static const struct of_device_id mpp_rkvenc_dt_match[] = {
 		.data = &rkvenc_540c_data,
 	},
 #endif
-#ifdef CONFIG_CPU_RK3588
 	{
+		/*
+		 * RK3588 dual-core VEPU580. Kept unconditional (was behind
+		 * CONFIG_CPU_RK3588, which mainline/Armbian configs do not define)
+		 * so the cores actually bind; harmless on non-RK3588 SoCs since the
+		 * DT simply has no matching nodes. rkvenc_ccu_data is always defined.
+		 */
 		.compatible = "rockchip,rkv-encoder-v2-core",
 		.data = &rkvenc_ccu_data,
 	},
 	{
 		.compatible = "rockchip,rkv-encoder-v2-ccu",
 	},
-#endif
 	{},
 };
 
@@ -2866,11 +2886,17 @@ static int rkvenc_ccu_probe(struct platform_device *pdev)
 	if (!ccu)
 		return -ENOMEM;
 
-	platform_set_drvdata(pdev, ccu);
-
 	mutex_init(&ccu->lock);
 	INIT_LIST_HEAD(&ccu->core_list);
 	spin_lock_init(&ccu->lock_dchs);
+
+	/*
+	 * Publish drvdata only after the ccu is fully initialised. A core's
+	 * rkvenc_attach_ccu() treats a non-NULL drvdata as "ccu ready" (else it
+	 * defers), so setting it last guarantees no core can observe a ccu with
+	 * an uninitialised lock/list.
+	 */
+	platform_set_drvdata(pdev, ccu);
 
 	return 0;
 }
@@ -2893,8 +2919,17 @@ static int rkvenc_attach_ccu(struct device *dev, struct rkvenc_dev *enc)
 		return -ENODEV;
 
 	ccu = platform_get_drvdata(pdev);
-	if (!ccu)
-		return -ENOMEM;
+	if (!ccu) {
+		/*
+		 * The CCU platform device exists but has not finished probing
+		 * yet (rkvenc_ccu_probe sets its drvdata at the end). Defer this
+		 * core so it re-probes once the CCU is ready instead of hard-
+		 * failing -- mirrors rkvdec2_attach_ccu(). Release the reference
+		 * taken by of_find_device_by_node() above before deferring.
+		 */
+		put_device(&pdev->dev);
+		return -EPROBE_DEFER;
+	}
 
 	INIT_LIST_HEAD(&enc->core_link);
 	mutex_lock(&ccu->lock);
@@ -2988,7 +3023,9 @@ static int rkvenc2_alloc_rcbbuf(struct platform_device *pdev, struct rkvenc_dev 
 	sram_size = sram_used < sram_size ? sram_used : sram_size;
 	/* iova map to sram */
 	domain = enc->mpp.iommu_info->domain;
-	ret = iommu_map(domain, iova, sram_start, sram_size, IOMMU_READ | IOMMU_WRITE);
+	/* 6.18: iommu_map() gained a trailing gfp_t; probe ctx -> GFP_KERNEL */
+	ret = iommu_map(domain, iova, sram_start, sram_size,
+			IOMMU_READ | IOMMU_WRITE, GFP_KERNEL);
 	if (ret) {
 		dev_err(dev, "sram iommu_map error.\n");
 		return ret;
@@ -3005,8 +3042,9 @@ static int rkvenc2_alloc_rcbbuf(struct platform_device *pdev, struct rkvenc_dev 
 			goto err_sram_map;
 		}
 		/* iova map to dma */
+		/* 6.18: iommu_map() gained a trailing gfp_t; probe ctx -> GFP_KERNEL */
 		ret = iommu_map(domain, iova + sram_size, page_to_phys(page),
-				page_size, IOMMU_READ | IOMMU_WRITE);
+				page_size, IOMMU_READ | IOMMU_WRITE, GFP_KERNEL);
 		if (ret) {
 			dev_err(dev, "page iommu_map error.\n");
 			__free_pages(page, get_order(page_size));
@@ -3203,7 +3241,7 @@ static int rkvenc2_free_rcbbuf(struct platform_device *pdev, struct rkvenc_dev *
 
 	if (enc->rcb_page) {
 		size_t page_size = PAGE_ALIGN(enc->sram_used - enc->sram_size);
-		int order = min(get_order(page_size), MAX_ORDER);
+		int order = min(get_order(page_size), MAX_PAGE_ORDER);
 
 		__free_pages(enc->rcb_page, order);
 	}
@@ -3215,7 +3253,7 @@ static int rkvenc2_free_rcbbuf(struct platform_device *pdev, struct rkvenc_dev *
 	return 0;
 }
 
-static int rkvenc_remove(struct platform_device *pdev)
+static void rkvenc_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct device_node *np = dev->of_node;
@@ -3245,8 +3283,6 @@ static int rkvenc_remove(struct platform_device *pdev)
 		mpp_dev_remove(mpp);
 		rkvenc_procfs_remove(mpp);
 	}
-
-	return 0;
 }
 
 static void rkvenc_shutdown(struct platform_device *pdev)

@@ -1541,8 +1541,17 @@ int rkvdec2_attach_ccu(struct device *dev, struct rkvdec2_dev *dec)
 		return -ENODEV;
 
 	ccu = platform_get_drvdata(pdev);
-	if (!ccu)
-		return -ENOMEM;
+	if (!ccu) {
+		/*
+		 * The CCU device exists in DT but has not probed yet (no drvdata).
+		 * Defer so this core retries after rkvdec2_ccu_probe() runs, rather
+		 * than failing hard -- probe order is only guaranteed ccu-first for a
+		 * built-in driver; a module loaded after the devices are registered
+		 * can probe the cores before the ccu.
+		 */
+		put_device(&pdev->dev);
+		return -EPROBE_DEFER;
+	}
 
 	ret = of_property_read_u32(dev->of_node, "rockchip,core-mask", &dec->core_mask);
 	if (ret)
@@ -1555,6 +1564,17 @@ int rkvdec2_attach_ccu(struct device *dev, struct rkvdec2_dev *dec)
 		struct mpp_iommu_info *ccu_info, *cur_info;
 
 		queue = dec->mpp.queue;
+		/*
+		 * A secondary core attaches to the main core's (core 0) IOMMU
+		 * domain. If core 0 has not registered in the queue yet, defer so
+		 * this core retries after core 0 probes -- otherwise queue->cores[0]
+		 * is NULL and we oops. (Only guaranteed core0-first for a built-in
+		 * driver / correct boot order.)
+		 */
+		if (!queue || !queue->cores[0]) {
+			put_device(&pdev->dev);
+			return -EPROBE_DEFER;
+		}
 		/* set the ccu-domain for current device */
 		ccu_info = queue->cores[0]->iommu_info;
 		cur_info = dec->mpp.iommu_info;

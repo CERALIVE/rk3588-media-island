@@ -24,6 +24,9 @@
 #include <linux/poll.h>
 #include <linux/platform_device.h>
 #include <soc/rockchip/pm_domains.h>
+/* fwport 6.18: upstream pm_domains.h lacks rockchip_pmu_idle_request() (used by
+ * the mpp_pmu_idle_request() inline below); supply a no-op stub. */
+#include "compat/rockchip_pmu_idle.h"
 #include <uapi/linux/rk-mpp.h>
 
 #define MHZ				(1000 * 1000)

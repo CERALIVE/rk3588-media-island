@@ -336,9 +336,20 @@ int rga_iommu_bind(void)
 			if (main_iommu == NULL) {
 				main_iommu = scheduler->iommu_info;
 				main_iommu_index = i;
-				iommu_set_fault_handler(main_iommu->domain,
-							rga_iommu_intr_fault_handler,
-							(void *)scheduler);
+				/*
+				 * Since the IOMMU core gained cookie tracking,
+				 * iommu_set_fault_handler() WARNs when the domain
+				 * already owns a cookie (the default DMA domain from
+				 * iommu_get_domain_for_dev()). Only register our
+				 * handler on a cookie-less domain; on a DMA-managed
+				 * domain the IOMMU core reports faults itself.
+				 * (Forward-port fix for 6.18.)
+				 */
+				if (main_iommu->domain &&
+				    main_iommu->domain->cookie_type == IOMMU_COOKIE_NONE)
+					iommu_set_fault_handler(main_iommu->domain,
+								rga_iommu_intr_fault_handler,
+								(void *)scheduler);
 			} else {
 				scheduler->iommu_info->domain = main_iommu->domain;
 				scheduler->iommu_info->default_dev = main_iommu->default_dev;

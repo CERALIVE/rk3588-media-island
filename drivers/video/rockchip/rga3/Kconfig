@@ -2,6 +2,8 @@
 menuconfig ROCKCHIP_MULTI_RGA
 	tristate "MULTI_RGA"
 	depends on ARCH_ROCKCHIP
+	default y
+	select SYNC_FILE
 	help
 	  multi_rga module.
 

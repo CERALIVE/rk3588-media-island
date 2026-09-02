@@ -9,7 +9,10 @@
  *
  */
 #include <linux/delay.h>
-#include <linux/dma-buf-cache.h>
+/* 6.18: <linux/dma-buf-cache.h> does not exist upstream; CONFIG_DMABUF_CACHE
+ * folds to 0 so the cache path is dead. Use the standard dma-buf header.
+ */
+#include <linux/dma-buf.h>
 #include <linux/dma-mapping.h>
 #include <linux/iommu.h>
 #include <linux/of.h>
@@ -84,7 +87,8 @@ static void mpp_dma_release_buffer(struct kref *ref)
 	buffer->dma->buffer_count--;
 	list_move_tail(&buffer->link, &buffer->dma->unused_list);
 
-	dma_buf_unmap_attachment(buffer->attach, buffer->sgt, buffer->dir);
+	/* 6.18: locked variant now asserts dma_resv held; use _unlocked */
+	dma_buf_unmap_attachment_unlocked(buffer->attach, buffer->sgt, buffer->dir);
 	dma_buf_detach(buffer->dmabuf, buffer->attach);
 	dma_buf_put(buffer->dmabuf);
 	buffer->dma = NULL;
@@ -247,7 +251,8 @@ struct mpp_dma_buffer *mpp_dma_import_fd(struct mpp_iommu_info *iommu_info,
 		goto fail_attach;
 	}
 
-	sgt = dma_buf_map_attachment(attach, buffer->dir);
+	/* 6.18: locked variant now asserts dma_resv held; use _unlocked */
+	sgt = dma_buf_map_attachment_unlocked(attach, buffer->dir);
 	if (IS_ERR(sgt)) {
 		ret = PTR_ERR(sgt);
 		mpp_err("dma_buf_map_attachment fd %d failed(%d)\n", fd, ret);
@@ -296,7 +301,8 @@ int mpp_dma_unmap_kernel(struct mpp_dma_session *dma,
 	    IS_ERR_OR_NULL(dmabuf))
 		return -EINVAL;
 
-	dma_buf_vunmap(dmabuf, &map);
+	/* 6.18: locked variant now asserts dma_resv held; use _unlocked */
+	dma_buf_vunmap_unlocked(dmabuf, &map);
 	buffer->vaddr = NULL;
 
 	dma_buf_end_cpu_access(dmabuf, DMA_FROM_DEVICE);
@@ -320,7 +326,8 @@ int mpp_dma_map_kernel(struct mpp_dma_session *dma,
 		goto failed_access;
 	}
 
-	ret = dma_buf_vmap(dmabuf, &map);
+	/* 6.18: locked variant now asserts dma_resv held; use _unlocked */
+	ret = dma_buf_vmap_unlocked(dmabuf, &map);
 	if (ret) {
 		dev_dbg(dma->dev, "can't vmap the dma buffer\n");
 		goto failed_vmap;
@@ -651,9 +658,18 @@ int mpp_iommu_dev_activate(struct mpp_iommu_info *info, struct mpp_dev *dev)
 		ret = -EINVAL;
 	} else {
 		info->dev_active = dev;
-		/* switch domain pagefault handler and arg depending on device */
-		iommu_set_fault_handler(info->domain, dev->fault_handler ?
-					dev->fault_handler : mpp_iommu_handle, dev);
+		/*
+		 * Switch domain pagefault handler and arg depending on device.
+		 * Since the IOMMU core gained cookie tracking, iommu_set_fault_handler()
+		 * WARNs and bails when the domain already owns a cookie (e.g. the default
+		 * DMA domain from iommu_get_domain_for_dev()). Only register our handler
+		 * on a cookie-less domain; on a DMA-managed domain the IOMMU core reports
+		 * faults itself. (Forward-port fix for 6.18; was unconditional.)
+		 */
+		if (info->domain &&
+		    info->domain->cookie_type == IOMMU_COOKIE_NONE)
+			iommu_set_fault_handler(info->domain, dev->fault_handler ?
+						dev->fault_handler : mpp_iommu_handle, dev);
 
 		dev_dbg(info->dev, "activate -> %p %s\n", dev, dev_name(dev->dev));
 	}
@@ -699,6 +715,8 @@ int mpp_iommu_reserve_iova(struct mpp_iommu_info *info, dma_addr_t iova, size_t 
 	if (!domain || !domain->iova_cookie)
 		return -EINVAL;
 
+	/* 6.18: iovad must be the first member of iommu_dma_cookie */
+	BUILD_BUG_ON(offsetof(struct mpp_iommu_dma_cookie, iovad) != 0);
 	cookie = (struct mpp_iommu_dma_cookie *)domain->iova_cookie;
 	iovad = &cookie->iovad;
 

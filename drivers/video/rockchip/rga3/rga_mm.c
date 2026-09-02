@@ -38,6 +38,9 @@ static int rga_get_user_pages_from_vma(struct page **pages, unsigned long Memory
 	int ret = 0;
 	int i;
 	struct vm_area_struct *vma;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
+	struct follow_pfnmap_args args;
+#else
 	spinlock_t *ptl;
 	pte_t *pte;
 	pgd_t *pgd;
@@ -47,6 +50,7 @@ static int rga_get_user_pages_from_vma(struct page **pages, unsigned long Memory
 	pud_t *pud;
 	pmd_t *pmd;
 	unsigned long pfn;
+#endif
 
 	for (i = 0; i < pageCount; i++) {
 		vma = find_vma(current_mm, (Memory + i) << PAGE_SHIFT);
@@ -56,6 +60,23 @@ static int rga_get_user_pages_from_vma(struct page **pages, unsigned long Memory
 			break;
 		}
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
+		/*
+		 * __pte_offset_map_lock() is no longer exported to modules on
+		 * 6.12+; follow_pfnmap_start() performs the whole page-table
+		 * walk under the proper lock and is GPL-exported.
+		 */
+		args.vma = vma;
+		args.address = (Memory + i) << PAGE_SHIFT;
+		if (follow_pfnmap_start(&args)) {
+			rga_err("page[%d] failed to get pfnmap\n", i);
+			ret = RGA_OUT_OF_RESOURCES;
+			break;
+		}
+
+		pages[i] = pfn_to_page(args.pfn);
+		follow_pfnmap_end(&args);
+#else
 		pgd = pgd_offset(current_mm, (Memory + i) << PAGE_SHIFT);
 		if (pgd_none(*pgd) || unlikely(pgd_bad(*pgd))) {
 			rga_err("page[%d] failed to get pgd\n", i);
@@ -102,6 +123,7 @@ static int rga_get_user_pages_from_vma(struct page **pages, unsigned long Memory
 		pfn = pte_pfn(*pte);
 		pages[i] = pfn_to_page(pfn);
 		pte_unmap_unlock(pte, ptl);
+#endif
 	}
 
 	if (ret == RGA_OUT_OF_RESOURCES && i > 0)
