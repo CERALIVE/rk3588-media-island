@@ -41,16 +41,29 @@ what that list exists for.
 Mainline node references are to `rk3588-base.dtsi` in the pinned v7.2 tree (see
 [`../kernel-pin.env`](../kernel-pin.env)).
 
-| Silicon | Mainline node (v7.2 `rk3588-base.dtsi`) | Final owner | Mechanism |
-|---|---|---|---|
-| RKVENC2 #0/#1 + CCU | none | island `mpp` (`ROCKCHIP_MPP_RKVENC2`) | `integration/` DT hunk adds `mpp_srv`, `rkvenc_ccu`, `rkvenc0/1` and their IOMMUs, replacing the existing `rk3588-kernel-patches` `0001` hunk byte-for-byte in intent |
-| RKVDEC2 #0/#1 + CCU | `vdec0` / `vdec1`, `rockchip,rk3588-vdec` (`:1400-1462`) | island `mpp` (`ROCKCHIP_MPP_RKVDEC2`) | DT hunk swaps `compatible` to the vendor decoder string as the sole entry and adds `rkvdec_ccu` plus vendor properties. Upstream `rkvdec` stays BUILT (`CONFIG_VIDEO_ROCKCHIP_VDEC=m`) but matches no node — a recorded migration target and a one-line rollback |
-| JPEG decoder | none upstream | island `mpp` (`ROCKCHIP_MPP_JPGDEC`) | DT hunk adds `jpegd`, values taken from the vendor DTSI as a first-party hunk |
-| JPEG encoders `vepu121_0..3`, `vpu121` (G1 decode) | hantro (`CONFIG_VIDEO_HANTRO=m`) | **UNCHANGED mainline** | Not touched. CeraLive never JPEG-encodes and RKVDEC2 covers its decode codecs; MPP `RKJPEGE` and `VDPU2` clients stay `=n` |
-| AV1 `av1d` | `rockchip,rk3588-av1-vpu`, bound by hantro | **UNCHANGED mainline hantro** (unused) | MPP `AV1DEC` stays `=n`; there is no ownership contest |
-| RGA3 #0/#1 | `rga3_core0` / `rga3_core1`, `rockchip,rk3588-rga3` (`:1265-1307`) | island `multi_rga` | DT hunk swaps `compatible` to `rockchip,rga3_core0` / `rockchip,rga3_core1` as sole entries; mainline `rockchip-rga` then matches nothing |
-| RGA2E | `rga`, `rockchip,rk3588-rga` + `rockchip,rk3288-rga` (`:1308-1318`) | island `multi_rga` | Same flip — the vendor driver matches `rockchip,rga2_core0` natively. DT hunk swaps to `rockchip,rga2_core0` as the sole entry; `CONFIG_VIDEO_ROCKCHIP_RGA` joins the image forbidden list because no node is left to bind |
-| HDMI-RX, dma-heaps, IOMMU | mainline plus the existing series | **UNCHANGED** | Stays in `rk3588-kernel-patches`; the island does not touch it |
+The **island node label(s)** column is the lint's input. It exists because a
+device-tree label is what `check-dt-ownership.py` matches a hunk against, and
+inferring one out of the Mechanism prose would be a guess dressed as a check. A
+row that owns no node carries `—`, which is a statement rather than an omission:
+it says this silicon is deliberately left to mainline.
+
+| Silicon | Mainline node (v7.2 `rk3588-base.dtsi`) | Island node label(s) | Final owner | Mechanism |
+|---|---|---|---|---|
+| RKVENC2 #0/#1 + CCU | none | `mpp_srv`, `rkvenc_ccu`, `rkvenc0`, `rkvenc1` | island `mpp` (`ROCKCHIP_MPP_RKVENC2`) | `integration/` DT hunk adds `mpp_srv`, `rkvenc_ccu`, `rkvenc0/1` and their IOMMUs, replacing the existing `rk3588-kernel-patches` `0001` hunk byte-for-byte in intent |
+| RKVDEC2 #0/#1 + CCU | `vdec0` / `vdec1`, `rockchip,rk3588-vdec` (`:1400-1462`) | `vdec0`, `vdec1`, `rkvdec_ccu` | island `mpp` (`ROCKCHIP_MPP_RKVDEC2`) | DT hunk swaps `compatible` to the vendor decoder string as the sole entry and adds `rkvdec_ccu` plus vendor properties. Upstream `rkvdec` stays BUILT (`CONFIG_VIDEO_ROCKCHIP_VDEC=m`) but matches no node — a recorded migration target and a one-line rollback |
+| JPEG decoder | none upstream | `jpegd` | island `mpp` (`ROCKCHIP_MPP_JPGDEC`) | DT hunk adds `jpegd`, values taken from the vendor DTSI as a first-party hunk |
+| JPEG encoders `vepu121_0..3`, `vpu121` (G1 decode) | hantro (`CONFIG_VIDEO_HANTRO=m`) | — | **UNCHANGED mainline** | Not touched. CeraLive never JPEG-encodes and RKVDEC2 covers its decode codecs; MPP `RKJPEGE` and `VDPU2` clients stay `=n` |
+| AV1 `av1d` | `rockchip,rk3588-av1-vpu`, bound by hantro | — | **UNCHANGED mainline hantro** (unused) | MPP `AV1DEC` stays `=n`; there is no ownership contest |
+| RGA3 #0/#1 | `rga3_core0` / `rga3_core1`, `rockchip,rk3588-rga3` (`:1265-1307`) | `rga3_core0`, `rga3_core1` | island `multi_rga` | DT hunk swaps `compatible` to `rockchip,rga3_core0` / `rga3_core1` as sole entries; mainline `rockchip-rga` then matches nothing |
+| RGA2E | `rga`, `rockchip,rk3588-rga` + `rockchip,rk3288-rga` (`:1308-1318`) | `rga` | island `multi_rga` | Same flip — the vendor driver matches `rockchip,rga2_core0` natively. DT hunk swaps to `rockchip,rga2_core0` as the sole entry; `CONFIG_VIDEO_ROCKCHIP_RGA` joins the image forbidden list because no node is left to bind |
+| HDMI-RX, dma-heaps, IOMMU | mainline plus the existing series | — | **UNCHANGED** | Stays in `rk3588-kernel-patches`; the island does not touch it |
+
+The per-node IOMMUs an island DT hunk adds beside a client — `rkvenc0_mmu`,
+`rkvenc1_mmu` and their decoder counterparts — are deliberately **not** island
+node labels. They are bound by mainline `rockchip-iommu`, which is the whole
+point of the provider adapter in `docs/COMPAT.md`: the island consumes that
+provider rather than replacing it, so claiming its nodes would be a false
+ownership claim and would make the one-compatible rule refuse a correct tree.
 
 ## Board truth this table was written against
 
