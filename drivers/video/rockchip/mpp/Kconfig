@@ -2,12 +2,12 @@
 config ROCKCHIP_MPP_SERVICE
 	tristate "Rockchip MPP service framework"
 	depends on ARCH_ROCKCHIP && ROCKCHIP_IOMMU
-	default y
+	default m
 	select DMA_SHARED_BUFFER
 	help
-	  Rockchip Media Process Platform (MPP) service framework. Provides the
-	  /dev/mpp_service char device and the shared task/IOMMU/clk/pm core used
-	  by the Rockchip hardware codec device drivers.
+	  Rockchip Media Process Platform service framework. Provides the
+	  /dev/mpp_service character device and the shared task, IOMMU, clock,
+	  and power-management core used by the selected RK3588 clients.
 
 if ROCKCHIP_MPP_SERVICE
 
@@ -22,52 +22,105 @@ config ROCKCHIP_MPP_RKVENC2
 	bool "RKVENC2 (VEPU580) H.264/H.265 encoder"
 	default y
 	help
-	  Hardware video encoder VEPU580 (rkvenc2) found on RK3588. H.264 and
-	  H.265 encode.
-
-config ROCKCHIP_MPP_RKVENC2_DEVFREQ
-	bool "RKVENC2 devfreq/OPP/thermal (tier-2)"
-	depends on ROCKCHIP_MPP_RKVENC2 && PM_DEVFREQ
-	default n
-	help
-	  Enable the devfreq/OPP/system-monitor DVFS island for rkvenc2. Off by
-	  default; the encoder runs at fixed assigned-clock-rates without it.
+	  Hardware video encoder VEPU580 found on RK3588.
 
 config ROCKCHIP_MPP_RKVDEC2
 	bool "RKVDEC2 (VDPU381) H.264/H.265/VP9 decoder"
 	default y
 	help
-	  Hardware video decoder VDPU381 (rkvdec2) found on RK3588: two decoder
-	  cores plus a CCU. H.264, H.265 and VP9 decode. Builds the
-	  mpp_rkvdec2 + mpp_rkvdec2_link objects into rk_vcodec.ko.
+	  Hardware video decoder VDPU381 found on RK3588.
 
-config ROCKCHIP_MPP_RKVDEC2_DEVFREQ
-	bool "RKVDEC2 devfreq/OPP/system-monitor (tier-2)"
-	depends on ROCKCHIP_MPP_RKVDEC2 && PM_DEVFREQ
+config ROCKCHIP_MPP_JPGDEC
+	bool "RKJPEGD JPEG decoder"
+	default y
+	help
+	  Hardware JPEG decoder exposed through the Rockchip MPP ABI.
+
+config ROCKCHIP_MPP_CERALIVE_TEST
+	bool "CeraLive MPP fault-injection test seams"
 	default n
 	help
-	  Enable the devfreq/OPP/system-monitor DVFS island for rkvdec2. Off by
-	  default; the decoder runs at fixed assigned-clock-rates without it.
-	  When off, the donor's private ../drivers/devfreq/governor.h include is
-	  elided (it is absent from out-of-tree build trees).
+	  Enable the fault and timeout seams used by the island KUnit suite.
+
+# MNH-23: These clients remain in the source tree for provenance and future
+# ownership work, but this island release neither compiles nor advertises them.
+# BROKEN is deliberate fail-closed policy, not a statement about source quality.
+config ROCKCHIP_MPP_RKVDEC
+	bool "RKV decoder v1 device driver"
+	depends on BROKEN
+	help
+	  Source-complete legacy RKV decoder; not selectable in this island release.
+
+config ROCKCHIP_MPP_RKVENC
+	bool "RKV encoder v1 device driver"
+	depends on BROKEN
+	help
+	  Source-complete legacy RKV encoder; not selectable in this island release.
+
+config ROCKCHIP_MPP_VDPU1
+	bool "VPU decoder v1 device driver"
+	depends on BROKEN
+	help
+	  Source-complete VDPU1 client; not selectable in this island release.
+
+config ROCKCHIP_MPP_VEPU1
+	bool "VPU encoder v1 device driver"
+	depends on BROKEN
+	help
+	  Source-complete VEPU1 client; not selectable in this island release.
+
+config ROCKCHIP_MPP_VDPU2
+	bool "VPU decoder v2 device driver"
+	depends on BROKEN
+	help
+	  Source-complete VDPU2 client; not selectable in this island release.
+
+config ROCKCHIP_MPP_VEPU2
+	bool "VPU encoder v2 device driver"
+	depends on BROKEN
+	help
+	  Source-complete VEPU2 client; not selectable in this island release.
+
+config ROCKCHIP_MPP_VEPU22
+	bool "VPU encoder v2.2 device driver"
+	depends on BROKEN
+	help
+	  Source-complete capability slot; not selectable in this island release.
 
 config ROCKCHIP_MPP_IEP2
 	bool "IEP2 image enhancement and deinterlacing"
-	depends on ARM64
-	default y
+	depends on BROKEN
 	help
-	  Hardware IEP2 image enhancement and deinterlacing block found on
-	  RK3588. The driver registers MPP client type 28 through the shared
-	  /dev/mpp_service interface used by Rockchip libmpp.
+	  Source-complete IEP2 client; ownership is deferred.
+
+config ROCKCHIP_MPP_JPGENC
+	bool "RKJPEGE JPEG encoder"
+	depends on BROKEN
+	help
+	  Source-complete JPEG encoder; the block remains owned by mainline Hantro.
 
 config ROCKCHIP_MPP_AV1DEC
 	bool "AV1 decoder"
-	depends on ARM64 && IOMMU_SUPPORT
-	default y
-	select VSI_IOMMU
+	depends on BROKEN
 	help
-	  Hardware AV1 decoder backend for the Rockchip MPP service framework
-	  on RK3588. This preserves the vendor /dev/mpp_service ABI and uses
-	  the standard Verisilicon IOMMU provider for the AV1 MMU.
+	  Source-complete AV1 client; the Verisilicon provider is intentionally absent.
+
+config ROCKCHIP_MPP_VDPP
+	bool "VDPP device driver"
+	depends on BROKEN
+	help
+	  Source-complete VDPP client; ownership is deferred.
+
+config ROCKCHIP_MPP_RKVENC2_DEVFREQ
+	bool "RKVENC2 devfreq/OPP/thermal"
+	depends on BROKEN
+	help
+	  Preserved source for a future evidence-gated DVFS promotion.
+
+config ROCKCHIP_MPP_RKVDEC2_DEVFREQ
+	bool "RKVDEC2 devfreq/OPP/thermal"
+	depends on BROKEN
+	help
+	  Preserved source for a future evidence-gated DVFS promotion.
 
 endif

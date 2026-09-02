@@ -18,7 +18,16 @@ ccflags-y += -include $(src)/compat/rockchip_qos_compat.h
 obj-$(CONFIG_ROCKCHIP_MPP_SERVICE) += rk_vcodec.o
 
 rk_vcodec-y := mpp_service.o mpp_common.o mpp_iommu.o
+rk_vcodec-$(CONFIG_ROCKCHIP_MPP_RKVDEC) += mpp_rkvdec.o
 rk_vcodec-$(CONFIG_ROCKCHIP_MPP_RKVENC2) += mpp_rkvenc2.o
 rk_vcodec-$(CONFIG_ROCKCHIP_MPP_RKVDEC2) += mpp_rkvdec2.o mpp_rkvdec2_link.o
+rk_vcodec-$(CONFIG_ROCKCHIP_MPP_RKVENC) += mpp_rkvenc.o
+rk_vcodec-$(CONFIG_ROCKCHIP_MPP_VDPU1) += mpp_vdpu1.o
+rk_vcodec-$(CONFIG_ROCKCHIP_MPP_VEPU1) += mpp_vepu1.o
+rk_vcodec-$(CONFIG_ROCKCHIP_MPP_VDPU2) += mpp_vdpu2.o
+rk_vcodec-$(CONFIG_ROCKCHIP_MPP_VEPU2) += mpp_vepu2.o
 rk_vcodec-$(CONFIG_ROCKCHIP_MPP_IEP2) += mpp_iep2.o
+rk_vcodec-$(CONFIG_ROCKCHIP_MPP_JPGDEC) += mpp_jpgdec.o
+rk_vcodec-$(CONFIG_ROCKCHIP_MPP_JPGENC) += mpp_jpgenc.o
 rk_vcodec-$(CONFIG_ROCKCHIP_MPP_AV1DEC) += mpp_av1dec.o
+rk_vcodec-$(CONFIG_ROCKCHIP_MPP_VDPP) += mpp_vdpp.o
