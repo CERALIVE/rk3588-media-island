@@ -44,6 +44,12 @@ rk3588-media-island/
 ├── integration/                 # patches to MAINLINE files: DT hunks, provider exports
 ├── patches/                     # GENERATED series — never hand-edited
 ├── scripts/                     # series generation, provenance, lint tooling
+│   ├── build-series.py          # drivers/ + integration/ -> patches/ ; --check byte-compares
+│   ├── verify-series-parity.py  # the SECOND, independent opinion — never imports the generator
+│   ├── check-compat-shims.py    # shim-lint: the docs/COMPAT.md 5-step specification
+│   ├── check-dt-ownership.py    # dt-ownership-lint: the one-compatible rule
+│   ├── check-upstream-freshness.py  # the issue-only watch's comparison
+│   └── check-action-pins.sh     # every `uses:` against gh api releases/latest
 ├── tests/
 │   ├── board/                   # hardware-gated drills, probes and fixtures
 │   ├── kunit/                   # in-kernel unit tests
@@ -61,6 +67,8 @@ rk3588-media-island/
 
 | Task | Location |
 |------|----------|
+| Find out what a CI job asserts, or why one is currently vacuous | [`docs/CI.md`](docs/CI.md) |
+| Regenerate the series after changing `drivers/` or `integration/` | `scripts/build-series.py` — then `--check` and `scripts/verify-series-parity.py` |
 | Change the target kernel | **Not here.** Bump [`rk3588-kernel-patches/kernel-pin.env`](https://github.com/CERALIVE/rk3588-kernel-patches/blob/main/kernel-pin.env) first, then mirror it into [`kernel-pin.env`](kernel-pin.env) |
 | Decide which driver owns a silicon block | [`docs/OWNERSHIP.md`](docs/OWNERSHIP.md) |
 | Classify an external symbol the drivers call | [`docs/COMPAT.md`](docs/COMPAT.md) |
@@ -157,17 +165,42 @@ exists; top-level `permissions: contents: read`; every `uses:` pinned to the
 latest stable major; the kernel clone and `ccache` cached; nothing published
 without the gates having run first.
 
+Three workflows: `ci.yml` (the PR gate), `release.yml` (`workflow_dispatch`, with
+`publish` defaulting to **false**), and `upstream-watch.yml` (scheduled,
+issue-only). Per-job detail, the mutation transcripts, and the honest list of
+what is vacuous today live in [`docs/CI.md`](docs/CI.md).
+
 | Job | Asserts |
 |-----|---------|
+| `shellcheck` | Every tracked shell script lints clean at `-S style` (only `SC1091` excluded) |
+| `self-tests` | Every board harness and every CI tool passes its own scored fixtures |
 | `series-integrity` | `patches/` regenerates byte-identically from `drivers/` + `integration/`, verified again by an independent parity checker |
 | `shim-lint` | No compat header gives a `REAL-DEPENDENCY` symbol a body; no unclassified `<soc/rockchip/*.h>` include or `rockchip_*` symbol exists |
 | `dt-ownership-lint` | Every island-owned node has exactly one `compatible`, and no in-tree driver's `of_match_table` lists it |
 | `uapi-parity` | Every `MPP_CMD_*` / `MPP_IOC_*` value and the `mpp_request` layout match the pinned vendor header and the userspace that consumes them |
-| `cross-compile-modules` | Modules-only arm64 build against the pinned kernel with the image's own config fragment, `-Werror`, and an asserted `.ko` set |
+| `board-probes` | The three C probes cross-build for aarch64 with `-Werror`, and their host build passes its own self-tests |
+| `action-pins` | Every `uses:` is at the current latest major. **Non-blocking** — an action's release cadence must not redden an unrelated PR |
+| `pin` | Nothing — it *reads* the coordinates out of `kernel-pin.env` and emits them as job outputs |
+| `pin-equality` | The four mirrored `KERNEL_*` values equal the consumer's |
+| `cross-compile-modules` | Both pinned kernel objects resolve; the tree configures the way the device is configured; the modules-only arm64 build links with `-Werror` and an asserted `.ko` set; no island `compatible` collides with a mainline `of_match_table` |
 | `kunit` | `tests/kunit/` passes |
 | `static-analysis` | sparse, smatch and coccinelle over the island directories |
-| `pin-equality` | The four mirrored `KERNEL_*` values equal the consumer's at its pinned commit |
 | `upstream-watch` | Nothing — it opens or updates ONE issue and never edits a pin or dispatches a build |
+
+**`shellcheck` and `self-tests` are two jobs because they answer two questions.**
+Shellcheck cannot see an ERE bracket expression containing a literal `\t` — valid
+shell, valid regex, and it matches a backslash and a `t` rather than a tab. That
+defect shipped once here. Reintroducing it leaves shellcheck green and turns the
+harness self-test red; the transcript is [`docs/CI.md`](docs/CI.md) §3.
+
+**Four gates have nothing to inspect until the driver import lands, and each says
+so in words rather than reporting a clean run.** `NO-SOURCE-YET`, `NO-DT-YET`,
+`NO-HEADER-YET`, `NO-MODULES-YET`, `NO-KUNIT-CASES-YET` and `NOTHING-TO-ANALYZE`
+are markers a gate PRINTS, not states it hides. Every one names the condition
+that makes it required. `cross-compile-modules` still clones, verifies both
+pinned objects, configures and runs `modules_prepare` — only the `.ko` assertion
+is skipped — so the import does not discover a broken kernel job on the day it
+needs one.
 
 **No workflow restates a pinned coordinate.** The kernel tag is read from
 `kernel-pin.env`; a literal tag anywhere in `.github/` is a regression, because a

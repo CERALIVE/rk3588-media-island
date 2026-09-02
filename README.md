@@ -12,7 +12,7 @@ released as a `git am` mailbox series.
 | **Boards** | Radxa Rock 5B+, Orange Pi 5+ |
 | **Release artifact** | a generated `git am` series, plus its `.sha256` — no `.deb`, no kernel, no image |
 | **Versioning** | CalVer, `YYYY.MINOR.PATCH` |
-| **Status** | **GREENFIELD.** Repository scaffolding only. No driver source is imported yet, no series has been generated, and no image or board carries the island. |
+| **Status** | **GREENFIELD.** Scaffolding and CI only. No driver source is imported yet, the generated series is empty by construction, and no image or board carries the island. The gates exist and are mutation-proven ([`docs/CI.md`](docs/CI.md)); several of them have nothing to inspect until the import lands, and each says so in words rather than reporting a clean run. |
 
 ## Why this is a source repository and not a patch repository
 
@@ -89,6 +89,7 @@ rk3588-media-island/
 │   ├── kunit/              # in-kernel unit tests
 │   └── fuzz/               # UAPI fuzz targets
 └── docs/
+    ├── CI.md               # what each CI job asserts + the mutation transcripts
     ├── COMPAT.md           # shim + external-symbol inventory; ALSO the shim-lint input
     ├── OWNERSHIP.md        # silicon ownership table + the one-compatible rule
     ├── REFERENCES.md       # every pinned coordinate
@@ -111,8 +112,8 @@ set -a && . ./kernel-pin.env && set +a
 git clone --depth 1 --branch "$KERNEL_TAG" "$KERNEL_MIRROR" .work/linux
 
 # 3. Apply the integration patches (mainline-file changes) and stage the island
-#    directories into the tree.
-#    -> scripts/ carries this; see docs/CI.md once the tooling lands.
+#    directories into the tree. This is what CI's cross-compile-modules job
+#    does step for step -- see docs/CI.md.
 
 # 4. Modules-only cross-build.
 make -C .work/linux ARCH="$ISLAND_ARCH" CROSS_COMPILE="$ISLAND_CROSS_COMPILE" \
@@ -132,6 +133,7 @@ configuration the device does not run proves the wrong thing.
 | `tests/kunit/` | CI, no hardware | in-kernel logic units |
 | `tests/fuzz/` | CI, no hardware | the UAPI surface survives hostile input |
 | static analysis | CI, no hardware | sparse, smatch and coccinelle findings stay at zero |
+| every gate's `--self-test` | CI, no hardware | each gate refuses a mutated tree AND accepts a correct one |
 | `tests/board/` | a real Rock 5B+ or Orange Pi 5+ | everything about silicon |
 
 The board suite is deliberately outside the kernel build. Every script is gated,
