@@ -1,0 +1,8 @@
+           CPU0       CPU1       CPU2       CPU3       CPU4       CPU5       CPU6       CPU7
+  9:      41182      38210      27713      25904      19122      18876      17554      17301     GICv3  30 Level     arch_timer
+ 36:          0          0          0          0          0          0          0          0     GICv3 146 Level     fdb60f00.iommu, fdb60000.rga
+113:       4000          0          0          0          0          0          0          0     GICv3 133 Level     fdbd0000.rkvenc-core
+114:        100          0          0          0          0          0          0          0     GICv3 136 Level     fdbe0000.rkvenc-core
+120:          0          0          0          0          0          0          0          0     GICv3 148 Level     fdb80000.rga
+121:       9931       8842       7011       6544       5122       4980       4411       4302     GICv3 168 Level     dwmmc
+IPI0:     20114      19883      18774      18211      15442      15201      14022      13899     Rescheduling interrupts

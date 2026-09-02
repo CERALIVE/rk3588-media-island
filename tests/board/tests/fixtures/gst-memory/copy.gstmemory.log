@@ -1,0 +1,11 @@
+0:00:01.100000000  2210 0xffff88020000 DEBUG   GST_MEMORY gstdmabuf.c:139:gst_dmabuf_allocator_alloc_with_flags:<dmabufallocator0> alloc fd 42, size 3110400
+0:00:01.100100000  2210 0xffff88020000 LOG     GST_MEMORY gstmemory.c:118:gst_memory_init:<v4l2src0:src> new memory 0xbbbb0100 fd 42 maxsize:3110400 offset:0 size:3110400
+0:00:01.100200000  2210 0xffff88020000 LOG     GST_MEMORY gstmppallocator.c:145:gst_mpp_allocator_import_gst_memory:<mpph264enc0:sink> import refused, memory is not a dmabuf
+0:00:01.100300000  2210 0xffff88020000 LOG     GST_MEMORY gstmppenc.c:612:gst_mpp_enc_convert:<mpph264enc0:sink> gst_video_frame_copy 1920x1080 into fd 51
+0:00:01.100400000  2210 0xffff88020000 DEBUG   GST_MEMORY gstdmabuf.c:139:gst_dmabuf_allocator_alloc_with_flags:<dmabufallocator1> alloc fd 51, size 3133440
+0:00:01.133000000  2210 0xffff88020000 LOG     GST_MEMORY gstmemory.c:118:gst_memory_init:<v4l2src0:src> new memory 0xbbbb0200 fd 43 maxsize:3110400 offset:0 size:3110400
+0:00:01.133100000  2210 0xffff88020000 LOG     GST_MEMORY gstmppenc.c:612:gst_mpp_enc_convert:<mpph264enc0:sink> gst_video_frame_copy 1920x1080 into fd 52
+0:00:01.133200000  2210 0xffff88020000 DEBUG   GST_MEMORY gstdmabuf.c:139:gst_dmabuf_allocator_alloc_with_flags:<dmabufallocator1> alloc fd 52, size 3133440
+0:00:01.166000000  2210 0xffff88020000 LOG     GST_MEMORY gstmemory.c:118:gst_memory_init:<v4l2src0:src> new memory 0xbbbb0300 fd 44 maxsize:3110400 offset:0 size:3110400
+0:00:01.166100000  2210 0xffff88020000 LOG     GST_MEMORY gstmppenc.c:612:gst_mpp_enc_convert:<mpph264enc0:sink> gst_video_frame_copy 1920x1080 into fd 53
+0:00:01.166200000  2210 0xffff88020000 DEBUG   GST_MEMORY gstdmabuf.c:139:gst_dmabuf_allocator_alloc_with_flags:<dmabufallocator1> alloc fd 53, size 3133440

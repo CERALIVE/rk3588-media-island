@@ -1,0 +1,11 @@
+0:00:01.100000000  1841 0xffff88010000 DEBUG   GST_MEMORY gstdmabuf.c:139:gst_dmabuf_allocator_alloc_with_flags:<dmabufallocator0> alloc fd 42, size 3110400
+0:00:01.100100000  1841 0xffff88010000 LOG     GST_MEMORY gstmemory.c:118:gst_memory_init:<v4l2src0:src> new memory 0xaaaa0100 fd 42 maxsize:3110400 offset:0 size:3110400
+0:00:01.100200000  1841 0xffff88010000 LOG     GST_MEMORY gstmemory.c:400:gst_memory_share:<v4l2video1convert0:sink> share memory 0xaaaa0100 fd 42 offset:0 size:3110400
+0:00:01.100300000  1841 0xffff88010000 DEBUG   GST_MEMORY gstdmabuf.c:139:gst_dmabuf_allocator_alloc_with_flags:<dmabufallocator1> alloc fd 43, size 2073600
+0:00:01.100400000  1841 0xffff88010000 LOG     GST_MEMORY gstmemory.c:118:gst_memory_init:<v4l2video1convert0:src> new memory 0xaaaa0200 fd 43 maxsize:2073600 offset:0 size:2073600
+0:00:01.100500000  1841 0xffff88010000 LOG     GST_MEMORY gstmppallocator.c:130:gst_mpp_allocator_import_gst_memory:<mpph265enc0:sink> imported dmabuf fd 43 directly, no copy
+0:00:01.133000000  1841 0xffff88010000 LOG     GST_MEMORY gstmemory.c:400:gst_memory_share:<v4l2src0:src> share memory 0xaaaa0100 fd 42 offset:0 size:3110400
+0:00:01.133100000  1841 0xffff88010000 LOG     GST_MEMORY gstmemory.c:400:gst_memory_share:<v4l2video1convert0:sink> share memory 0xaaaa0100 fd 42 offset:0 size:3110400
+0:00:01.133200000  1841 0xffff88010000 LOG     GST_MEMORY gstmppallocator.c:130:gst_mpp_allocator_import_gst_memory:<mpph265enc0:sink> imported dmabuf fd 43 directly, no copy
+0:00:01.166000000  1841 0xffff88010000 LOG     GST_MEMORY gstmemory.c:400:gst_memory_share:<v4l2src0:src> share memory 0xaaaa0100 fd 42 offset:0 size:3110400
+0:00:01.166100000  1841 0xffff88010000 LOG     GST_MEMORY gstmppallocator.c:130:gst_mpp_allocator_import_gst_memory:<mpph265enc0:sink> imported dmabuf fd 43 directly, no copy

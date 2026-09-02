@@ -1,0 +1,17 @@
+version: 2
+# Weekly, grouped, no auto-merge — per the CeraLive CI/CD standard.
+#
+# github-actions ONLY. There is no npm, cargo, pip or bun ecosystem entry here
+# because there is nothing for them to scan: this repository is C kernel sources,
+# shell and Python tooling, and Markdown. Its one external pin that matters — the
+# kernel — is deliberately NOT dependency-managed; it is mirrored from
+# rk3588-kernel-patches/kernel-pin.env and moved by a human, and the weekly
+# upstream-watch workflow only ever opens an issue about it.
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]

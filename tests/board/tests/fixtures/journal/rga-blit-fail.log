@@ -1,0 +1,13 @@
+Sep 02 10:02:11 rock-5b-plus kernel: rockchip-mpp fdba0000.rkvenc: probe success
+Sep 02 10:02:14 rock-5b-plus cerastream[2210]: engine: session start pipeline=hdmi codec=h264
+Sep 02 10:02:14 rock-5b-plus cerastream[2210]: rga_api version 1.9.3_[2]
+Sep 02 10:02:14 rock-5b-plus cerastream[2210]: RgaBlit(1236) RGA_BLIT fail: Invalid argument
+Sep 02 10:02:14 rock-5b-plus kernel: rga: RGA_MMU unsupported memory larger than 4G!
+Sep 02 10:02:14 rock-5b-plus cerastream[2210]: RgaBlit(1236) RGA_BLIT fail: Invalid argument
+Sep 02 10:02:14 rock-5b-plus cerastream[2210]: mppenc: gst_video_frame_copy fallback engaged
+Sep 02 10:02:15 rock-5b-plus cerastream[2210]: RgaBlit(1236) RGA_BLIT fail: Invalid argument
+Sep 02 10:02:15 rock-5b-plus cerastream[2210]: mppenc: gst_video_frame_copy fallback engaged
+Sep 02 10:02:15 rock-5b-plus cerastream[2210]: RgaBlit(1236) RGA_BLIT fail: Invalid argument
+Sep 02 10:02:16 rock-5b-plus cerastream[2210]: RgaBlit(1236) RGA_BLIT fail: Invalid argument
+Sep 02 10:02:16 rock-5b-plus cerastream[2210]: mppenc: gst_video_frame_copy fallback engaged
+Sep 02 10:02:17 rock-5b-plus cerastream[2210]: engine: status streaming=true frames=90

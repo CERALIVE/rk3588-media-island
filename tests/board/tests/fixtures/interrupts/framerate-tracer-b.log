@@ -1,0 +1,5 @@
+0:00:00.498112340  4488 0xaaab30f11a00 TRACE   GST_TRACER :0:: framerate, pad=(string)fakesink0_sink, fps=(uint)14;
+0:00:01.498226104  4488 0xaaab30f11a00 TRACE   GST_TRACER :0:: framerate, pad=(string)fakesink0_sink, fps=(uint)15;
+0:00:02.498340771  4488 0xaaab30f11a00 TRACE   GST_TRACER :0:: framerate, pad=(string)fakesink0_sink, fps=(uint)15;
+0:00:03.498455219  4488 0xaaab30f11a00 TRACE   GST_TRACER :0:: framerate, pad=(string)fakesink0_sink, fps=(uint)16;
+0:00:04.498569884  4488 0xaaab30f11a00 TRACE   GST_TRACER :0:: framerate, pad=(string)fakesink0_sink, fps=(uint)15;

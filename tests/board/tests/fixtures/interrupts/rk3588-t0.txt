@@ -1,0 +1,13 @@
+           CPU0       CPU1       CPU2       CPU3       CPU4       CPU5       CPU6       CPU7
+  9:      41182      38210      27713      25904      19122      18876      17554      17301     GICv3  30 Level     arch_timer
+ 30:          0          0          0          0          0          0          0          0     GICv3  57 Level     rockchip_thermal
+101:       1000          0          0          0          0          0          0          0     GICv3 143 Level     rkvenc0
+104:          0          0          0        500          0          0          0          0     GICv3 146 Level     rkvenc1
+107:        820          0          0          0          0          0          0          0     GICv3 149 Level     rkvdec0
+113:       4000          0          0          0          0          0          0          0     GICv3 133 Level     fdbd0000.rkvenc-core
+114:       2500          0          0          0          0          0          0          0     GICv3 136 Level     fdbe0000.rkvenc-core
+110:          0        200          0          0          0          0          0          0     GICv3 152 Level     rga3_core0
+111:          0          0          0          0          0          0          0          0     GICv3 153 Level     rga3_core1
+112:          0          0          0          0          0          0          0          0     GICv3 154 Level     rga2
+120:       9931       8842       7011       6544       5122       4980       4411       4302     GICv3 168 Level     dwmmc
+IPI0:     20114      19883      18774      18211      15442      15201      14022      13899     Rescheduling interrupts

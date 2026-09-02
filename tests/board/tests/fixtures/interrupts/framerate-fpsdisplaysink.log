@@ -1,0 +1,3 @@
+/GstPipeline:pipeline0/GstFPSDisplaySink:fpsdisplaysink0: last-message = rendered: 24, dropped: 0, current: 24.00, average: 24.00
+/GstPipeline:pipeline0/GstFPSDisplaySink:fpsdisplaysink0: last-message = rendered: 49, dropped: 0, current: 25.00, average: 24.50
+/GstPipeline:pipeline0/GstFPSDisplaySink:fpsdisplaysink0: last-message = rendered: 75, dropped: 0, current: 26.00, average: 25.00

@@ -1,0 +1,10 @@
+Sep 02 09:14:01 rock-5b-plus kernel: rockchip-mpp fdba0000.rkvenc: Adding to iommu group 3
+Sep 02 09:14:01 rock-5b-plus kernel: rockchip-mpp fdba0000.rkvenc: probe success
+Sep 02 09:14:02 rock-5b-plus kernel: rockchip-mpp fdc38100.rkvdec: probe success
+Sep 02 09:14:09 rock-5b-plus cerastream[1841]: engine: session start pipeline=hdmi codec=h265
+Sep 02 09:14:09 rock-5b-plus cerastream[1841]: engine: converter selected v4l2video1convert (rga2)
+Sep 02 09:14:10 rock-5b-plus cerastream[1841]: mppenc: proposed dmabuf pool, 1080 aligned to 1088
+Sep 02 09:14:10 rock-5b-plus cerastream[1841]: mppenc: importing upstream dmabuf directly
+Sep 02 09:14:40 rock-5b-plus cerastream[1841]: engine: status streaming=true frames=900
+Sep 02 09:15:10 rock-5b-plus cerastream[1841]: engine: status streaming=true frames=1800
+Sep 02 09:15:12 rock-5b-plus cerastream[1841]: engine: session stop

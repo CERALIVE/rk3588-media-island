@@ -1,0 +1,13 @@
+pid=1841
+fd=0 target=/dev/null inode=6 size=0
+fd=1 target=pipe:[38221] inode=38221 size=0
+fd=2 target=pipe:[38222] inode=38222 size=0
+fd=7 target=/dev/video0 inode=1204 size=0
+fd=8 target=/dev/dma_heap/system-uncached inode=1330 size=0
+fd=42 target=/dmabuf: inode=90001 size=3110400
+fd=43 target=/dmabuf: inode=90002 size=2073600
+fd=44 target=/dmabuf: inode=90003 size=2073600
+fd=45 target=/dmabuf: inode=90004 size=2073600
+fd=46 target=/dev/mpp_service inode=1417 size=0
+fd=51 target=/dmabuf: inode=90101 size=3133440
+fd=52 target=/dmabuf: inode=90102 size=3133440

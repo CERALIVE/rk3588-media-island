@@ -1,0 +1,11 @@
+0:00:00.0004608  3370969 0xaaaaefc3fea0 INFO                GST_ELEMENT_FACTORY gstelementfactory.c:489:gst_element_factory_create_with_properties: creating element "pipeline"
+0:00:00.0005120  3370969 0xaaaaefc3fea0 INFO                GST_ELEMENT_FACTORY gstelementfactory.c:489:gst_element_factory_create_with_properties: creating element "filesrc"
+0:00:00.0005632  3370969 0xaaaaefc3fea0 INFO                GST_ELEMENT_FACTORY gstelementfactory.c:489:gst_element_factory_create_with_properties: creating element "h264parse"
+0:00:00.0006144  3370969 0xaaaaefc3fea0 INFO                GST_ELEMENT_FACTORY gstelementfactory.c:489:gst_element_factory_create_with_properties: creating element "mppvideodec"
+0:00:00.0006656  3370969 0xaaaaefc3fea0 INFO                GST_ELEMENT_FACTORY gstelementfactory.c:489:gst_element_factory_create_with_properties: creating element "identity"
+0:00:00.0007168  3370969 0xaaaaefc3fea0 INFO                GST_ELEMENT_FACTORY gstelementfactory.c:489:gst_element_factory_create_with_properties: creating element "fakesink"
+ERROR: from element /GstPipeline:pipeline0/GstH264Parse:h264parse0: Internal data stream error.
+Additional debug info:
+../libs/gst/base/gstbaseparse.c(3721): gst_base_parse_loop (): /GstPipeline:pipeline0/GstH264Parse:h264parse0:
+streaming stopped, reason not-negotiated (-4)
+ERROR: pipeline doesn't want to preroll.
