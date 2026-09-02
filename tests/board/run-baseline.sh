@@ -1889,8 +1889,17 @@ census_row=shape=S4 boundary=whole-graph-window class=NO-COPY software_copies=0 
   local wsfile
   wsfile="${work}/ws.md"
   printf '| a | b |   \n|---|---|\t\n\tStandards: \n\tFlags: \n  indented keeps its indent  \n' >"${wsfile}"
+  # The detector must be shown to FIRE on the dirty fixture before it is trusted
+  # to stay silent on the clean one. It previously read `[ \t]+$`, and in an ERE
+  # bracket expression `\t` is the literal `\` and `t` -- never a tab -- so it
+  # matched any line ending in `t` ("...indent") and could never pass. The class
+  # must be the sanitiser's own `[[:space:]]`.
+  grep -qE '[[:space:]]+$' "${wsfile}" || {
+    harness_fail_msg "the trailing-whitespace fixture carries none, so the detector proves nothing"
+    rc=1
+  }
   strip_trailing_hspace "${wsfile}"
-  if grep -qE '[ \t]+$' "${wsfile}"; then
+  if grep -qE '[[:space:]]+$' "${wsfile}"; then
     harness_fail_msg "trailing whitespace survived the sanitiser"
     rc=1
   fi
