@@ -6,10 +6,10 @@ They are re-anchored to the pinned v7.2 tree in the CeraLive port commits.
 Origin: yisding/rock-5b-ysp@ca3da04280c48c004e522c15f31862bf88a2d1b9:kernel-drivers/patches/forward-port-rk3588/rk3588-fwport-0015-media-rockchip-rga3-map-scattered-userptr-through-IO.patch
 
 diff --git a/drivers/iommu/dma-iommu.c b/drivers/iommu/dma-iommu.c
-index f1fb27681b0bdc1ad57d409df4a43684f9a63032..b470c181c03cfe9eebcf039d169cdf065edd267e 100644
+index 9abaec0703efb4a58d2e50fad70328205d9eee7f..d64ee65d1eaf15ce1f00b28a4ae8fcaee90a710a 100644
 --- a/drivers/iommu/dma-iommu.c
 +++ b/drivers/iommu/dma-iommu.c
-@@ -382,6 +382,20 @@ int iommu_get_dma_cookie(struct iommu_domain *domain)
+@@ -383,6 +383,20 @@ int iommu_get_dma_cookie(struct iommu_domain *domain)
  	return 0;
  }
  
@@ -31,7 +31,7 @@ index f1fb27681b0bdc1ad57d409df4a43684f9a63032..b470c181c03cfe9eebcf039d169cdf06
   * iommu_get_msi_cookie - Acquire just MSI remapping resources
   * @domain: IOMMU domain to prepare
 diff --git a/include/linux/iommu.h b/include/linux/iommu.h
-index c30d12e16473df31c816b62f255fd57a3e4d00f1..2007a9058608f9636edf62e4b7bf086356357258 100644
+index ac43b8b93f14aa4853e794eec5e6ca39d1eac0f1..71dad0d211c79031f017ecf3698a9fbdea22c0b5 100644
 --- a/include/linux/iommu.h
 +++ b/include/linux/iommu.h
 @@ -43,6 +43,7 @@ struct notifier_block;
@@ -42,7 +42,7 @@ index c30d12e16473df31c816b62f255fd57a3e4d00f1..2007a9058608f9636edf62e4b7bf0863
  struct iommu_fault_param;
  struct iommufd_ctx;
  struct iommufd_viommu;
-@@ -1555,11 +1556,19 @@ static inline void iommu_debugfs_setup(void) {}
+@@ -1605,11 +1606,19 @@ static inline void iommu_debugfs_setup(void) {}
  
  #ifdef CONFIG_IOMMU_DMA
  int iommu_get_msi_cookie(struct iommu_domain *domain, dma_addr_t base);
