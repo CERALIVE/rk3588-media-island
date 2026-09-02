@@ -18,6 +18,8 @@
 #include "rga_debugger.h"
 #include "rga_common.h"
 
+#include <linux/string.h>
+
 struct rga_drvdata_t *rga_drvdata;
 
 /* set hrtimer */
@@ -1213,7 +1215,7 @@ static long rga_ioctl(struct file *file, uint32_t cmd, unsigned long arg)
 		driver_version.major = DRIVER_MAJOR_VERISON;
 		driver_version.minor = DRIVER_MINOR_VERSION;
 		driver_version.revision = DRIVER_REVISION_VERSION;
-		strncpy((char *)driver_version.str, DRIVER_VERSION, sizeof(driver_version.str));
+		strscpy((char *)driver_version.str, DRIVER_VERSION, sizeof(driver_version.str));
 
 		if (copy_to_user((void *)arg, &driver_version, sizeof(driver_version)))
 			ret = -EFAULT;
