@@ -172,9 +172,9 @@ def split_mailbox(text: str, name: str) -> tuple[int, int, str]:
 def reconstruct_created_files(payload: str, name: str) -> dict[str, str]:
     """Rebuild every file a create-mode payload claims to add.
 
-    Returns an empty mapping for a payload that creates nothing -- that is how
-    an integration patch is told apart from a source patch, structurally rather
-    than by filename.
+    Returns an empty mapping for a payload that creates nothing. The caller
+    first matches integration payloads exactly because an integration patch may
+    itself create a file that mainline does not yet carry.
     """
     files: dict[str, str] = {}
     lines = payload.split("\n")
@@ -271,6 +271,18 @@ def verify(root: Path) -> list[str]:
                 f"{name}: claims a series of {total} but the series has {len(order)}"
             )
 
+        match = next(
+            (
+                source
+                for source, source_payload in unmatched_integration.items()
+                if source_payload == payload
+            ),
+            None,
+        )
+        if match is not None:
+            del unmatched_integration[match]
+            continue
+
         created = reconstruct_created_files(payload, name)
         if created:
             for path, content in created.items():
@@ -282,21 +294,10 @@ def verify(root: Path) -> list[str]:
                 claimed_from[path] = name
             continue
 
-        match = next(
-            (
-                source
-                for source, source_payload in unmatched_integration.items()
-                if source_payload == payload
-            ),
-            None,
+        problems.append(
+            f"{name}: its payload matches no integration/*.patch -- the series "
+            "carries a hunk the source does not have"
         )
-        if match is None:
-            problems.append(
-                f"{name}: its payload matches no integration/*.patch -- the series "
-                "carries a hunk the source does not have"
-            )
-        else:
-            del unmatched_integration[match]
 
     for source in sorted(unmatched_integration):
         problems.append(
@@ -369,6 +370,50 @@ def _self_test() -> int:
 
         clean = build(base / "clean", good, "int a;\n")
         check("a faithful series verifies clean", not verify(clean))
+
+        # Integration payloads may create a mainline file (for example the
+        # rockchip video Kconfig hook) while modifying another one.  That does
+        # not turn the mailbox into the island SOURCE bundle: exact payload
+        # identity is the class boundary.
+        integration_create = base / "integration-create"
+        (integration_create / "integration").mkdir(parents=True)
+        integration_payload = "\n".join(
+            [
+                "diff --git a/drivers/video/rockchip/Kconfig b/drivers/video/rockchip/Kconfig",
+                "new file mode 100644",
+                "index 0000000000000000000000000000000000000000..1111111111111111111111111111111111111111",
+                "--- /dev/null",
+                "+++ b/drivers/video/rockchip/Kconfig",
+                "@@ -0,0 +1,1 @@",
+                '+source "drivers/video/rockchip/mpp/Kconfig"',
+            ]
+        )
+        (integration_create / "integration/0001-hooks.patch").write_text(
+            integration_payload + "\n", encoding="utf-8"
+        )
+        (integration_create / "patches").mkdir()
+        integration_mailbox = "\n".join(
+            [
+                "From " + "0" * 40 + " Mon Sep 17 00:00:00 2001",
+                "Subject: [PATCH 1/1] hooks",
+                "",
+                "---",
+                integration_payload,
+                "-- ",
+                "2.51.0",
+                "",
+            ]
+        )
+        (integration_create / "patches/0001-hooks.patch").write_text(
+            integration_mailbox, encoding="utf-8"
+        )
+        (integration_create / "patches/series").write_text(
+            "0001-hooks.patch\n", encoding="utf-8"
+        )
+        check(
+            "a create-mode integration payload remains integration",
+            not verify(integration_create),
+        )
 
         drifted = build(base / "drifted", good, "int a; /* edited on disk */\n")
         check(
