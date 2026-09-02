@@ -452,31 +452,31 @@ exit=0
 
 ## 9. Timings
 
-Measured on GitHub's `ubuntu-latest` runners, first run on `main`
-(`33685651864`, 2026-09-02) — a **cold** cache, so the kernel clone and every
-apt install were paid in full:
+Measured on GitHub's `ubuntu-latest` runners, both runs on `main`, 2026-09-02.
+Run `33685651864` populated the kernel cache (**cold**); run `33686051743` hit it
+(`Cache hit for: linux-Linux-8d3ae592…`, **warm**).
 
-| Job | Cold |
-|---|---|
-| `cross-compile-modules` | **140 s** |
-| `self-tests` | 35 s |
-| `board-probes` | 22 s |
-| `shellcheck` | 8 s |
-| `dt-ownership-lint` | 7 s |
-| `series-integrity` / `pin` / `pin-equality` | 6 s each |
-| `uapi-parity` | 5 s |
-| `shim-lint` / `action-pins` | 4 s |
-| `kunit` / `static-analysis` | 3 s |
+| Job | Cold | Warm |
+|---|---|---|
+| `cross-compile-modules` | **140 s** | **91 s** |
+| `self-tests` | 35 s | 20 s |
+| `board-probes` | 22 s | 18 s |
+| `shellcheck` | 8 s | 9 s |
+| `pin-equality` | 6 s | 7 s |
+| `series-integrity` | 6 s | 6 s |
+| `dt-ownership-lint` / `uapi-parity` / `pin` | 5–7 s | 5 s |
+| `shim-lint` / `action-pins` / `kunit` / `static-analysis` | 3–4 s | 4–6 s |
 
-The plan's budget for `cross-compile-modules` is 25 minutes cold and 8 warm;
-the cold run came in at 2 m 20 s. That is **not** a warm-cache figure and it is
-not the steady-state number either — it is fast because the module build itself
-is skipped (`NO-MODULES-YET`) while everything around it runs. Expect it to grow
-substantially when the import lands real source, and re-measure then rather than
-carrying this row forward as if it still applied.
+The plan's budget is 25 minutes cold and 8 warm; both are met with room to
+spare. **That is not the steady-state number and must not be quoted as one** —
+`cross-compile-modules` is fast today precisely because the module build itself
+is skipped (`NO-MODULES-YET`) while every step around it runs in full. Expect it
+to grow substantially when the import lands real source, and re-measure then
+rather than carrying this table forward as if it still applied.
 
-The warm-cache figure is not recorded yet: the first run populated the cache and
-nothing has re-run against it.
+The `ccache` cache reported a miss on both runs, which is correct and not a
+defect: its key includes `github.sha`, and nothing has been compiled for it to
+hold while the module build is skipped.
 
 ---
 
@@ -500,7 +500,8 @@ Recorded so the import is not surprised by them:
    and this document's §1 item 2 stops being a two-way merge.
 5. **`kunit` builds nothing today.** Its first real run will need a
    `tests/kunit/.kunitconfig`; the job passes `--kunitconfig=tests/kunit` already.
-6. **The warm-cache path is unmeasured**, and `release.yml` has never been
-   dispatched in either mode. `ci.yml` has now run end to end on GitHub's
-   runners (§9), which validates the YAML as well as the gates; the release
-   workflow is written and reviewed but unexecuted, and §7 says so.
+6. **`release.yml` has never been dispatched**, in either mode. `ci.yml` has now
+   run green end to end on GitHub's runners across a cold and a warm cache (§9),
+   which validates that YAML as well as the gates; the release workflow is
+   written and reviewed but unexecuted, and §7 says so. `ccache` has also never
+   held anything, because there is nothing to compile yet.
