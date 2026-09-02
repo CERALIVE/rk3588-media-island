@@ -14,3 +14,7 @@ modules.order
 
 # Test and evidence output (Rule D: repository-local, never a path above root).
 test-results/
+
+# Python bytecode from the CI tooling and the UAPI parity suite.
+__pycache__/
+*.pyc
