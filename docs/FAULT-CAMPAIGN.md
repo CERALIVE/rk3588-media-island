@@ -17,14 +17,37 @@ self-tests are not presented as hardware evidence.
 | `0019a` worker lock context | **GREEN-ON-IMPORT** | `fwport-0001`, stable patch-id `041c151608227cc55845fba2c0ad33cb378dbbf0`, imports the MPP queue architecture with pending acquisition before `running_lock`; no compiled RKVENC2 worker takes a mutex inside an irqsave spin section | `scripts/check-mpp-hardening.py --intent 0019` passes the irqsave-block scan; moving `pending_lock` inside `running_lock` on throwaway branch `mutation/0019-proof` made this row RED at 1/2 |
 | `0019b` static dma-buf importer API | **GREEN-ON-IMPORT** | `fwport-0001`, stable patch-id `041c151608227cc55845fba2c0ad33cb378dbbf0`, adds the MPP importer with `dma_buf_map_attachment_unlocked()` / `dma_buf_unmap_attachment_unlocked()` | The same test passes the production importer scan; reverting those exact member lines to the reservation-lock-requiring entry points on `mutation/0019-proof` made this row RED at 1/2 |
 | `0020` service recovery after one-core unbind/rebind | **RED → fix → GREEN** | The imported service has no terminal LIVE/DEAD state, so a successful probe can republish naturally, but core removal left `sub_devices[]` and `hw_support` pointing at the departing devm allocation instead of creating a safe reversible absence. | `scripts/check-mpp-hardening.py --intent 0020` was RED at 1/3 and is GREEN at 3/3 after `cb9e98b`; remove now withdraws only the matching core before IRQ/state teardown, while the existing successful probe path republishes it under the same service lock. |
+| `0021a` balanced failed-run unwind | **GREEN-ON-IMPORT** | `fwport-0001` (`041c151608227cc55845fba2c0ad33cb378dbbf0`) separates failed-run cleanup from normal `mpp_task_finish()`; `fwport-0096` (`9352bcaa065277443632ede17f7b628ff4962187`) completes task/fault ownership sequencing | The 0021 contract passed this row on import; removing one imported `mpp_power_off()` unwind on `mutation/0021-proof` made only this imported guarantee newly fail, changing the already-red aggregate from 2/3 to 1/3 |
+| `0021b` worker task lifetime | **GREEN-ON-IMPORT** | `fwport-0052` (`3407cbf1b17f1cc447e4d5df09dd459e45e4e1fb`) makes device-less tasks disposable; `0053` (`2f8b8e41b41ad043190abed46027ca8137f1e2db`) guards the wait twin; `0096` (`9352bcaa065277443632ede17f7b628ff4962187`) serializes task/fault ownership | The worker has no task dereference after the releasing ISR/failure tail; adding an explicit post-ISR task-state read on `mutation/0021-proof` made only this imported guarantee newly fail, changing 2/3 to 1/3 |
+| `0021c` secondary-core dispatch eligibility | **RED → fix → GREEN** | Shared-domain helpers restore a detached secondary's default domain, but neither the scheduler nor generic attach rejected an unexpectedly missing domain/group | The aggregate 0021 contract was RED at 2/3 and is GREEN at 3/3 after `a9f6967`; RKVENC2 now removes a core without a usable domain from the idle candidate mask and `mpp_iommu_attach()` independently returns `-ENODEV` instead of calling `iommu_attach_group()` with NULL state |
 | `0022` class coverage, element and request-count bounds | **RED → fix → GREEN** | `fwport-0062`, local commit `6ed2da0`, stable patch-id `3e228bc54c1b53228a2cf98f53a840edf163962f`; `fwport-0076` as above | Explicit `mpp_req_hevc_sqi_scl_span_test` accepts the 3,228-byte SQI+SCL programme with its 24-byte map hole; `mpp_req_class_overrun_rejected_test` requires `-EINVAL`; element/count cases remain permanent |
 | `0026`-class decoder/JPGDEC bounds | **RED → fix → GREEN** | Shared request validation from `fwport-0054`/`0076`; no claim that HDMI-RX patch `0026` is an MPP change | `mpp_req_rkvdec2_bounds_test` and `mpp_req_jpgdec_bounds_test` exercise the production helper used by `mpp_check_req()` |
 
-Rows for `0021` are added with their
-terminal evidence by the board/lifecycle part of this campaign; an absent row
-is not a pass.
+Every required hardening intent now has terminal evidence. Split rows retain
+the independent defect boundaries where one CeraLive patch covered multiple
+unrelated failures.
 
 ## Test-first transcript
+
+Intent `0021` separated its three required lifecycle guarantees. Two were
+already present through the imported MPP/fault-ownership architecture; the
+secondary dispatch guard was missing:
+
+```text
+PASS: failed hw_run releases resources exactly once
+PASS: worker does not reread a released task
+FAIL: secondary dispatch requires a usable IOMMU domain
+mpp-hardening-0021: pass:2 fail:1 total:3
+```
+
+The two GREEN-ON-IMPORT rows were mutated independently on throwaway branch
+`mutation/0021-proof`. Removing one failed-run `mpp_power_off()` changed the
+aggregate to `pass:1 fail:2 total:3` with the balance row newly failed. Adding a
+post-ISR task-state read also changed it to `pass:1 fail:2 total:3`, this time
+with the worker-lifetime row newly failed. After restoring both mutations and
+applying `a9f6967`, the permanent command reported
+`mpp-hardening-0021: pass:3 fail:0 total:3`. The complete KUnit run remained
+green at `pass:13 fail:0 total:13`.
 
 Intent `0020` preserved the imported architecture's naturally reversible
 service (there is no terminal state to reset), but exposed its stale publication
