@@ -120,6 +120,16 @@ The island's own Kconfig symbols are the third input the README names. They are
 enabled through `configs/rk3588-media-island.fragment`; CI asserts both the
 resulting module values and the exact set of selectable MPP clients.
 
+## Release 1
+
+| Tag | Commit | Asset | Asset SHA-256 |
+|---|---|---|---|
+| `v2026.9.0` | `dcda1a2218d9e52db2db2a0a809263d7d7e8831f` | `rk3588-media-island-v2026.9.0.mbox.tar` | `bea66ab56a71e5869d5e9ac6d66bb5f4e5151190dd387abe345fc88dc9f5eec2` |
+
+Published 2026-09-03T15:20:20Z at https://github.com/CERALIVE/rk3588-media-island/releases/tag/v2026.9.0.
+The accompanying checksum asset is `rk3588-media-island-v2026.9.0.mbox.tar.sha256` with SHA-256
+`ee3d23621c5615dfef0b618dc11d514f38ff9e88bd73c93d49a92dea099dcdea`.
+
 ## How to add a row
 
 Resolve the object live, never from a cache or a previous note; record the full

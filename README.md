@@ -12,7 +12,7 @@ released as a `git am` mailbox series.
 | **Boards** | Radxa Rock 5B+, Orange Pi 5+ |
 | **Release artifact** | a generated `git am` series, plus its `.sha256` — no `.deb`, no kernel, no image |
 | **Versioning** | CalVer, `YYYY.MINOR.PATCH` |
-| **Status** | **MPP OWNERSHIP INTEGRATED.** The complete donor/97-member replay, audited 44-commit vendor backlog, CeraLive Linux 7.2 delta and seven-patch generated series are present and CI-gated. Encoder, decoder and JPEG nodes are in the applied lane; RGA ownership remains pending. No release, image or board carries the island yet. |
+| **Status** | **MPP OWNERSHIP INTEGRATED.** The complete donor/97-member replay, audited 44-commit vendor backlog, CeraLive Linux 7.2 delta and seven-patch generated series are present and CI-gated. Encoder, decoder and JPEG nodes are in the applied lane; RGA ownership remains pending. Release `v2026.9.0` is published with its generated mailbox asset. No image or board carries the island yet. |
 
 ## Why this is a source repository and not a patch repository
 
