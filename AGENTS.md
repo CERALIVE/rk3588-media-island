@@ -59,6 +59,7 @@ rk3588-media-island/
     ├── OWNERSHIP.md             # silicon ownership table; ALSO the dt-ownership-lint input
     ├── REFERENCES.md            # every pinned coordinate
     ├── PROVENANCE.md            # per-file import ledger
+    ├── VENDOR-BACKLOG.md        # exhaustive post-donor vendor PICK/SKIP ledger
     ├── UPSTREAM-STATUS.md       # mainline movement; the issue-only watch
     └── BOARD-QUALIFICATION.md   # what real hardware must demonstrate
 ```
@@ -73,6 +74,7 @@ rk3588-media-island/
 | Decide which driver owns a silicon block | [`docs/OWNERSHIP.md`](docs/OWNERSHIP.md) |
 | Classify an external symbol the drivers call | [`docs/COMPAT.md`](docs/COMPAT.md) |
 | Find where a source file came from | [`docs/PROVENANCE.md`](docs/PROVENANCE.md) |
+| Audit Rockchip fixes after the donor snapshot | [`docs/VENDOR-BACKLOG.md`](docs/VENDOR-BACKLOG.md) and `scripts/vendor-backlog.sh --check` |
 | Look up a pinned upstream SHA | [`docs/REFERENCES.md`](docs/REFERENCES.md) |
 | See whether mainline has caught up on a block | [`docs/UPSTREAM-STATUS.md`](docs/UPSTREAM-STATUS.md) |
 | Know what a board must demonstrate before a tick | [`docs/BOARD-QUALIFICATION.md`](docs/BOARD-QUALIFICATION.md) |

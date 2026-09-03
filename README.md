@@ -12,7 +12,7 @@ released as a `git am` mailbox series.
 | **Boards** | Radxa Rock 5B+, Orange Pi 5+ |
 | **Release artifact** | a generated `git am` series, plus its `.sha256` — no `.deb`, no kernel, no image |
 | **Versioning** | CalVer, `YYYY.MINOR.PATCH` |
-| **Status** | **SOURCE IMPORTED.** The complete donor/97-member replay, CeraLive Linux 7.2 delta and four-patch generated series are present and CI-gated. No release, image or board carries the island yet. |
+| **Status** | **SOURCE IMPORTED.** The complete donor/97-member replay, audited 44-commit vendor backlog, CeraLive Linux 7.2 delta and four-patch generated series are present and CI-gated. No release, image or board carries the island yet. |
 
 ## Why this is a source repository and not a patch repository
 
@@ -94,6 +94,7 @@ rk3588-media-island/
     ├── OWNERSHIP.md        # silicon ownership table + the one-compatible rule
     ├── REFERENCES.md       # every pinned coordinate
     ├── PROVENANCE.md       # per-file import ledger
+    ├── VENDOR-BACKLOG.md   # exhaustive post-donor vendor PICK/SKIP ledger
     ├── UPSTREAM-STATUS.md  # what mainline is doing; the issue-only watch
     └── BOARD-QUALIFICATION.md  # what real hardware must demonstrate
 ```

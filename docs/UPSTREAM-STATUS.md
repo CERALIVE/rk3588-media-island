@@ -1,7 +1,7 @@
 # Upstream status — what mainline is doing to the ground under this island
 
-**Status: scaffold.** The tracking tables are empty until the source import
-lands. The policy below is not a scaffold and applies from today.
+**Status: vendor backlog current through 2026-09-02.** Mainline hand-back rows
+remain for their later measurement wave; the vendor media-path watch is live.
 
 ## What this document is for
 
@@ -18,10 +18,11 @@ is not a check; it is a memory.
 
 ## The watch is issue-only
 
-An `upstream-watch` workflow runs weekly against the upstream objects and the
-relevant `linux-media` patchwork queries, and opens or updates **one** GitHub
-issue when something moves. It closes that issue when everything is current
-again.
+An `upstream-watch` workflow runs weekly against Rockchip `develop-6.1` and the
+two current Armbian vendor mirrors. It reports a branch only when a commit after
+the reviewed cursor touches one of the exact MPP, RGA3, or rk-mpp UAPI paths,
+and opens or updates **one** GitHub issue. It closes that issue when those paths
+are current again.
 
 It never edits a pin. It never edits this file. It never dispatches a build. A
 human reads the issue and decides. That restriction is deliberate: an
@@ -57,14 +58,17 @@ therefore the ones the watch actually has something to report on. The two rows
 with no mainline counterpart still exist, because "there is nothing upstream" is
 a finding with a date on it, and an absent row reads as an oversight.
 
-## Upstream objects watched — TO BE FILLED
+## Vendor objects watched
 
 | Object | What a change there would mean | Last checked |
 |---|---|---|
-| `yisding/rock-5b-ysp` `main` HEAD | The forward-port series moved; a rebase or a fix may be available | |
-| `armbian/linux-rockchip` `rk-6.1-rkr5.1` HEAD | The vendor BSP moved; comparison material only, never an import trigger | |
-| `linux-media` — RGA3 multicore postings | The reason `multi_rga` exists may be dissolving | |
-| `linux-media` — `rkvdec` codec coverage | The RKVDEC2 hand-back precondition may be approaching | |
+| `rockchip-linux/kernel` `develop-6.1` after `77168c8d5ab8` | A new vendor media commit needs the same PICK/SKIP classification as `VENDOR-BACKLOG.md` | 2026-09-02 |
+| `armbian/linux-rockchip` `rk-6.1-rkr6.1` after `82c6b3ef1c93` | Comparison mirror only; may expose a vendor fix or a downstream revert | 2026-09-02 |
+| `armbian/linux-rockchip` `rk-6.1-rkr7.2` after `057c0edb6f11` | Comparison mirror only; currently carries the `logic_clk_on` revert cited by the backlog | 2026-09-02 |
+
+All three rows use exactly `drivers/video/rockchip/mpp/`,
+`drivers/video/rockchip/rga3/`, and `include/uapi/linux/rk-mpp.h`. The yisding
+97-member series is immutable import provenance, not a moving watch target.
 
 ## Rules for editing this file
 
