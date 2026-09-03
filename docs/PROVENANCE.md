@@ -1,10 +1,9 @@
 # Provenance — where every line of this repository's driver source came from
 
-**Status: import in progress.** The donor snapshot and the complete 97-member
-manifest replay are committed. The equality proof below freezes the 6.18
-checkpoint before any CeraLive 7.2 adaptation begins; the per-file tables are
-filled after that adaptation so they describe the maintained result rather than
-an intermediate tree.
+**Status: import complete.** The donor snapshot, complete 97-member manifest
+replay, 6.18 equality checkpoint, CeraLive 7.2 delta and generated release
+series are committed. The ledgers below describe the maintained source now in
+the repository.
 
 The source import fills every table here in the same change that adds the code.
 A file landing in `drivers/video/rockchip/` without its row is a review blocker,
@@ -104,14 +103,84 @@ reservation helper, the MPP core fails to compile and, more importantly, plain
 `INTEGRATION`, `integration/0003` carries the narrow helper, and the equality
 check above was rerun over the corrected 67-path set.
 
-## Per-file import ledger — TO BE FILLED AT IMPORT
+## Per-file import ledger
 
 One row per file under `drivers/video/rockchip/mpp/`,
 `drivers/video/rockchip/rga3/` and `include/uapi/linux/`.
 
+`donor` and `realized series` below resolve to the full immutable objects in
+the pinned-upstreams list above. A file is assigned to the realized series when
+one or more of its 97 members changed that path; untouched donor files continue
+to name the donor directly.
+
 | File | Origin object | Path at origin | Class | Delta | SPDX carried |
 |---|---|---|---|---|---|
-| *(empty — filled by the source import)* | | | | | |
+| `drivers/video/rockchip/mpp/Kconfig` | realized series | same | ADAPTED | Expose only the supported module/test closure and fail-close every retained client with `BROKEN`. | `GPL-2.0` |
+| `drivers/video/rockchip/mpp/Makefile` | realized series | same | ADAPTED | Restore source-complete object mappings; Kconfig remains the sole selectable-client gate. | `GPL-2.0` |
+| `drivers/video/rockchip/mpp/compat/linux/rockchip/rockchip_sip.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/mpp/compat/rockchip_pmu_idle.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/mpp/compat/rockchip_qos_compat.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/mpp/compat/soc/rockchip/rockchip_dmc.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/mpp/compat/soc/rockchip/rockchip_ipa.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/mpp/compat/soc/rockchip/rockchip_opp_select.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/mpp/compat/soc/rockchip/rockchip_system_monitor.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/mpp/compat/soc/rockchip/vsi_iommu.h` | CeraLive | — | FIRST-PARTY | Fail-closed/no-op compatibility surface for the intentionally omitted AV1-only provider. | `GPL-2.0` |
+| `drivers/video/rockchip/mpp/hack/mpp_hack_px30.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/hack/mpp_hack_px30.h` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/hack/mpp_hack_rk3576.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/hack/mpp_hack_rk3576.h` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/hack/mpp_rkvdec2_hack_rk3568.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/hack/mpp_rkvdec2_link_hack_rk3568.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_av1dec.c` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_common.c` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_common.h` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_debug.h` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_iep2.c` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_iommu.c` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_iommu.h` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_jpgdec.c` | donor | same | ADAPTED | Supply the bounds/count contract required by the hardened shared translator and use the 7.2 remove callback. | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_jpgenc.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_rkvdec.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_rkvdec2.c` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_rkvdec2.h` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_rkvdec2_link.c` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_rkvdec2_link.h` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_rkvenc.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_rkvenc2.c` | realized series | same | REBASED | Separate internal register messages from `__user` requests; preserve address spaces for sparse. | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_service.c` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_vdpp.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_vdpu1.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_vdpu2.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_vepu1.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_vepu2.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/rockchip_iep2_regs.h` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/rga3/Kconfig` | realized series | same | ADAPTED | Build `ROCKCHIP_MULTI_RGA` as a module without excluding mainline RGA. | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/Makefile` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/include/rga.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/include/rga2_reg_info.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/include/rga3_reg_info.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/include/rga_common.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/include/rga_debugger.h` | donor | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/include/rga_dma_buf.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/include/rga_drv.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/include/rga_fence.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/include/rga_hw_config.h` | donor | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/include/rga_iommu.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/include/rga_job.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/include/rga_mm.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga2_reg_info.c` | realized series | same | REBASED | Make the file-local immutable ROP table explicit for sparse. | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga3_reg_info.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga_common.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga_debugger.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga_dma_buf.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga_drv.c` | realized series | same | REBASED | Replace `strncpy`, annotate ioctl user pointers, and make file-local operations static. | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga_fence.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga_hw_config.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga_iommu.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga_job.c` | realized series | same | REBASED | Preserve the trusted in-kernel request pointer as a kernel address for sparse. | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga_mm.c` | realized series | same | REBASED | Preserve the trusted dma-buf object pointer as a kernel address for sparse. | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga_policy.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `include/uapi/linux/rk-mpp.h` | realized series | same | VERBATIM |  | `((GPL-2.0+ WITH Linux-syscall-note) OR MIT)` |
 
 Column meanings, fixed now so the import cannot quietly redefine them:
 
@@ -127,16 +196,20 @@ Column meanings, fixed now so the import cannot quietly redefine them:
 - **SPDX carried** — the identifier as it appears in the file. Never rewritten;
   see [`../LICENSE.md`](../LICENSE.md).
 
-## Adaptation rationale — TO BE FILLED AT IMPORT
+## Adaptation and first-party rationale
 
 Every `ADAPTED` row above gets a numbered entry here explaining the behavioural
 change, what evidence justified it, and what would have to be true to revert it.
+The one first-party compatibility header is included because its deliberately
+negative behaviour is also part of the maintained contract.
 
 | # | File | What changed behaviourally | Evidence | Reversion condition |
 |---|---|---|---|---|
-| *(empty — filled by the source import)* | | | | |
+| A1 | `mpp/Kconfig`, `mpp/Makefile`, `rga3/Kconfig` | Select exactly RKVENC2, RKVDEC2, JPGDEC and multi_rga as modules; retain every other client as unselectable source. | MNH-23, the exact-selectable-symbol assertion and `configs/rk3588-media-island.fragment`. | A later ownership wave supplies explicit scope, userspace capability gating and board evidence for another client. |
+| A2 | `mpp/compat/soc/rockchip/vsi_iommu.h` | Return `-ENODEV` or no-op for an AV1-only provider that this release intentionally omits. | AV1 is `BROKEN`; the manifest drops `drivers/iommu/vsi-iommu.c`; `docs/COMPAT.md` classes this surface STUB-SAFE only for the unselectable client. | AV1 becomes a supported client and the real provider is imported and linked. |
+| A3 | `mpp/mpp_jpgdec.c` | Bound register translation, publish the translation-table count and propagate offset-validation errors. | JPGDEC is selected, while the replayed shared MPP translator requires explicit array/count bounds after the hardening series. | The shared translator changes contract while retaining equivalent bounds and error propagation. |
 
-## Integration patches — TO BE FILLED AT IMPORT
+## Integration patches
 
 Files in `integration/` patch **mainline** files rather than island-owned ones,
 so they carry a different obligation: each must name the mainline file it touches
@@ -144,7 +217,47 @@ and the reason the change cannot live inside the island's own directories.
 
 | Patch | Mainline file touched | Why it cannot be island-local |
 |---|---|---|
-| *(empty — filled by the source import)* | | |
+| `0001-video-rockchip-kconfig-makefile-hooks.patch` | `drivers/video/{Kconfig,Makefile}`, `drivers/video/rockchip/{Kconfig,Makefile}` | The parent build menus live in the pinned mainline tree and must descend into the island-owned directories. |
+| `0002-iommu-rockchip-export-for-mpp.patch` | `drivers/iommu/rockchip-iommu.c`, `include/soc/rockchip/rockchip_iommu.h` | Enable/reset/fault ownership is state of the real Rockchip IOMMU provider; an island-local stub would make a broken provider link look successful. |
+| `0003-iommu-dma-expose-iova-domain.patch` | `drivers/iommu/dma-iommu.c`, `drivers/iommu/iova.c`, `include/linux/iommu.h`, `include/linux/iova.h` | Selected RKVENC2/RKVDEC2 reserve RCB IOVA ranges in the DMA-API allocator; only the allocator can expose and exclusively own those nodes. |
+
+## CeraLive 7.2 delta
+
+The replay checkpoint above is immutable. Every change after it is isolated in
+the commit named here; there is no unlabelled post-replay source drift.
+
+| Commit | Maintained delta |
+|---|---|
+| `50af309` | Re-anchor the real Rockchip IOMMU provider exports to Linux 7.2. |
+| `ae79f74` | Re-anchor the parent video Kconfig/Makefile hooks to Linux 7.2. |
+| `8d1fe43` | Re-anchor the DMA-IOMMU IOVA accessor to Linux 7.2. |
+| `bec901b` | Replace the removed/unsafe string-copy shape with `strscpy()`. |
+| `9d5aac0` | Add the explicit STUB-SAFE VSI surface for the omitted AV1-only provider. |
+| `418de4e` | Add exclusive IOVA reservation so selected MPP clients free only allocator nodes they own. |
+| `d10aa39` | Port donor-only JPGDEC to the hardened shared MPP translation contract. |
+| `eaaf024` | Use Linux 7.2's `void` platform-driver remove callback. |
+| `f1a0a4d` | Constrain the selectable/compiled client closure without Kconfig mutual exclusion. |
+| `a615b53` | Preserve user/kernel address spaces and file-local immutable objects so sparse is clean. |
+
+## 7.2 compile and module identity
+
+The pinned Linux 7.2 tree was configured with arm64 `defconfig`, the pinned
+device fragment and `configs/rk3588-media-island.fragment`. After generating
+the provider symbol table, both selected directories built with
+`KCFLAGS=-Werror` and sparse `C=2` without a finding:
+
+```text
+drivers/video/rockchip/mpp/rk_vcodec.ko
+drivers/video/rockchip/rga3/rga3.ko
+```
+
+The module filenames are inherited vendor names, rather than the planning
+examples. Their embedded licence fields are likewise inherited and unchanged:
+
+```text
+rk_vcodec.ko: Dual MIT/GPL
+rga3.ko:      GPL
+```
 
 ## What this document does NOT claim
 

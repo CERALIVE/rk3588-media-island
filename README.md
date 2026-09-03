@@ -12,7 +12,7 @@ released as a `git am` mailbox series.
 | **Boards** | Radxa Rock 5B+, Orange Pi 5+ |
 | **Release artifact** | a generated `git am` series, plus its `.sha256` — no `.deb`, no kernel, no image |
 | **Versioning** | CalVer, `YYYY.MINOR.PATCH` |
-| **Status** | **GREENFIELD.** Scaffolding and CI only. No driver source is imported yet, the generated series is empty by construction, and no image or board carries the island. The gates exist and are mutation-proven ([`docs/CI.md`](docs/CI.md)); several of them have nothing to inspect until the import lands, and each says so in words rather than reporting a clean run. |
+| **Status** | **SOURCE IMPORTED.** The complete donor/97-member replay, CeraLive Linux 7.2 delta and four-patch generated series are present and CI-gated. No release, image or board carries the island yet. |
 
 ## Why this is a source repository and not a patch repository
 
@@ -82,7 +82,7 @@ rk3588-media-island/
 │   ├── mpp/                # MPP service + the three compiled clients; compat shims nest at mpp/compat/
 │   └── rga3/               # multi_rga
 ├── include/uapi/linux/     # the UAPI headers the drivers publish
-├── integration/            # patches to MAINLINE files: DT hunks, provider exports
+├── integration/            # patches to MAINLINE files: build hooks and IOMMU provider APIs
 ├── scripts/                # series generation, provenance and lint tooling
 ├── tests/
 │   ├── board/              # hardware-gated drills and probes
@@ -100,9 +100,11 @@ rk3588-media-island/
 
 ## Building the modules
 
-The island builds **out of tree, modules only**, against the pinned kernel. It
-never builds a whole kernel, and CI never clones a sibling checkout — the kernel
-comes from the URL in `kernel-pin.env`.
+The island's deliverables build **out of tree as two modules** against the pinned
+kernel. CI first builds the configured `vmlinux` solely to generate the real
+provider symbol table used by modpost; otherwise a modules-only preparation has
+no `Module.symvers` and cannot prove the REAL-DEPENDENCY link half. CI never
+clones a sibling checkout — the kernel comes from the URL in `kernel-pin.env`.
 
 ```bash
 # 1. Source the pin.
@@ -115,12 +117,18 @@ git clone --depth 1 --branch "$KERNEL_TAG" "$KERNEL_MIRROR" .work/linux
 #    directories into the tree. This is what CI's cross-compile-modules job
 #    does step for step -- see docs/CI.md.
 
-# 4. Modules-only cross-build.
+# 4. Generate the provider symbol table, then cross-build the two modules.
+make -C .work/linux ARCH="$ISLAND_ARCH" CROSS_COMPILE="$ISLAND_CROSS_COMPILE" \
+     vmlinux
 make -C .work/linux ARCH="$ISLAND_ARCH" CROSS_COMPILE="$ISLAND_CROSS_COMPILE" \
      M=drivers/video/rockchip/mpp  modules
 make -C .work/linux ARCH="$ISLAND_ARCH" CROSS_COMPILE="$ISLAND_CROSS_COMPILE" \
      M=drivers/video/rockchip/rga3 modules
 ```
+
+The asserted outputs are the inherited vendor filenames `rk_vcodec.ko` and
+`rga3.ko`; see [`docs/PROVENANCE.md`](docs/PROVENANCE.md) for their measured
+version and licence identity.
 
 The build config is arm64 `defconfig` plus the device image's own kernel fragment
 plus the island's `Kconfig` symbols — not a bare `defconfig`. Building against a
@@ -132,7 +140,7 @@ configuration the device does not run proves the wrong thing.
 |---|---|---|
 | `tests/kunit/` | CI, no hardware | in-kernel logic units |
 | `tests/fuzz/` | CI, no hardware | the UAPI surface survives hostile input |
-| static analysis | CI, no hardware | sparse, smatch and coccinelle findings stay at zero |
+| static analysis | CI, no hardware | sparse findings are fatal and coccinelle inspects every selected object; smatch remains conditional on a suitable runner package |
 | every gate's `--self-test` | CI, no hardware | each gate refuses a mutated tree AND accepts a correct one |
 | `tests/board/` | a real Rock 5B+ or Orange Pi 5+ | everything about silicon |
 

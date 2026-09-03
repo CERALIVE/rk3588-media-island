@@ -15,6 +15,16 @@ target, and a moving target makes every claim in this repository unfalsifiable.
 | Historical comparison only — NOT an import source | `armbian/linux-rockchip` (`rk-6.1-rkr5.1`) | `fd9f82366e235b8afbdf516765210e97d24dce93` |
 | Mainline replacement baseline | Linux `v7.2` | `8d3ae59288f1e7d58d76558a6ee96d533bc5019f` |
 
+## CI tool objects
+
+Linux 7.2 uses syntax that the Ubuntu runner's packaged sparse cannot parse, so
+the static-analysis job builds sparse from one immutable upstream object rather
+than silently skipping the checker.
+
+| Role | Repository | Pinned object |
+|---|---|---|
+| sparse semantic checker | `kernel.org/pub/scm/devel/sparse/sparse.git` | `37156835e3d725b6d750f000be33ba3814bb2310` |
+
 Two of those five deserve a sentence, because getting them the wrong way round
 is the easiest mistake available here:
 
@@ -67,12 +77,11 @@ branch head.
 
 | Component | Version | Status |
 |---|---|---|
-| `multi_rga` `DRIVER_VERSION` | **not yet determined** | Read out of the imported RGA source at import time and recorded here then. The donor object reports RGA header version 1.3.11; the driver's own `DRIVER_VERSION` string is a separate value and is not assumed from it. |
-| MPP service version | **not yet determined** | Same: recorded at import, never inferred. |
+| `multi_rga` `DRIVER_VERSION` | `1.3.11` | Read directly from `drivers/video/rockchip/rga3/include/rga_drv.h` (`1`, `3`, `11`). |
+| MPP service `MPP_VERSION` | `6.18-rkvenc-fwport` | Read directly from the imported MPP Makefile. This identifies the inherited forward-port source line; the kernel target remains the independently pinned Linux 7.2 object above. |
 
-Both rows are filled by the source-import step. Leaving a guess here would be
-worse than leaving the row empty, because a guessed version is indistinguishable
-from a measured one once it is written down.
+Both values are measured from maintained source, not inferred from a repository
+tag or from the target kernel version.
 
 ## Image-pipeline coordinate
 
@@ -94,10 +103,9 @@ Fetching the fragment from the repository's branch head instead would mean a
 green build proving the island against a configuration nobody ships, which is the
 failure this whole file exists to prevent.
 
-The island's own Kconfig symbols are the third input the README names. They do
-not exist yet — the driver import creates `drivers/video/rockchip/{mpp,rga3}/
-Kconfig` — so today the merge is `defconfig` + the image fragment, and the job
-says so rather than implying a three-way merge it did not perform.
+The island's own Kconfig symbols are the third input the README names. They are
+enabled through `configs/rk3588-media-island.fragment`; CI asserts both the
+resulting module values and the exact set of selectable MPP clients.
 
 ## How to add a row
 
