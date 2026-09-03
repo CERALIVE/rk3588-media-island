@@ -5,8 +5,9 @@
 Holds the CeraLive **RK3588 multimedia island** as maintained kernel source: the
 Rockchip MPP service with exactly three compiled clients (`RKVENC2`, `RKVDEC2`,
 `JPGDEC`), the `multi_rga` 2D engine driver, the UAPI headers they publish, and
-the `integration/` build-hook and IOMMU-provider patches they need. Device-tree
-ownership hunks arrive in the later ownership wave, not this source import.
+the `integration/` build-hook, IOMMU-provider and MPP device-tree patches they
+need. RGA ownership hunks are prepared under `integration/pending/` and do not
+ship until the later RGA release.
 
 It is **not a patch repository**. Its release artifact is a **generated** `git am`
 mailbox series; the source is the truth and the series is an output.
@@ -41,7 +42,8 @@ rk3588-media-island/
 │   │   └── compat/              # compat shims NEST HERE — there is no root-level compat/
 │   └── rga3/                    # multi_rga
 ├── include/uapi/linux/          # UAPI headers the drivers publish
-├── integration/                 # patches to MAINLINE files: build hooks, provider exports
+├── integration/                 # applied patches: build hooks, providers, MPP DT ownership
+│   └── pending/                 # linted but unshipped RGA2/RGA3 ownership flips
 ├── patches/                     # GENERATED series — never hand-edited
 ├── scripts/                     # series generation, provenance, lint tooling
 │   ├── build-series.py          # drivers/ + integration/ -> patches/ ; --check byte-compares
@@ -178,13 +180,13 @@ remaining deferred inputs live in [`docs/CI.md`](docs/CI.md).
 | `self-tests` | Every board harness and every CI tool passes its own scored fixtures |
 | `series-integrity` | `patches/` regenerates byte-identically from `drivers/` + `integration/`, verified again by an independent parity checker |
 | `shim-lint` | No compat header gives a `REAL-DEPENDENCY` symbol a body; no unclassified `<soc/rockchip/*.h>` include or `rockchip_*` symbol exists |
-| `dt-ownership-lint` | The pinned-tree collision arm runs now; the one-compatible arm reports `NO-DT-YET` until the ownership wave lands |
+| `dt-ownership-lint` | Applied MPP and pending RGA lanes are checked separately for one compatible, one island match and no pinned-mainline collision |
 | `uapi-parity` | Every `MPP_CMD_*` / `MPP_IOC_*` value and the `mpp_request` layout match the pinned vendor header and the userspace that consumes them |
 | `board-probes` | The three C probes cross-build for aarch64 with `-Werror`, and their host build passes its own self-tests |
 | `action-pins` | Every `uses:` is at the current latest major. **Non-blocking** — an action's release cadence must not redden an unrelated PR |
 | `pin` | Nothing — it *reads* the coordinates out of `kernel-pin.env` and emits them as job outputs |
 | `pin-equality` | The four mirrored `KERNEL_*` values equal the consumer's |
-| `cross-compile-modules` | Both pinned kernel objects resolve; the tree configures the way the device is configured; `vmlinux` supplies provider symbols, `modules_prepare` supplies the module linker script, and `vmlinux.symvers` is exposed as the `Module.symvers` external modpost requires; the two arm64 modules link with `-Werror` and the exact `.ko` set; no island `compatible` collides with a mainline `of_match_table` |
+| `cross-compile-modules` | Both pinned kernel objects resolve; the tree configures the way the device is configured; `vmlinux` supplies provider symbols, `modules_prepare` supplies the module linker script, and `vmlinux.symvers` is exposed as the `Module.symvers` external modpost requires; the two arm64 modules link with `-Werror`; both supported board DTBs build and pass `tests/dt/check-dtb-ownership.sh`; no island `compatible` collides with a mainline `of_match_table` |
 | `kunit` | Builds the request-boundary and RKVENC2 fault/lifecycle suites against the pinned tree |
 | `static-analysis` | sparse with findings promoted to errors plus coccinelle over every selected island object; smatch remains conditional on a suitable runner package |
 | `upstream-watch` | Nothing — it opens or updates ONE issue and never edits a pin or dispatches a build |
@@ -195,11 +197,12 @@ shell, valid regex, and it matches a backslash and a `t` rather than a tab. That
 defect shipped once here. Reintroducing it leaves shellcheck green and turns the
 harness self-test red; the transcript is [`docs/CI.md`](docs/CI.md) §3.
 
-**The source-dependent gates are live.** Series integrity reconstructs 66 source
-files and three integration payloads, shim/UAPI checks inspect the imported
+**The source-dependent gates are live.** Series integrity reconstructs 69 source
+files and six applied integration payloads, shim/UAPI checks inspect the imported
 surface, sparse checks every selected object, and cross-compile asserts exactly
-`rk_vcodec.ko` plus `rga3.ko`. Only the future DT ownership hunks remain an
-explicit zero-input state; they are not silently reported as a pass.
+`rk_vcodec.ko` plus `rga3.ko`. DT ownership is also live: the MPP nodes ship,
+both board DTBs are inspected, and the two pending RGA hunks are linted without
+entering the generated series.
 
 **No workflow restates a pinned coordinate.** The kernel tag is read from
 `kernel-pin.env`; a literal tag anywhere in `.github/` is a regression, because a
