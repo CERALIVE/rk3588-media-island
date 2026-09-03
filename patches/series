@@ -2,3 +2,6 @@
 0002-video-rockchip-kconfig-makefile-hooks.patch
 0003-iommu-rockchip-export-for-mpp.patch
 0004-iommu-dma-expose-iova-domain.patch
+0005-arm64-dts-rk3588-mpp-encoder-nodes.patch
+0006-arm64-dts-rk3588-mpp-decoder-nodes.patch
+0007-arm64-dts-rk3588-mpp-jpegd-node.patch
