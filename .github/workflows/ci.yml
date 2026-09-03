@@ -369,7 +369,7 @@ jobs:
             configs/rk3588-media-island.fragment
           make -C .work/linux -j"$(nproc)" olddefconfig
 
-      - name: Build the configured provider symbol table
+      - name: Build and expose the configured provider symbol table
         env:
           ARCH: ${{ needs.pin.outputs.arch }}
           CROSS_COMPILE: ${{ needs.pin.outputs.cross_compile }}
@@ -377,6 +377,8 @@ jobs:
           set -euo pipefail
           export PATH="/usr/lib/ccache:$PATH"
           make -C .work/linux -j"$(nproc)" vmlinux
+          [ -s .work/linux/vmlinux.symvers ]
+          cp .work/linux/vmlinux.symvers .work/linux/Module.symvers
 
       # THE LINK HALF OF THE SHIM GATE. A REAL-DEPENDENCY declared with no
       # provider is an undefined symbol at modpost time, which is the only place
