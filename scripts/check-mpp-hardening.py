@@ -45,7 +45,7 @@ def ordered(source: str, first: str, second: str) -> bool:
     return first in source and second in source and source.index(first) < source.index(second)
 
 
-def evaluate(sources: Sources) -> tuple[Result, ...]:
+def evaluate_0014(sources: Sources) -> tuple[Result, ...]:
     deinit = between(sources.common, "void mpp_session_deinit(", "static void mpp_session_attach_workqueue")
     reset = between(sources.common, "case MPP_CMD_RESET_SESSION:", "case MPP_CMD_TRANS_FD_TO_IOVA:")
     worker = between(sources.common, "static void mpp_task_worker_default(", "static int mpp_wait_result_default")
@@ -66,6 +66,27 @@ def evaluate(sources: Sources) -> tuple[Result, ...]:
     )
 
 
+def evaluate_0015(sources: Sources) -> tuple[Result, ...]:
+    init = between(sources.rkvenc, "static int rkvenc_init(", "static int rkvenc_exit(")
+    clk_on = between(sources.rkvenc, "static int rkvenc_clk_on(", "static int rkvenc_clk_off(")
+    dev_probe = between(sources.common, "int mpp_dev_probe(", "int mpp_dev_remove(")
+    power_on = between(sources.common, "int mpp_power_on(", "int mpp_power_off(")
+    finish = between(sources.common, "int mpp_task_finish(", "int mpp_task_finalize(")
+    reset = between(sources.common, "int mpp_dev_reset(", "void mpp_task_run_begin(")
+    return (
+        Result("required clock acquisition errors propagate", init.count("if (ret)\n\t\treturn ret;") >= 3),
+        Result("reset acquisition errors propagate", init.count("IS_ERR(") >= 3 and "PTR_ERR(" in init),
+        Result("required IOMMU acquisition errors propagate", "ret = PTR_ERR(mpp->iommu_info)" in dev_probe and "goto failed" in dev_probe),
+        Result("runtime PM and clock failures propagate", "pm_runtime_resume_and_get" in power_on and "return ret" in power_on),
+        Result("partial clock enable unwinds", ordered(clk_on, "goto err_core", "clk_disable_unprepare(enc->hclk_info.clk)")),
+        Result("finish and recovery reset errors propagate", "ret = mpp->dev_ops->finish" in finish and "reset_ret = mpp_dev_reset" in finish),
+        Result("hardware reset error propagates", "reset_ret = mpp->hw_ops->reset" in reset and "return reset_ret" in reset),
+    )
+
+
+EVALUATORS: Final = {"0014": evaluate_0014, "0015": evaluate_0015}
+
+
 def load_sources() -> Sources:
     base = ROOT / "drivers/video/rockchip/mpp"
     return Sources(
@@ -75,17 +96,17 @@ def load_sources() -> Sources:
     )
 
 
-def report(results: tuple[Result, ...]) -> int:
+def report(intent: str, results: tuple[Result, ...]) -> int:
     passed = sum(result.passed for result in results)
     for result in results:
         print(f"{'PASS' if result.passed else 'FAIL'}: {result.name}")
-    print(f"mpp-hardening-0014: pass:{passed} fail:{len(results) - passed} total:{len(results)}")
+    print(f"mpp-hardening-{intent}: pass:{passed} fail:{len(results) - passed} total:{len(results)}")
     return 0 if passed == len(results) else 1
 
 
 def self_test() -> int:
     sources = load_sources()
-    baseline = evaluate(sources)
+    baseline = evaluate_0014(sources)
     if len(baseline) != 8:
         return 1
     mutations = (
@@ -94,7 +115,7 @@ def self_test() -> int:
         replace(sources, service=sources.service.replace("srv->mpp_cdev.owner = THIS_MODULE;", "", 1)),
     )
     for mutation in mutations:
-        if all(result.passed for result in evaluate(mutation)):
+        if all(result.passed for result in evaluate_0014(mutation)):
             return 1
     print("mpp-hardening self-test: pass:3 fail:0 total:3")
     return 0
@@ -103,8 +124,18 @@ def self_test() -> int:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--intent", choices=tuple(EVALUATORS))
     args = parser.parse_args()
-    return self_test() if args.self_test else report(evaluate(load_sources()))
+    if args.self_test:
+        return self_test()
+    intent = args.intent or "all"
+    results = tuple(
+        result
+        for name, evaluator in EVALUATORS.items()
+        if args.intent is None or name == args.intent
+        for result in evaluator(load_sources())
+    )
+    return report(intent, results)
 
 
 if __name__ == "__main__":
