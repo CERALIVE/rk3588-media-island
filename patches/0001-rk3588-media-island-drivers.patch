@@ -5,7 +5,7 @@ Subject: [PATCH 1/4] video: rockchip: add the CeraLive RK3588 media island
 
 The Rockchip MPP service with its three compiled clients (RKVENC2, RKVDEC2, JPGDEC), the multi_rga 2D engine driver, and the UAPI headers they publish.
 
-66 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
+67 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
 
 GENERATED from the rk3588-media-island source tree by scripts/build-series.py. The source is the truth and this series is its output; per-file provenance is docs/PROVENANCE.md and the originating commits' Origin: trailers, never this mailbox header.
 
@@ -3248,10 +3248,10 @@ index 0000000000000000000000000000000000000000..39c63f49a0f3a6407fe1ca18bdf23241
 +};
 diff --git a/drivers/video/rockchip/mpp/mpp_common.c b/drivers/video/rockchip/mpp/mpp_common.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..a369b6b5bea2f8a6840b636b222d47b6b0d711fa
+index 0000000000000000000000000000000000000000..7f280f4de7bdfa9658ec16d4967575ee128c80c8
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_common.c
-@@ -0,0 +1,3270 @@
+@@ -0,0 +1,3241 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -3293,6 +3293,7 @@ index 0000000000000000000000000000000000000000..a369b6b5bea2f8a6840b636b222d47b6
 +#include "mpp_debug.h"
 +#include "mpp_common.h"
 +#include "mpp_iommu.h"
++#include "mpp_request_bounds.h"
 +
 +/* input parmater structure for version 1 */
 +struct mpp_msg_v1 {
@@ -4875,8 +4876,12 @@ index 0000000000000000000000000000000000000000..a369b6b5bea2f8a6840b636b222d47b6
 +	case MPP_CMD_INIT_TRANS_TABLE: {
 +		if (session && req->size) {
 +			int trans_tbl_size = sizeof(session->trans_table);
++			u32 trans_count;
 +
-+			if (req->size > trans_tbl_size) {
++			if (mpp_req_element_count(req->size,
++						  sizeof(session->trans_table[0]),
++						  ARRAY_SIZE(session->trans_table),
++						  &trans_count)) {
 +				mpp_err("init table size %d more than %d\n",
 +					req->size, trans_tbl_size);
 +				return -ENOMEM;
@@ -4887,8 +4892,7 @@ index 0000000000000000000000000000000000000000..a369b6b5bea2f8a6840b636b222d47b6
 +				mpp_err("copy_from_user failed\n");
 +				return -EINVAL;
 +			}
-+			session->trans_count =
-+				req->size / sizeof(session->trans_table[0]);
++			session->trans_count = trans_count;
 +		}
 +	} break;
 +	case MPP_CMD_SET_REG_WRITE:
@@ -5680,49 +5684,16 @@ index 0000000000000000000000000000000000000000..a369b6b5bea2f8a6840b636b222d47b6
 +	 * 0x80000000 became negative and passed every bound below, after which
 +	 * the caller copied through it.
 +	 */
-+	u32 req_off;
++	u32 checked_size;
 +
 +	if (base < 0 || max_size < 0) {
 +		mpp_err("error: base %x, max_size %x\n", base, max_size);
 +		return -EINVAL;
 +	}
-+	if (req->offset < (u32)base) {
-+		mpp_err("error: base %x, offset %x\n",
-+			base, req->offset);
++	if (mpp_req_buffer_check(req->offset, req->size, base, max_size,
++				 off_s, off_e, &checked_size))
 +		return -EINVAL;
-+	}
-+	req_off = req->offset - (u32)base;
-+	if (req->size > U32_MAX - req_off) {
-+		mpp_err("error: req_off %x, req_size %x wraps\n",
-+			req_off, req->size);
-+		return -EINVAL;
-+	}
-+	if ((req_off + req->size) < off_s) {
-+		mpp_err("error: req_off %x, req_size %x, off_s %x\n",
-+			req_off, req->size, off_s);
-+		return -EINVAL;
-+	}
-+	if ((u32)max_size < off_e) {
-+		mpp_err("error: off_e %x, max_size %x\n",
-+			off_e, max_size);
-+		return -EINVAL;
-+	}
-+	if (req_off > (u32)max_size) {
-+		mpp_err("error: req_off %x, max_size %x\n",
-+			req_off, max_size);
-+		return -EINVAL;
-+	}
-+	/*
-+	 * Clamp to the space that is actually left. The previous expression
-+	 * computed the overflow amount instead, which left req->size untouched
-+	 * whenever req_off == max_size and shrank it to the wrong value
-+	 * otherwise.
-+	 */
-+	if (req->size > (u32)max_size - req_off) {
-+		mpp_err("error: req_off %x, req_size %x, max_size %x\n",
-+			req_off, req->size, max_size);
-+		req->size = (u32)max_size - req_off;
-+	}
++	req->size = checked_size;
 +
 +	return 0;
 +}
@@ -12084,6 +12055,177 @@ index 0000000000000000000000000000000000000000..922f962a4a433a29275922654ac0db3b
 +	},
 +};
 +EXPORT_SYMBOL(rockchip_jpgenc_driver);
+diff --git a/drivers/video/rockchip/mpp/mpp_request_bounds.h b/drivers/video/rockchip/mpp/mpp_request_bounds.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..b8693a793491b864b3404675913bda202a7c842d
+--- /dev/null
++++ b/drivers/video/rockchip/mpp/mpp_request_bounds.h
+@@ -0,0 +1,165 @@
++/* SPDX-License-Identifier: (GPL-2.0+ OR MIT) */
++#ifndef __ROCKCHIP_MPP_REQUEST_BOUNDS_H__
++#define __ROCKCHIP_MPP_REQUEST_BOUNDS_H__
++
++#include <linux/align.h>
++#include <linux/errno.h>
++#include <linux/minmax.h>
++#include <linux/types.h>
++
++struct mpp_req_class {
++	u32 base_s;
++	u32 base_e;
++};
++
++struct mpp_req_part {
++	u32 offset;
++	u32 size;
++};
++
++struct mpp_req_coverage {
++	u32 bytes;
++	u32 lo;
++	u32 hi;
++};
++
++static inline int mpp_req_shape(u32 offset, u32 size)
++{
++	u32 end;
++
++	if (size < sizeof(u32))
++		return -EINVAL;
++	if (!IS_ALIGNED(offset, sizeof(u32)) ||
++	    !IS_ALIGNED(size, sizeof(u32)))
++		return -EINVAL;
++	end = offset + size - sizeof(u32);
++	if (end < offset)
++		return -EINVAL;
++
++	return 0;
++}
++
++static inline int mpp_req_element_count(u32 size, u32 element_size,
++					u32 capacity, u32 *count)
++{
++	if (!element_size || !size || size % element_size ||
++	    size / element_size > capacity)
++		return -EINVAL;
++
++	*count = size / element_size;
++	return 0;
++}
++
++static inline int mpp_req_count_room(u32 count, u32 capacity)
++{
++	return count < capacity ? 0 : -EINVAL;
++}
++
++static inline int mpp_req_buffer_check(u32 offset, u32 size, u32 base,
++				       u32 max_size, u32 off_s, u32 off_e,
++				       u32 *checked_size)
++{
++	u32 req_off;
++
++	if (mpp_req_shape(offset, size))
++		return -EINVAL;
++	if (offset < base)
++		return -EINVAL;
++	req_off = offset - base;
++	if (size > (u32)-1 - req_off)
++		return -EINVAL;
++	if (req_off + size < off_s || max_size < off_e || req_off > max_size)
++		return -EINVAL;
++
++	*checked_size = min(size, max_size - req_off);
++	return 0;
++}
++
++static inline int mpp_req_class_part(u32 offset, u32 size,
++				     const struct mpp_req_class *class,
++				     struct mpp_req_part *part)
++{
++	u32 end;
++	u32 start;
++
++	if (mpp_req_shape(offset, size))
++		return -EINVAL;
++	end = offset + size - sizeof(u32);
++	start = max(offset, class->base_s);
++	end = min(end, class->base_e);
++	if (end < start)
++		return -EINVAL;
++
++	part->offset = start;
++	part->size = end - start + sizeof(u32);
++	return 0;
++}
++
++static inline void mpp_req_coverage_init(struct mpp_req_coverage *coverage)
++{
++	coverage->bytes = 0;
++	coverage->lo = (u32)-1;
++	coverage->hi = 0;
++}
++
++static inline void mpp_req_coverage_add(struct mpp_req_coverage *coverage,
++					const struct mpp_req_part *part)
++{
++	coverage->lo = min(coverage->lo, part->offset);
++	coverage->hi = max(coverage->hi, part->offset + part->size);
++	coverage->bytes += part->size;
++}
++
++static inline int mpp_req_coverage_check(u32 offset, u32 size,
++					 const struct mpp_req_class *classes,
++					 u32 class_count,
++					 const struct mpp_req_coverage *coverage)
++{
++	u32 map_s = (u32)-1;
++	u32 map_e = 0;
++	u32 owned = 0;
++	u32 request_e;
++	u32 i;
++
++	if (mpp_req_shape(offset, size) || !class_count || !coverage->bytes)
++		return -EINVAL;
++	request_e = offset + size;
++
++	for (i = 0; i < class_count; i++) {
++		u32 class_s = classes[i].base_s;
++		u32 class_e = classes[i].base_e + sizeof(u32);
++
++		map_s = min(map_s, class_s);
++		map_e = max(map_e, class_e);
++		if (class_e <= coverage->lo || class_s >= coverage->hi)
++			continue;
++		if (class_s < coverage->lo || class_e > coverage->hi)
++			return -EINVAL;
++		owned += class_e - class_s;
++	}
++
++	if (offset < map_s || request_e > map_e)
++		return -EINVAL;
++	if (coverage->bytes != coverage->hi - coverage->lo &&
++	    owned != coverage->bytes)
++		return -EINVAL;
++
++	return 0;
++}
++
++static inline int mpp_req_window_offset(u32 offset, u32 size, u32 base,
++					u32 buffer_size, u32 *window_offset)
++{
++	u32 start;
++
++	if (mpp_req_shape(offset, size) || !buffer_size || offset < base)
++		return -EINVAL;
++	start = offset - base;
++	if (start >= buffer_size || size > buffer_size - start)
++		return -EINVAL;
++
++	*window_offset = start;
++	return 0;
++}
++
++#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvdec.c b/drivers/video/rockchip/mpp/mpp_rkvdec.c
 new file mode 100644
 index 0000000000000000000000000000000000000000..89214c2c7e5b3bca2d4f3a62d06b69958e02653d
@@ -21483,10 +21625,10 @@ index 0000000000000000000000000000000000000000..5ab7441b178f7359ee049a13368d79a4
 +};
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc2.c b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..d56e705d0e9a50eff486d541d72bde8094c7f354
+index 0000000000000000000000000000000000000000..c6ad4c9bea5630f9633dfccfa309cf4fceeb1343
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
-@@ -0,0 +1,3785 @@
+@@ -0,0 +1,3758 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
@@ -21530,6 +21672,7 @@ index 0000000000000000000000000000000000000000..d56e705d0e9a50eff486d541d72bde80
 +#include "mpp_debug.h"
 +#include "mpp_iommu.h"
 +#include "mpp_common.h"
++#include "mpp_request_bounds.h"
 +
 +#define RKVENC_DRIVER_NAME			"mpp_rkvenc2"
 +
@@ -21592,11 +21735,6 @@ index 0000000000000000000000000000000000000000..d56e705d0e9a50eff486d541d72bde80
 +	RKVENC_VEPU_BUTT,
 +};
 +
-+struct rkvenc_reg_msg {
-+	u32 base_s;
-+	u32 base_e;
-+};
-+
 +struct rkvenc_class_msg {
 +	u32 offset;
 +	u32 size;
@@ -21607,7 +21745,7 @@ index 0000000000000000000000000000000000000000..d56e705d0e9a50eff486d541d72bde80
 +	struct mpp_hw_info hw;
 +	/* for register range check */
 +	u32 reg_class;
-+	struct rkvenc_reg_msg reg_msg[RKVENC_CLASS_BUTT];
++	struct mpp_req_class reg_msg[RKVENC_CLASS_BUTT];
 +	/* for fd translate */
 +	u32 fd_class;
 +	struct {
@@ -22297,27 +22435,10 @@ index 0000000000000000000000000000000000000000..d56e705d0e9a50eff486d541d72bde80
 +static bool req_over_class(struct mpp_request *req,
 +			   struct rkvenc_task *task, int class)
 +{
-+	bool ret;
-+	u32 base_s, base_e, req_e;
-+	struct rkvenc_hw_info *hw = task->hw_info;
++	struct mpp_req_part part;
 +
-+	base_s = hw->reg_msg[class].base_s;
-+	base_e = hw->reg_msg[class].base_e;
-+
-+	/*
-+	 * offset and size are both user-controlled u32. A window shorter than
-+	 * one register, or one whose end wraps, describes no class at all --
-+	 * accepting it would hand a wrapped end on to rkvenc_update_req().
-+	 */
-+	if (req->size < sizeof(u32))
-+		return false;
-+	req_e = req->offset + (req->size - sizeof(u32));
-+	if (req_e < req->offset)
-+		return false;
-+
-+	ret = (req->offset <= base_e && req_e >= base_s) ? true : false;
-+
-+	return ret;
++	return !mpp_req_class_part(req->offset, req->size,
++				   &task->hw_info->reg_msg[class], &part);
 +}
 +
 +static int rkvenc_free_class_msg(struct rkvenc_task *task)
@@ -22358,30 +22479,16 @@ index 0000000000000000000000000000000000000000..d56e705d0e9a50eff486d541d72bde80
 +			     struct mpp_request *req_in,
 +			     struct mpp_request *req_out)
 +{
-+	u32 base_s, base_e, req_e, s, e;
-+	struct rkvenc_hw_info *hw = task->hw_info;
++	struct mpp_req_part part;
 +
-+	base_s = hw->reg_msg[class].base_s;
-+	base_e = hw->reg_msg[class].base_e;
-+
-+	if (req_in->size < sizeof(u32))
-+		return -EINVAL;
-+	req_e = req_in->offset + (req_in->size - sizeof(u32));
-+	if (req_e < req_in->offset)
++	if (mpp_req_class_part(req_in->offset, req_in->size,
++				       &task->hw_info->reg_msg[class], &part))
 +		return -EINVAL;
 +
-+	s = max(req_in->offset, base_s);
-+	e = min(req_e, base_e);
-+	/*
-+	 * An inverted window would underflow the size below to nearly 4G and
-+	 * run copy_from_user() off the end of the class allocation.
-+	 */
-+	if (e < s)
-+		return -EINVAL;
-+
-+	req_out->offset = s;
-+	req_out->size = e - s + sizeof(u32);
-+	req_out->data = (u8 __user *)req_in->data + (s - req_in->offset);
++	req_out->offset = part.offset;
++	req_out->size = part.size;
++	req_out->data = (u8 __user *)req_in->data +
++			(part.offset - req_in->offset);
 +
 +	return 0;
 +}
@@ -22493,7 +22600,8 @@ index 0000000000000000000000000000000000000000..d56e705d0e9a50eff486d541d72bde80
 +					mpp_err("alloc class msg %d fail.\n", j);
 +					goto fail;
 +				}
-+				if (task->w_req_cnt >= MPP_MAX_MSG_NUM) {
++				if (mpp_req_count_room(task->w_req_cnt,
++						       ARRAY_SIZE(task->w_reqs))) {
 +					mpp_err("w_req_cnt %d overflow\n", task->w_req_cnt);
 +					ret = -EINVAL;
 +					goto fail;
@@ -22539,7 +22647,8 @@ index 0000000000000000000000000000000000000000..d56e705d0e9a50eff486d541d72bde80
 +					mpp_err("alloc class msg reg %d fail.\n", j);
 +					goto fail;
 +				}
-+				if (task->r_req_cnt >= MPP_MAX_MSG_NUM) {
++				if (mpp_req_count_room(task->r_req_cnt,
++						       ARRAY_SIZE(task->r_reqs))) {
 +					mpp_err("r_req_cnt %d overflow\n", task->r_req_cnt);
 +					ret = -EINVAL;
 +					goto fail;
@@ -23584,10 +23693,16 @@ index 0000000000000000000000000000000000000000..d56e705d0e9a50eff486d541d72bde80
 +
 +	for (i = 0; i < task->r_req_cnt; i++) {
 +		struct mpp_request *req = &task->r_reqs[i];
-+		u32 *reg = rkvenc_get_class_reg(task, req->offset);
++		struct rkvenc_class_msg msg;
++		u32 window_offset;
++		u32 *reg;
 +
-+		if (!reg)
++		if (rkvenc_get_class_msg(task, req->offset, &msg))
 +			return -EINVAL;
++		if (mpp_req_window_offset(req->offset, req->size, msg.offset,
++					  msg.size, &window_offset))
++			return -EINVAL;
++		reg = (u32 *)((u8 *)msg.data + window_offset);
 +		if (copy_to_user(req->data, reg, req->size)) {
 +			mpp_err("copy_to_user reg fail\n");
 +			return -EIO;

@@ -29,6 +29,9 @@ static inline int mpp_req_shape(u32 offset, u32 size)
 
 	if (size < sizeof(u32))
 		return -EINVAL;
+	if (!IS_ALIGNED(offset, sizeof(u32)) ||
+	    !IS_ALIGNED(size, sizeof(u32)))
+		return -EINVAL;
 	end = offset + size - sizeof(u32);
 	if (end < offset)
 		return -EINVAL;
@@ -39,7 +42,8 @@ static inline int mpp_req_shape(u32 offset, u32 size)
 static inline int mpp_req_element_count(u32 size, u32 element_size,
 					u32 capacity, u32 *count)
 {
-	if (!element_size || size > capacity * element_size)
+	if (!element_size || !size || size % element_size ||
+	    size / element_size > capacity)
 		return -EINVAL;
 
 	*count = size / element_size;
@@ -57,6 +61,8 @@ static inline int mpp_req_buffer_check(u32 offset, u32 size, u32 base,
 {
 	u32 req_off;
 
+	if (mpp_req_shape(offset, size))
+		return -EINVAL;
 	if (offset < base)
 		return -EINVAL;
 	req_off = offset - base;
@@ -109,21 +115,50 @@ static inline int mpp_req_coverage_check(u32 offset, u32 size,
 					 u32 class_count,
 					 const struct mpp_req_coverage *coverage)
 {
-	(void)offset;
-	(void)size;
-	(void)classes;
-	(void)class_count;
-	(void)coverage;
+	u32 map_s = (u32)-1;
+	u32 map_e = 0;
+	u32 owned = 0;
+	u32 request_e;
+	u32 i;
+
+	if (mpp_req_shape(offset, size) || !class_count || !coverage->bytes)
+		return -EINVAL;
+	request_e = offset + size;
+
+	for (i = 0; i < class_count; i++) {
+		u32 class_s = classes[i].base_s;
+		u32 class_e = classes[i].base_e + sizeof(u32);
+
+		map_s = min(map_s, class_s);
+		map_e = max(map_e, class_e);
+		if (class_e <= coverage->lo || class_s >= coverage->hi)
+			continue;
+		if (class_s < coverage->lo || class_e > coverage->hi)
+			return -EINVAL;
+		owned += class_e - class_s;
+	}
+
+	if (offset < map_s || request_e > map_e)
+		return -EINVAL;
+	if (coverage->bytes != coverage->hi - coverage->lo &&
+	    owned != coverage->bytes)
+		return -EINVAL;
+
 	return 0;
 }
 
 static inline int mpp_req_window_offset(u32 offset, u32 size, u32 base,
 					u32 buffer_size, u32 *window_offset)
 {
-	if (!buffer_size || offset < base || offset - base >= buffer_size)
+	u32 start;
+
+	if (mpp_req_shape(offset, size) || !buffer_size || offset < base)
+		return -EINVAL;
+	start = offset - base;
+	if (start >= buffer_size || size > buffer_size - start)
 		return -EINVAL;
 
-	*window_offset = offset - base;
+	*window_offset = start;
 	return 0;
 }
 
