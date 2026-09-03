@@ -104,7 +104,23 @@ def evaluate_0019(sources: Sources) -> tuple[Result, ...]:
     )
 
 
-EVALUATORS: Final = {"0014": evaluate_0014, "0015": evaluate_0015, "0019": evaluate_0019}
+def evaluate_0020(sources: Sources) -> tuple[Result, ...]:
+    register = between(sources.common, "int mpp_dev_register_srv(", "irqreturn_t mpp_dev_irq(")
+    unregister = optional_between(sources.common, "void mpp_dev_unregister_srv(", "int mpp_dev_register_srv(")
+    remove = between(sources.rkvenc, "static void rkvenc_remove(", "static void rkvenc_shutdown(")
+    return (
+        Result("core unbind withdraws service publication", "srv->sub_devices[device_type] = NULL" in unregister and "clear_bit(device_type, &srv->hw_support)" in unregister),
+        Result("RKVENC2 remove unpublishes before teardown", ordered(remove, "mpp_dev_unregister_srv", "rkvenc_release_irq")),
+        Result("successful rebind republishes service", "srv->sub_devices[device_type] = mpp" in register and "set_bit(device_type, &srv->hw_support)" in register),
+    )
+
+
+EVALUATORS: Final = {
+    "0014": evaluate_0014,
+    "0015": evaluate_0015,
+    "0019": evaluate_0019,
+    "0020": evaluate_0020,
+}
 
 
 def load_sources() -> Sources:
