@@ -108,6 +108,12 @@ struct rkvenc_reg_msg {
 	u32 base_e;
 };
 
+struct rkvenc_class_msg {
+	u32 offset;
+	u32 size;
+	u32 *data;
+};
+
 struct rkvenc_hw_info {
 	struct mpp_hw_info hw;
 	/* for register range check */
@@ -886,13 +892,13 @@ static int rkvenc_update_req(struct rkvenc_task *task, int class,
 
 	req_out->offset = s;
 	req_out->size = e - s + sizeof(u32);
-	req_out->data = (u8 *)req_in->data + (s - req_in->offset);
+	req_out->data = (u8 __user *)req_in->data + (s - req_in->offset);
 
 	return 0;
 }
 
 static int rkvenc_get_class_msg(struct rkvenc_task *task,
-				u32 addr, struct mpp_request *msg)
+				u32 addr, struct rkvenc_class_msg *msg)
 {
 	int i;
 	bool found = false;
@@ -1616,7 +1622,7 @@ static int rkvenc_run(struct mpp_dev *mpp, struct mpp_task *mpp_task)
 		u32 s, e, off;
 		u32 *regs;
 
-		struct mpp_request msg;
+		struct rkvenc_class_msg msg;
 		struct mpp_request *req = &task->w_reqs[i];
 
 		ret = rkvenc_get_class_msg(task, req->offset, &msg);
@@ -1627,7 +1633,7 @@ static int rkvenc_run(struct mpp_dev *mpp, struct mpp_task *mpp_task)
 
 		s = (req->offset - msg.offset) / sizeof(u32);
 		e = s + req->size / sizeof(u32);
-		regs = (u32 *)msg.data;
+		regs = msg.data;
 		for (j = s; j < e; j++) {
 			off = msg.offset + j * sizeof(u32);
 			if (off == enc->hw_info->enc_start_base) {
@@ -2047,7 +2053,7 @@ static int rkvenc_finish(struct mpp_dev *mpp, struct mpp_task *mpp_task)
 	for (i = 0; i < task->r_req_cnt; i++) {
 		int ret;
 		int s, e;
-		struct mpp_request msg;
+		struct rkvenc_class_msg msg;
 		struct mpp_request *req = &task->r_reqs[i];
 
 		ret = rkvenc_get_class_msg(task, req->offset, &msg);
@@ -2055,7 +2061,7 @@ static int rkvenc_finish(struct mpp_dev *mpp, struct mpp_task *mpp_task)
 			return -EINVAL;
 		s = (req->offset - msg.offset) / sizeof(u32);
 		e = s + req->size / sizeof(u32);
-		reg = (u32 *)msg.data;
+		reg = msg.data;
 		for (j = s; j < e; j++)
 			reg[j] = mpp_read_relaxed(mpp, msg.offset + j * sizeof(u32));
 

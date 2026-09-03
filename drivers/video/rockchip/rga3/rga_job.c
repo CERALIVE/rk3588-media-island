@@ -1584,7 +1584,7 @@ rga_request_kernel_config_locked(struct rga_user_request *user_request)
 		goto err_put_request;
 	}
 
-	memcpy(task_list, u64_to_user_ptr(user_request->task_ptr),
+	memcpy(task_list, (void *)(uintptr_t)user_request->task_ptr,
 	       sizeof(struct rga_req) * user_request->task_num);
 
 	mutex_lock(&request->run_lock);

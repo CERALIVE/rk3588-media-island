@@ -21483,10 +21483,10 @@ index 0000000000000000000000000000000000000000..5ab7441b178f7359ee049a13368d79a4
 +};
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc2.c b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..fa125b7cb19a5521b1f66e1df66c93ac8a402e35
+index 0000000000000000000000000000000000000000..d56e705d0e9a50eff486d541d72bde8094c7f354
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
-@@ -0,0 +1,3779 @@
+@@ -0,0 +1,3785 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
@@ -21595,6 +21595,12 @@ index 0000000000000000000000000000000000000000..fa125b7cb19a5521b1f66e1df66c93ac
 +struct rkvenc_reg_msg {
 +	u32 base_s;
 +	u32 base_e;
++};
++
++struct rkvenc_class_msg {
++	u32 offset;
++	u32 size;
++	u32 *data;
 +};
 +
 +struct rkvenc_hw_info {
@@ -22375,13 +22381,13 @@ index 0000000000000000000000000000000000000000..fa125b7cb19a5521b1f66e1df66c93ac
 +
 +	req_out->offset = s;
 +	req_out->size = e - s + sizeof(u32);
-+	req_out->data = (u8 *)req_in->data + (s - req_in->offset);
++	req_out->data = (u8 __user *)req_in->data + (s - req_in->offset);
 +
 +	return 0;
 +}
 +
 +static int rkvenc_get_class_msg(struct rkvenc_task *task,
-+				u32 addr, struct mpp_request *msg)
++				u32 addr, struct rkvenc_class_msg *msg)
 +{
 +	int i;
 +	bool found = false;
@@ -23105,7 +23111,7 @@ index 0000000000000000000000000000000000000000..fa125b7cb19a5521b1f66e1df66c93ac
 +		u32 s, e, off;
 +		u32 *regs;
 +
-+		struct mpp_request msg;
++		struct rkvenc_class_msg msg;
 +		struct mpp_request *req = &task->w_reqs[i];
 +
 +		ret = rkvenc_get_class_msg(task, req->offset, &msg);
@@ -23116,7 +23122,7 @@ index 0000000000000000000000000000000000000000..fa125b7cb19a5521b1f66e1df66c93ac
 +
 +		s = (req->offset - msg.offset) / sizeof(u32);
 +		e = s + req->size / sizeof(u32);
-+		regs = (u32 *)msg.data;
++		regs = msg.data;
 +		for (j = s; j < e; j++) {
 +			off = msg.offset + j * sizeof(u32);
 +			if (off == enc->hw_info->enc_start_base) {
@@ -23536,7 +23542,7 @@ index 0000000000000000000000000000000000000000..fa125b7cb19a5521b1f66e1df66c93ac
 +	for (i = 0; i < task->r_req_cnt; i++) {
 +		int ret;
 +		int s, e;
-+		struct mpp_request msg;
++		struct rkvenc_class_msg msg;
 +		struct mpp_request *req = &task->r_reqs[i];
 +
 +		ret = rkvenc_get_class_msg(task, req->offset, &msg);
@@ -23544,7 +23550,7 @@ index 0000000000000000000000000000000000000000..fa125b7cb19a5521b1f66e1df66c93ac
 +			return -EINVAL;
 +		s = (req->offset - msg.offset) / sizeof(u32);
 +		e = s + req->size / sizeof(u32);
-+		reg = (u32 *)msg.data;
++		reg = msg.data;
 +		for (j = s; j < e; j++)
 +			reg[j] = mpp_read_relaxed(mpp, msg.offset + j * sizeof(u32));
 +
@@ -34361,7 +34367,7 @@ index 0000000000000000000000000000000000000000..6dc8c87104ae7f6a9638ee46a969ad02
 +#endif
 diff --git a/drivers/video/rockchip/rga3/rga2_reg_info.c b/drivers/video/rockchip/rga3/rga2_reg_info.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..9b1ae012fa8b79f334aa6c52dc53322fa324e17d
+index 0000000000000000000000000000000000000000..06681e275d5516171f636da11e2eb09095460273
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga2_reg_info.c
 @@ -0,0 +1,3548 @@
@@ -34386,7 +34392,7 @@ index 0000000000000000000000000000000000000000..9b1ae012fa8b79f334aa6c52dc53322f
 +	RGA2_SCALE_FORCE_TILE = 0x3,
 +};
 +
-+unsigned int rga2_rop_code[256] = {
++static const unsigned int rga2_rop_code[256] = {
 +	0x00000007, 0x00000451, 0x00006051, 0x00800051,
 +	0x00007041, 0x00800041, 0x00804830, 0x000004f0,//0
 +	0x00800765, 0x000004b0, 0x00000065, 0x000004f4,
@@ -43260,10 +43266,10 @@ index 0000000000000000000000000000000000000000..a0f6d1e2269db091fca81cc75089379c
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_drv.c b/drivers/video/rockchip/rga3/rga_drv.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..04c3e109b54737961b44cda37baf64e2caff85f5
+index 0000000000000000000000000000000000000000..25de268fac1b780b22c445413fa5638923575faa
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_drv.c
-@@ -0,0 +1,1921 @@
+@@ -0,0 +1,1926 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -43969,7 +43975,7 @@ index 0000000000000000000000000000000000000000..04c3e109b54737961b44cda37baf64e2
 +	struct rga_external_buffer *external_buffer = NULL;
 +
 +	if (unlikely(copy_from_user(&buffer_pool,
-+				    (struct rga_buffer_pool *)arg,
++				    (struct rga_buffer_pool __user *)arg,
 +				    sizeof(buffer_pool)))) {
 +		rga_err("rga_buffer_pool copy_from_user failed!\n");
 +		return -EFAULT;
@@ -44086,7 +44092,7 @@ index 0000000000000000000000000000000000000000..04c3e109b54737961b44cda37baf64e2
 +	struct rga_external_buffer *external_buffer = NULL;
 +
 +	if (unlikely(copy_from_user(&buffer_pool,
-+				    (struct rga_buffer_pool *)arg,
++				    (struct rga_buffer_pool __user *)arg,
 +				    sizeof(buffer_pool)))) {
 +		rga_err("rga_buffer_pool  copy_from_user failed!\n");
 +		return -EFAULT;
@@ -44145,7 +44151,7 @@ index 0000000000000000000000000000000000000000..04c3e109b54737961b44cda37baf64e2
 +	int id;
 +	uint32_t flags;
 +
-+	if (copy_from_user(&flags, (void *)arg, sizeof(uint32_t))) {
++	if (copy_from_user(&flags, (void __user *)arg, sizeof(uint32_t))) {
 +		rga_err("%s failed to copy from user!\n", __func__);
 +		return -EFAULT;
 +	}
@@ -44155,7 +44161,7 @@ index 0000000000000000000000000000000000000000..04c3e109b54737961b44cda37baf64e2
 +		return id;
 +	user_id = id;
 +
-+	if (copy_to_user((void *)arg, &user_id, sizeof(user_id))) {
++	if (copy_to_user((void __user *)arg, &user_id, sizeof(user_id))) {
 +		rga_err("%s failed to copy to user!\n", __func__);
 +		/* The new id was never published to userspace; retire it now. */
 +		request_manager = rga_drvdata->pend_request_manager;
@@ -44181,7 +44187,7 @@ index 0000000000000000000000000000000000000000..04c3e109b54737961b44cda37baf64e2
 +	request_manager = rga_drvdata->pend_request_manager;
 +
 +	if (unlikely(copy_from_user(&user_request,
-+				    (struct rga_user_request *)arg,
++				    (struct rga_user_request __user *)arg,
 +				    sizeof(user_request)))) {
 +		rga_err("%s copy_from_user failed!\n", __func__);
 +		return -EFAULT;
@@ -44209,7 +44215,7 @@ index 0000000000000000000000000000000000000000..04c3e109b54737961b44cda37baf64e2
 +			rga_err("request[%d] submit failed!\n", user_request.id);
 +		} else if (request->sync_mode == RGA_BLIT_ASYNC) {
 +			user_request.release_fence_fd = request->release_fence_fd;
-+			if (copy_to_user((struct rga_req *)arg,
++			if (copy_to_user((struct rga_user_request __user *)arg,
 +					 &user_request, sizeof(user_request))) {
 +				rga_err("copy_to_user failed\n");
 +				ret = -EFAULT;
@@ -44240,7 +44246,8 @@ index 0000000000000000000000000000000000000000..04c3e109b54737961b44cda37baf64e2
 +		return -EFAULT;
 +	}
 +
-+	if (unlikely(copy_from_user(&id, (uint32_t *)arg, sizeof(uint32_t)))) {
++	if (unlikely(copy_from_user(&id, (uint32_t __user *)arg,
++				    sizeof(uint32_t)))) {
 +		rga_err("request id copy_from_user failed!\n");
 +		return -EFAULT;
 +	}
@@ -44330,7 +44337,8 @@ index 0000000000000000000000000000000000000000..04c3e109b54737961b44cda37baf64e2
 +
 +	if (request->sync_mode == RGA_BLIT_ASYNC) {
 +		rga_req->out_fence_fd = request->release_fence_fd;
-+		if (copy_to_user((struct rga_req *)arg, rga_req, sizeof(struct rga_req))) {
++		if (copy_to_user((struct rga_req __user *)arg, rga_req,
++				 sizeof(struct rga_req))) {
 +			rga_req_err(request, "copy_to_user failed\n");
 +			ret = -EFAULT;
 +			goto err_put_request;
@@ -44426,10 +44434,10 @@ index 0000000000000000000000000000000000000000..04c3e109b54737961b44cda37baf64e2
 +		snprintf(version, 5, "%x.%02x", major_version, minor_version);
 +#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
 +		/* TODO: userspcae to get version */
-+		if (copy_to_user((void *)arg, version, sizeof(version)))
++		if (copy_to_user((void __user *)arg, version, sizeof(version)))
 +			ret = -EFAULT;
 +#else
-+		if (copy_to_user((void *)arg, RGA3_VERSION,
++		if (copy_to_user((void __user *)arg, RGA3_VERSION,
 +				 sizeof(RGA3_VERSION)))
 +			ret = -EFAULT;
 +#endif
@@ -44438,11 +44446,12 @@ index 0000000000000000000000000000000000000000..04c3e109b54737961b44cda37baf64e2
 +		for (i = 0; i < rga->num_of_scheduler; i++) {
 +			if (rga->scheduler[i]->ops == &rga2_ops) {
 +#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
-+				if (copy_to_user((void *)arg, rga->scheduler[i]->version.str,
++				if (copy_to_user((void __user *)arg,
++						rga->scheduler[i]->version.str,
 +					sizeof(rga->scheduler[i]->version.str)))
 +					ret = -EFAULT;
 +#else
-+				if (copy_to_user((void *)arg, RGA3_VERSION,
++				if (copy_to_user((void __user *)arg, RGA3_VERSION,
 +						sizeof(RGA3_VERSION)))
 +					ret = -EFAULT;
 +#endif
@@ -44469,7 +44478,8 @@ index 0000000000000000000000000000000000000000..04c3e109b54737961b44cda37baf64e2
 +				sizeof(rga->scheduler[i]->version));
 +		}
 +
-+		if (copy_to_user((void *)arg, &hw_versions, sizeof(hw_versions)))
++		if (copy_to_user((void __user *)arg, &hw_versions,
++				 sizeof(hw_versions)))
 +			ret = -EFAULT;
 +		else
 +			ret = true;
@@ -44483,7 +44493,8 @@ index 0000000000000000000000000000000000000000..04c3e109b54737961b44cda37baf64e2
 +		driver_version.revision = DRIVER_REVISION_VERSION;
 +		strscpy((char *)driver_version.str, DRIVER_VERSION, sizeof(driver_version.str));
 +
-+		if (copy_to_user((void *)arg, &driver_version, sizeof(driver_version)))
++		if (copy_to_user((void __user *)arg, &driver_version,
++				 sizeof(driver_version)))
 +			ret = -EFAULT;
 +		else
 +			ret = true;
@@ -44672,7 +44683,7 @@ index 0000000000000000000000000000000000000000..04c3e109b54737961b44cda37baf64e2
 +	return irq_ret;
 +}
 +
-+const struct file_operations rga_fops = {
++static const struct file_operations rga_fops = {
 +	.owner = THIS_MODULE,
 +	.open = rga_open,
 +	.release = rga_release,
@@ -46701,7 +46712,7 @@ index 0000000000000000000000000000000000000000..4f0756f1da94ee53db258a26efbfe522
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_job.c b/drivers/video/rockchip/rga3/rga_job.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..037c51e69a0f3fe7333aa1deedc8fd7260b3a778
+index 0000000000000000000000000000000000000000..969a3bd4bd28ab54a512c45153c7cdf5e96c1e41
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_job.c
 @@ -0,0 +1,2031 @@
@@ -48291,7 +48302,7 @@ index 0000000000000000000000000000000000000000..037c51e69a0f3fe7333aa1deedc8fd72
 +		goto err_put_request;
 +	}
 +
-+	memcpy(task_list, u64_to_user_ptr(user_request->task_ptr),
++	memcpy(task_list, (void *)(uintptr_t)user_request->task_ptr,
 +	       sizeof(struct rga_req) * user_request->task_num);
 +
 +	mutex_lock(&request->run_lock);
@@ -48738,7 +48749,7 @@ index 0000000000000000000000000000000000000000..037c51e69a0f3fe7333aa1deedc8fd72
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_mm.c b/drivers/video/rockchip/rga3/rga_mm.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..f6c0e1e7096bbfdb4356036de1e7c5e6a132fa57
+index 0000000000000000000000000000000000000000..4cdf96bb3c0f1acbda10f1afdbf029d33eab0ab3
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_mm.c
 @@ -0,0 +1,4043 @@
@@ -49527,12 +49538,12 @@ index 0000000000000000000000000000000000000000..f6c0e1e7096bbfdb4356036de1e7c5e6
 +				      DMA_BIDIRECTIONAL, map_dev);
 +	case RGA_DMA_BUFFER_PTR:
 +		if (scheduler->data->mmu == RGA_MMU)
-+			return rga_dma_map_buf_pages((struct dma_buf *)
-+					u64_to_user_ptr(external_buffer->memory),
++			return rga_dma_map_buf_pages((struct dma_buf *)(uintptr_t)
++					external_buffer->memory,
 +					buffer, DMA_BIDIRECTIONAL, map_dev);
 +
-+		return rga_dma_map_buf((struct dma_buf *)
-+				u64_to_user_ptr(external_buffer->memory),
++		return rga_dma_map_buf((struct dma_buf *)(uintptr_t)
++				external_buffer->memory,
 +				buffer, DMA_BIDIRECTIONAL, map_dev);
 +	default:
 +		return -EFAULT;

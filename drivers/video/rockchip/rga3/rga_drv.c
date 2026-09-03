@@ -703,7 +703,7 @@ static long rga_ioctl_import_buffer(unsigned long arg, struct rga_session *sessi
 	struct rga_external_buffer *external_buffer = NULL;
 
 	if (unlikely(copy_from_user(&buffer_pool,
-				    (struct rga_buffer_pool *)arg,
+				    (struct rga_buffer_pool __user *)arg,
 				    sizeof(buffer_pool)))) {
 		rga_err("rga_buffer_pool copy_from_user failed!\n");
 		return -EFAULT;
@@ -820,7 +820,7 @@ static long rga_ioctl_release_buffer(unsigned long arg,
 	struct rga_external_buffer *external_buffer = NULL;
 
 	if (unlikely(copy_from_user(&buffer_pool,
-				    (struct rga_buffer_pool *)arg,
+				    (struct rga_buffer_pool __user *)arg,
 				    sizeof(buffer_pool)))) {
 		rga_err("rga_buffer_pool  copy_from_user failed!\n");
 		return -EFAULT;
@@ -879,7 +879,7 @@ static long rga_ioctl_request_create(unsigned long arg, struct rga_session *sess
 	int id;
 	uint32_t flags;
 
-	if (copy_from_user(&flags, (void *)arg, sizeof(uint32_t))) {
+	if (copy_from_user(&flags, (void __user *)arg, sizeof(uint32_t))) {
 		rga_err("%s failed to copy from user!\n", __func__);
 		return -EFAULT;
 	}
@@ -889,7 +889,7 @@ static long rga_ioctl_request_create(unsigned long arg, struct rga_session *sess
 		return id;
 	user_id = id;
 
-	if (copy_to_user((void *)arg, &user_id, sizeof(user_id))) {
+	if (copy_to_user((void __user *)arg, &user_id, sizeof(user_id))) {
 		rga_err("%s failed to copy to user!\n", __func__);
 		/* The new id was never published to userspace; retire it now. */
 		request_manager = rga_drvdata->pend_request_manager;
@@ -915,7 +915,7 @@ static long rga_ioctl_request_submit(unsigned long arg, bool run_enbale,
 	request_manager = rga_drvdata->pend_request_manager;
 
 	if (unlikely(copy_from_user(&user_request,
-				    (struct rga_user_request *)arg,
+				    (struct rga_user_request __user *)arg,
 				    sizeof(user_request)))) {
 		rga_err("%s copy_from_user failed!\n", __func__);
 		return -EFAULT;
@@ -943,7 +943,7 @@ static long rga_ioctl_request_submit(unsigned long arg, bool run_enbale,
 			rga_err("request[%d] submit failed!\n", user_request.id);
 		} else if (request->sync_mode == RGA_BLIT_ASYNC) {
 			user_request.release_fence_fd = request->release_fence_fd;
-			if (copy_to_user((struct rga_req *)arg,
+			if (copy_to_user((struct rga_user_request __user *)arg,
 					 &user_request, sizeof(user_request))) {
 				rga_err("copy_to_user failed\n");
 				ret = -EFAULT;
@@ -974,7 +974,8 @@ static long rga_ioctl_request_cancel(unsigned long arg,
 		return -EFAULT;
 	}
 
-	if (unlikely(copy_from_user(&id, (uint32_t *)arg, sizeof(uint32_t)))) {
+	if (unlikely(copy_from_user(&id, (uint32_t __user *)arg,
+				    sizeof(uint32_t)))) {
 		rga_err("request id copy_from_user failed!\n");
 		return -EFAULT;
 	}
@@ -1064,7 +1065,8 @@ static long rga_ioctl_blit(unsigned long arg, uint32_t cmd, struct rga_session *
 
 	if (request->sync_mode == RGA_BLIT_ASYNC) {
 		rga_req->out_fence_fd = request->release_fence_fd;
-		if (copy_to_user((struct rga_req *)arg, rga_req, sizeof(struct rga_req))) {
+		if (copy_to_user((struct rga_req __user *)arg, rga_req,
+				 sizeof(struct rga_req))) {
 			rga_req_err(request, "copy_to_user failed\n");
 			ret = -EFAULT;
 			goto err_put_request;
@@ -1160,10 +1162,10 @@ static long rga_ioctl(struct file *file, uint32_t cmd, unsigned long arg)
 		snprintf(version, 5, "%x.%02x", major_version, minor_version);
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
 		/* TODO: userspcae to get version */
-		if (copy_to_user((void *)arg, version, sizeof(version)))
+		if (copy_to_user((void __user *)arg, version, sizeof(version)))
 			ret = -EFAULT;
 #else
-		if (copy_to_user((void *)arg, RGA3_VERSION,
+		if (copy_to_user((void __user *)arg, RGA3_VERSION,
 				 sizeof(RGA3_VERSION)))
 			ret = -EFAULT;
 #endif
@@ -1172,11 +1174,12 @@ static long rga_ioctl(struct file *file, uint32_t cmd, unsigned long arg)
 		for (i = 0; i < rga->num_of_scheduler; i++) {
 			if (rga->scheduler[i]->ops == &rga2_ops) {
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
-				if (copy_to_user((void *)arg, rga->scheduler[i]->version.str,
+				if (copy_to_user((void __user *)arg,
+						rga->scheduler[i]->version.str,
 					sizeof(rga->scheduler[i]->version.str)))
 					ret = -EFAULT;
 #else
-				if (copy_to_user((void *)arg, RGA3_VERSION,
+				if (copy_to_user((void __user *)arg, RGA3_VERSION,
 						sizeof(RGA3_VERSION)))
 					ret = -EFAULT;
 #endif
@@ -1203,7 +1206,8 @@ static long rga_ioctl(struct file *file, uint32_t cmd, unsigned long arg)
 				sizeof(rga->scheduler[i]->version));
 		}
 
-		if (copy_to_user((void *)arg, &hw_versions, sizeof(hw_versions)))
+		if (copy_to_user((void __user *)arg, &hw_versions,
+				 sizeof(hw_versions)))
 			ret = -EFAULT;
 		else
 			ret = true;
@@ -1217,7 +1221,8 @@ static long rga_ioctl(struct file *file, uint32_t cmd, unsigned long arg)
 		driver_version.revision = DRIVER_REVISION_VERSION;
 		strscpy((char *)driver_version.str, DRIVER_VERSION, sizeof(driver_version.str));
 
-		if (copy_to_user((void *)arg, &driver_version, sizeof(driver_version)))
+		if (copy_to_user((void __user *)arg, &driver_version,
+				 sizeof(driver_version)))
 			ret = -EFAULT;
 		else
 			ret = true;
@@ -1406,7 +1411,7 @@ static irqreturn_t rga_isr_thread(int irq, void *data)
 	return irq_ret;
 }
 
-const struct file_operations rga_fops = {
+static const struct file_operations rga_fops = {
 	.owner = THIS_MODULE,
 	.open = rga_open,
 	.release = rga_release,

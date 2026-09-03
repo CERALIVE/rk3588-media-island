@@ -783,12 +783,12 @@ rga_mm_map_external_dma_buffer(struct rga_external_buffer *external_buffer,
 				      DMA_BIDIRECTIONAL, map_dev);
 	case RGA_DMA_BUFFER_PTR:
 		if (scheduler->data->mmu == RGA_MMU)
-			return rga_dma_map_buf_pages((struct dma_buf *)
-					u64_to_user_ptr(external_buffer->memory),
+			return rga_dma_map_buf_pages((struct dma_buf *)(uintptr_t)
+					external_buffer->memory,
 					buffer, DMA_BIDIRECTIONAL, map_dev);
 
-		return rga_dma_map_buf((struct dma_buf *)
-				u64_to_user_ptr(external_buffer->memory),
+		return rga_dma_map_buf((struct dma_buf *)(uintptr_t)
+				external_buffer->memory,
 				buffer, DMA_BIDIRECTIONAL, map_dev);
 	default:
 		return -EFAULT;

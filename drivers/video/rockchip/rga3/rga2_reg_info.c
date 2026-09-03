@@ -19,7 +19,7 @@ enum rga2_scale_mode_reg {
 	RGA2_SCALE_FORCE_TILE = 0x3,
 };
 
-unsigned int rga2_rop_code[256] = {
+static const unsigned int rga2_rop_code[256] = {
 	0x00000007, 0x00000451, 0x00006051, 0x00800051,
 	0x00007041, 0x00800041, 0x00804830, 0x000004f0,//0
 	0x00800765, 0x000004b0, 0x00000065, 0x000004f4,
