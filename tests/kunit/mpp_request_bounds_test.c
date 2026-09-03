@@ -82,6 +82,14 @@ static void mpp_req_counts_are_bounded_test(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, mpp_req_count_room(16, 16), -EINVAL);
 }
 
+static void mpp_iova_offset_guardrail_test(struct kunit *test)
+{
+	KUNIT_EXPECT_EQ(test, mpp_iova_offset_check(0, 0), -EINVAL);
+	KUNIT_EXPECT_EQ(test, mpp_iova_offset_check(0x10000, 0xffff), 0);
+	KUNIT_EXPECT_EQ(test, mpp_iova_offset_check(0x10000, 0x10000), -EINVAL);
+	KUNIT_EXPECT_EQ(test, mpp_iova_offset_check(0x10000, 0x10004), -EINVAL);
+}
+
 static void mpp_req_result_window_uses_actual_buffer_test(struct kunit *test)
 {
 	u32 start = 0;
@@ -135,6 +143,7 @@ static struct kunit_case mpp_request_bounds_cases[] = {
 	KUNIT_CASE(mpp_req_shape_rejects_unaligned_test),
 	KUNIT_CASE(mpp_req_element_count_rejects_odd_size_test),
 	KUNIT_CASE(mpp_req_counts_are_bounded_test),
+	KUNIT_CASE(mpp_iova_offset_guardrail_test),
 	KUNIT_CASE(mpp_req_result_window_uses_actual_buffer_test),
 	KUNIT_CASE(mpp_req_hevc_sqi_scl_span_test),
 	KUNIT_CASE(mpp_req_class_overrun_rejected_test),
