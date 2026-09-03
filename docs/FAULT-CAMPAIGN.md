@@ -9,15 +9,28 @@ self-tests are not presented as hardware evidence.
 
 | Intent | Terminal state | Imported overlap | Permanent evidence |
 |---|---|---|---|
+| `0008` DMA max-segment size and register-derived IOVA guardrail | **RED → fix → GREEN** | No yisding member sets the device DMA maximum; the imported translator added an unchecked offset to the mapped IOVA | `mpp_iova_offset_guardrail_test` was RED at 10/11 and is GREEN at 11/11 after rejecting offsets outside `[iova, iova+len)`; `mpp_dev_probe()` now sets and reads back `DMA_BIT_MASK(32)` before runtime-PM setup |
 | `0016` request shape and result-window bounds | **RED → fix → GREEN** | `fwport-0054`, local commit `4eb6e05`, stable patch-id `58dbb9c8f035bde19094933b48d1dbc7b3df749e`; `fwport-0076`, local commit `e83b415`, stable patch-id `2d2b3598b8213d71cc692151d2bc12c4fe1f9182` | `mpp_req_shape_rejects_*`, `mpp_req_result_window_uses_actual_buffer_test`, and decoder/JPGDEC boundary cases in `tests/kunit/mpp_request_bounds_test.c` |
 | `0022` class coverage, element and request-count bounds | **RED → fix → GREEN** | `fwport-0062`, local commit `6ed2da0`, stable patch-id `3e228bc54c1b53228a2cf98f53a840edf163962f`; `fwport-0076` as above | Explicit `mpp_req_hevc_sqi_scl_span_test` accepts the 3,228-byte SQI+SCL programme with its 24-byte map hole; `mpp_req_class_overrun_rejected_test` requires `-EINVAL`; element/count cases remain permanent |
 | `0026`-class decoder/JPGDEC bounds | **RED → fix → GREEN** | Shared request validation from `fwport-0054`/`0076`; no claim that HDMI-RX patch `0026` is an MPP change | `mpp_req_rkvdec2_bounds_test` and `mpp_req_jpgdec_bounds_test` exercise the production helper used by `mpp_check_req()` |
 
-Rows for `0008`, `0013`–`0015`, and `0019`–`0021` are added with their
+Rows for `0013`–`0015` and `0019`–`0021` are added with their
 terminal evidence by the board/lifecycle part of this campaign; an absent row
 is not a pass.
 
 ## Test-first transcript
+
+Intent `0008` first ran against an extracted helper preserving the imported
+unchecked behavior:
+
+```text
+INTENT_0008_RED_RC=1
+rockchip-mpp-request-bounds: pass:10 fail:1 skip:0 total:11
+FAILED: mpp_iova_offset_guardrail_test
+```
+
+After the guardrail and DMA segment-size probe fix, the same suite reported
+`pass:11 fail:0 total:11`.
 
 The extracted helper initially preserved the imported behaviour. Running the
 pinned Linux 7.2 KUnit suite before the fix produced:
