@@ -14,6 +14,7 @@
 
 #include <linux/clk.h>
 #include <linux/delay.h>
+#include <linux/dma-mapping.h>
 #include <linux/interrupt.h>
 #include <linux/iopoll.h>
 #include <linux/module.h>
@@ -2409,6 +2410,11 @@ int mpp_translate_reg_address(struct mpp_session *session,
 				idx, reg[idx], usr_fd);
 			return PTR_ERR(mem_region);
 		}
+		if (mpp_iova_offset_check(mem_region->len, offset)) {
+			mpp_err("reg[%3d]: iova %pad offset %u len %lu out of range\n",
+				idx, &mem_region->iova, offset, mem_region->len);
+			return -EINVAL;
+		}
 		mpp_debug(DEBUG_IOMMU,
 			  "reg[%3d]: %d => %pad, offset %10d, size %lx\n",
 			  idx, usr_fd, &mem_region->iova,
@@ -2711,6 +2717,11 @@ int mpp_dev_probe(struct mpp_dev *mpp,
 	mpp->dev = dev;
 	mpp->hw_ops = mpp->var->hw_ops;
 	mpp->dev_ops = mpp->var->dev_ops;
+	dma_set_max_seg_size(dev, DMA_BIT_MASK(32));
+	if (dma_get_max_seg_size(dev) != DMA_BIT_MASK(32)) {
+		dev_err(dev, "failed to set 32-bit DMA max segment size\n");
+		return -EINVAL;
+	}
 
 	/* Get and attach to service */
 	ret = mpp_attach_service(mpp, dev);

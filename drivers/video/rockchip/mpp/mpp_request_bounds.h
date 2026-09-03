@@ -57,9 +57,7 @@ static inline int mpp_req_count_room(u32 count, u32 capacity)
 
 static inline int mpp_iova_offset_check(size_t mapped_len, u32 offset)
 {
-	(void)mapped_len;
-	(void)offset;
-	return 0;
+	return mapped_len && offset < mapped_len ? 0 : -EINVAL;
 }
 
 static inline int mpp_req_buffer_check(u32 offset, u32 size, u32 base,

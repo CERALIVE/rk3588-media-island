@@ -3248,10 +3248,10 @@ index 0000000000000000000000000000000000000000..39c63f49a0f3a6407fe1ca18bdf23241
 +};
 diff --git a/drivers/video/rockchip/mpp/mpp_common.c b/drivers/video/rockchip/mpp/mpp_common.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..7f280f4de7bdfa9658ec16d4967575ee128c80c8
+index 0000000000000000000000000000000000000000..b490af5b66e19e0ecb2dbd2b506d9fe674dd0e10
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_common.c
-@@ -0,0 +1,3241 @@
+@@ -0,0 +1,3252 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -3268,6 +3268,7 @@ index 0000000000000000000000000000000000000000..7f280f4de7bdfa9658ec16d4967575ee
 +
 +#include <linux/clk.h>
 +#include <linux/delay.h>
++#include <linux/dma-mapping.h>
 +#include <linux/interrupt.h>
 +#include <linux/iopoll.h>
 +#include <linux/module.h>
@@ -5663,6 +5664,11 @@ index 0000000000000000000000000000000000000000..7f280f4de7bdfa9658ec16d4967575ee
 +				idx, reg[idx], usr_fd);
 +			return PTR_ERR(mem_region);
 +		}
++		if (mpp_iova_offset_check(mem_region->len, offset)) {
++			mpp_err("reg[%3d]: iova %pad offset %u len %lu out of range\n",
++				idx, &mem_region->iova, offset, mem_region->len);
++			return -EINVAL;
++		}
 +		mpp_debug(DEBUG_IOMMU,
 +			  "reg[%3d]: %d => %pad, offset %10d, size %lx\n",
 +			  idx, usr_fd, &mem_region->iova,
@@ -5965,6 +5971,11 @@ index 0000000000000000000000000000000000000000..7f280f4de7bdfa9658ec16d4967575ee
 +	mpp->dev = dev;
 +	mpp->hw_ops = mpp->var->hw_ops;
 +	mpp->dev_ops = mpp->var->dev_ops;
++	dma_set_max_seg_size(dev, DMA_BIT_MASK(32));
++	if (dma_get_max_seg_size(dev) != DMA_BIT_MASK(32)) {
++		dev_err(dev, "failed to set 32-bit DMA max segment size\n");
++		return -EINVAL;
++	}
 +
 +	/* Get and attach to service */
 +	ret = mpp_attach_service(mpp, dev);
@@ -12057,10 +12068,10 @@ index 0000000000000000000000000000000000000000..922f962a4a433a29275922654ac0db3b
 +EXPORT_SYMBOL(rockchip_jpgenc_driver);
 diff --git a/drivers/video/rockchip/mpp/mpp_request_bounds.h b/drivers/video/rockchip/mpp/mpp_request_bounds.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..b8693a793491b864b3404675913bda202a7c842d
+index 0000000000000000000000000000000000000000..a78c459949dd10134c8b0e33971baf15b4ee6527
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_request_bounds.h
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,170 @@
 +/* SPDX-License-Identifier: (GPL-2.0+ OR MIT) */
 +#ifndef __ROCKCHIP_MPP_REQUEST_BOUNDS_H__
 +#define __ROCKCHIP_MPP_REQUEST_BOUNDS_H__
@@ -12116,6 +12127,11 @@ index 0000000000000000000000000000000000000000..b8693a793491b864b3404675913bda20
 +static inline int mpp_req_count_room(u32 count, u32 capacity)
 +{
 +	return count < capacity ? 0 : -EINVAL;
++}
++
++static inline int mpp_iova_offset_check(size_t mapped_len, u32 offset)
++{
++	return mapped_len && offset < mapped_len ? 0 : -EINVAL;
 +}
 +
 +static inline int mpp_req_buffer_check(u32 offset, u32 size, u32 base,
