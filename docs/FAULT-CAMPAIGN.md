@@ -14,14 +14,33 @@ self-tests are not presented as hardware evidence.
 | `0014` teardown ordering and reverse removal | **RED → fix → GREEN** | `fwport-0040` (`3967ce73b517a21d671869cb1c01ed81b36fac0b`) unlinks sessions before private teardown; `0041` (`0587228a6e71f11c8c0863d51fa59de308666994`) clears reset-destroyed DMA state; `0052` (`3407cbf1b17f1cc447e4d5df09dd459e45e4e1fb`) drops device-less worker tasks; `0053` (`2f8b8e41b41ad043190abed46027ca8137f1e2db`) guards the sibling wait path. Their actual patch bodies do not quiesce the devm IRQ before device teardown. | `scripts/check-mpp-hardening.py` was RED at 7/8 and is GREEN at 8/8 after `77e0487` made both RKVENC2 remove paths disable, synchronize, and devm-free the IRQ before RCB, CCU, queue, IOMMU, and PM state. The checker also locks the imported async session drain, failed-CCU cleanup, queue unpublication, and cdev lifetime alternatives. |
 | `0015` required-resource and runtime error propagation | **RED → fix → GREEN** | The import already propagates required IOMMU acquisition, `pm_runtime_resume_and_get()`, partial clock-enable unwind, status readback, and the recovery call's return. It still swallowed three required clock lookups, converted reset error pointers to optional absence, and discarded the hardware reset return. | `scripts/check-mpp-hardening.py --intent 0015` was RED at 4/7 and is GREEN at 7/7 after `c3318d6`; required clock/reset acquisition now returns the original error, a soft-reset failure without CRU fallback escapes, and `mpp_dev_reset()` preserves the hardware reset error after balanced cleanup. |
 | `0016` request shape and result-window bounds | **RED → fix → GREEN** | `fwport-0054`, local commit `4eb6e05`, stable patch-id `58dbb9c8f035bde19094933b48d1dbc7b3df749e`; `fwport-0076`, local commit `e83b415`, stable patch-id `2d2b3598b8213d71cc692151d2bc12c4fe1f9182` | `mpp_req_shape_rejects_*`, `mpp_req_result_window_uses_actual_buffer_test`, and decoder/JPGDEC boundary cases in `tests/kunit/mpp_request_bounds_test.c` |
+| `0019a` worker lock context | **GREEN-ON-IMPORT** | `fwport-0001`, stable patch-id `041c151608227cc55845fba2c0ad33cb378dbbf0`, imports the MPP queue architecture with pending acquisition before `running_lock`; no compiled RKVENC2 worker takes a mutex inside an irqsave spin section | `scripts/check-mpp-hardening.py --intent 0019` passes the irqsave-block scan; moving `pending_lock` inside `running_lock` on throwaway branch `mutation/0019-proof` made this row RED at 1/2 |
+| `0019b` static dma-buf importer API | **GREEN-ON-IMPORT** | `fwport-0001`, stable patch-id `041c151608227cc55845fba2c0ad33cb378dbbf0`, adds the MPP importer with `dma_buf_map_attachment_unlocked()` / `dma_buf_unmap_attachment_unlocked()` | The same test passes the production importer scan; reverting those exact member lines to the reservation-lock-requiring entry points on `mutation/0019-proof` made this row RED at 1/2 |
 | `0022` class coverage, element and request-count bounds | **RED → fix → GREEN** | `fwport-0062`, local commit `6ed2da0`, stable patch-id `3e228bc54c1b53228a2cf98f53a840edf163962f`; `fwport-0076` as above | Explicit `mpp_req_hevc_sqi_scl_span_test` accepts the 3,228-byte SQI+SCL programme with its 24-byte map hole; `mpp_req_class_overrun_rejected_test` requires `-EINVAL`; element/count cases remain permanent |
 | `0026`-class decoder/JPGDEC bounds | **RED → fix → GREEN** | Shared request validation from `fwport-0054`/`0076`; no claim that HDMI-RX patch `0026` is an MPP change | `mpp_req_rkvdec2_bounds_test` and `mpp_req_jpgdec_bounds_test` exercise the production helper used by `mpp_check_req()` |
 
-Rows for `0019`–`0021` are added with their
+Rows for `0020`–`0021` are added with their
 terminal evidence by the board/lifecycle part of this campaign; an absent row
 is not a pass.
 
 ## Test-first transcript
+
+Both independent `0019` defects are GREEN-ON-IMPORT through
+`fwport-0001`. The permanent source-contract test reported:
+
+```text
+PASS: worker never takes a mutex under spin_lock_irqsave
+PASS: static dma-buf importer uses unlocked entry points
+mpp-hardening-0019: pass:2 fail:0 total:2
+```
+
+Two isolated mutations on throwaway branch `mutation/0019-proof` proved the
+rows independently. Restoring the locked dma-buf calls produced
+`pass:1 fail:1 total:2` with only the importer row failed. Moving the imported
+`pending_lock` acquisition under `running_lock` produced
+`pass:1 fail:1 total:2` with only the lock-context row failed. Both source files
+were restored before deleting the branch. The complete KUnit run remained
+green at `pass:13 fail:0 total:13`.
 
 Intent `0015` found three discarded-return classes still present on import:
 
