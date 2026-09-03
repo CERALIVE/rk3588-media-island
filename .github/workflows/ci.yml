@@ -465,6 +465,7 @@ jobs:
             "$KERNEL_MIRROR" .work/linux
           mkdir -p .work/linux/drivers/video/rockchip/mpp
           cp drivers/video/rockchip/mpp/mpp_request_bounds.h \
+            drivers/video/rockchip/mpp/mpp_rkvenc_test.h \
             .work/linux/drivers/video/rockchip/mpp/
           cp -a tests/kunit ".work/linux/drivers/video/rockchip/"
           printf '\nsource "drivers/video/rockchip/kunit/Kconfig"\n' \

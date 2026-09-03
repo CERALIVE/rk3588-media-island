@@ -5,17 +5,17 @@ Subject: [PATCH 1/4] video: rockchip: add the CeraLive RK3588 media island
 
 The Rockchip MPP service with its three compiled clients (RKVENC2, RKVDEC2, JPGDEC), the multi_rga 2D engine driver, and the UAPI headers they publish.
 
-67 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
+69 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
 
 GENERATED from the rk3588-media-island source tree by scripts/build-series.py. The source is the truth and this series is its output; per-file provenance is docs/PROVENANCE.md and the originating commits' Origin: trailers, never this mailbox header.
 
 ---
 diff --git a/drivers/video/rockchip/mpp/Kconfig b/drivers/video/rockchip/mpp/Kconfig
 new file mode 100644
-index 0000000000000000000000000000000000000000..55f6b84d2f4b8b48a926be45c2a9113520082d8b
+index 0000000000000000000000000000000000000000..dc4a33d225be028dc683be794bc6683986c2b23f
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/Kconfig
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,127 @@
 +# SPDX-License-Identifier: GPL-2.0
 +config ROCKCHIP_MPP_SERVICE
 +	tristate "Rockchip MPP service framework"
@@ -56,6 +56,7 @@ index 0000000000000000000000000000000000000000..55f6b84d2f4b8b48a926be45c2a91135
 +
 +config ROCKCHIP_MPP_CERALIVE_TEST
 +	bool "CeraLive MPP fault-injection test seams"
++	depends on DEBUG_FS
 +	default n
 +	help
 +	  Enable the fault and timeout seams used by the island KUnit suite.
@@ -144,10 +145,10 @@ index 0000000000000000000000000000000000000000..55f6b84d2f4b8b48a926be45c2a91135
 +endif
 diff --git a/drivers/video/rockchip/mpp/Makefile b/drivers/video/rockchip/mpp/Makefile
 new file mode 100644
-index 0000000000000000000000000000000000000000..98220f4d09105a34a85f9c9fc8189a9d78f26238
+index 0000000000000000000000000000000000000000..24e783b39a848497125f519cc429e2024da0d4f2
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/Makefile
-@@ -0,0 +1,33 @@
+@@ -0,0 +1,34 @@
 +# SPDX-License-Identifier: GPL-2.0
 +#
 +# Rockchip MPP service framework - VEPU580 / rkvenc2 (H.264/H.265) encoder.
@@ -168,6 +169,7 @@ index 0000000000000000000000000000000000000000..98220f4d09105a34a85f9c9fc8189a9d
 +obj-$(CONFIG_ROCKCHIP_MPP_SERVICE) += rk_vcodec.o
 +
 +rk_vcodec-y := mpp_service.o mpp_common.o mpp_iommu.o
++rk_vcodec-$(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST) += mpp_rkvenc_test.o
 +rk_vcodec-$(CONFIG_ROCKCHIP_MPP_RKVDEC) += mpp_rkvdec.o
 +rk_vcodec-$(CONFIG_ROCKCHIP_MPP_RKVENC2) += mpp_rkvenc2.o
 +rk_vcodec-$(CONFIG_ROCKCHIP_MPP_RKVDEC2) += mpp_rkvdec2.o mpp_rkvdec2_link.o
@@ -21641,10 +21643,10 @@ index 0000000000000000000000000000000000000000..5ab7441b178f7359ee049a13368d79a4
 +};
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc2.c b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..c6ad4c9bea5630f9633dfccfa309cf4fceeb1343
+index 0000000000000000000000000000000000000000..566411fe1baa67fe2b61ebcd1e7e8820a9e9b853
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
-@@ -0,0 +1,3758 @@
+@@ -0,0 +1,3776 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
@@ -21689,6 +21691,7 @@ index 0000000000000000000000000000000000000000..c6ad4c9bea5630f9633dfccfa309cf4f
 +#include "mpp_iommu.h"
 +#include "mpp_common.h"
 +#include "mpp_request_bounds.h"
++#include "mpp_rkvenc_test.h"
 +
 +#define RKVENC_DRIVER_NAME			"mpp_rkvenc2"
 +
@@ -23802,6 +23805,8 @@ index 0000000000000000000000000000000000000000..c6ad4c9bea5630f9633dfccfa309cf4f
 +		mpp_err("session is null\n");
 +		return -EINVAL;
 +	}
++	if (mpp_rkvenc_test_fail_session_alloc())
++		return -ENOMEM;
 +
 +	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 +	if (!priv)
@@ -24343,6 +24348,9 @@ index 0000000000000000000000000000000000000000..c6ad4c9bea5630f9633dfccfa309cf4f
 +	struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
 +	int ret;
 +
++	if (mpp_rkvenc_test_fail_clock_enable())
++		return -EIO;
++
 +	ret = mpp_clk_safe_enable(enc->aclk_info.clk);
 +	if (ret)
 +		return ret;
@@ -24428,9 +24436,13 @@ index 0000000000000000000000000000000000000000..c6ad4c9bea5630f9633dfccfa309cf4f
 +					struct mpp_task *task)
 +{
 +	int ret = 0;
++	unsigned int delay_ms;
 +
 +	if (mpp->dev_ops && mpp->dev_ops->result)
 +		ret = mpp->dev_ops->result(mpp, task, NULL);
++	delay_ms = mpp_rkvenc_test_completion_delay_ms();
++	if (delay_ms)
++		msleep(delay_ms);
 +
 +	mpp_debug_func(DEBUG_TASK_INFO, "kref_read %d, ret %d\n",
 +			kref_read(&task->ref), ret);
@@ -24859,6 +24871,8 @@ index 0000000000000000000000000000000000000000..c6ad4c9bea5630f9633dfccfa309cf4f
 +	struct rkvenc_ccu *ccu;
 +
 +	mpp_debug_enter();
++	if (mpp_rkvenc_test_fail_ccu_attach())
++		return -ENODEV;
 +
 +	np = of_parse_phandle(dev->of_node, "rockchip,ccu", 0);
 +	if (!np || !of_device_is_available(np))
@@ -25194,6 +25208,8 @@ index 0000000000000000000000000000000000000000..c6ad4c9bea5630f9633dfccfa309cf4f
 +
 +	mpp = &enc->mpp;
 +	platform_set_drvdata(pdev, mpp);
++	if (mpp_rkvenc_test_fail_service_attach())
++		return -ENOMEM;
 +
 +	if (pdev->dev.of_node) {
 +		struct device_node *np = pdev->dev.of_node;
@@ -25222,7 +25238,8 @@ index 0000000000000000000000000000000000000000..c6ad4c9bea5630f9633dfccfa309cf4f
 +	 */
 +	rkvenc2_alloc_rcbbuf(pdev, enc);
 +
-+	ret = devm_request_threaded_irq(dev, mpp->irq,
++	ret = mpp_rkvenc_test_fail_irq_request() ? -EBUSY :
++		devm_request_threaded_irq(dev, mpp->irq,
 +					mpp_dev_irq,
 +					NULL,
 +					IRQF_ONESHOT,
@@ -25265,6 +25282,8 @@ index 0000000000000000000000000000000000000000..c6ad4c9bea5630f9633dfccfa309cf4f
 +
 +	mpp = &enc->mpp;
 +	platform_set_drvdata(pdev, mpp);
++	if (mpp_rkvenc_test_fail_service_attach())
++		return -ENOMEM;
 +
 +	if (pdev->dev.of_node) {
 +		match = of_match_node(mpp_rkvenc_dt_match, pdev->dev.of_node);
@@ -25282,7 +25301,8 @@ index 0000000000000000000000000000000000000000..c6ad4c9bea5630f9633dfccfa309cf4f
 +	 */
 +	rkvenc2_alloc_rcbbuf(pdev, enc);
 +
-+	ret = devm_request_threaded_irq(dev, mpp->irq,
++	ret = mpp_rkvenc_test_fail_irq_request() ? -EBUSY :
++		devm_request_threaded_irq(dev, mpp->irq,
 +					mpp_dev_irq,
 +					NULL,
 +					IRQF_SHARED,
@@ -25403,12 +25423,156 @@ index 0000000000000000000000000000000000000000..c6ad4c9bea5630f9633dfccfa309cf4f
 +		.pm = &mpp_common_pm_ops,
 +	},
 +};
+diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc_test.c b/drivers/video/rockchip/mpp/mpp_rkvenc_test.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..22c212f66bbfd6feb9c74df787283f146e8c85a9
+--- /dev/null
++++ b/drivers/video/rockchip/mpp/mpp_rkvenc_test.c
+@@ -0,0 +1,79 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <linux/debugfs.h>
++#include <linux/err.h>
++
++#include "mpp_rkvenc_test.h"
++
++static struct mpp_fault_knob fail_service_attach;
++static struct mpp_fault_knob fail_ccu_attach;
++static struct mpp_fault_knob fail_irq_request;
++static struct mpp_fault_knob fail_clock_enable;
++static struct mpp_fault_knob fail_session_alloc;
++static struct mpp_fault_knob delay_task_completion;
++static struct dentry *mpp_rkvenc_test_dir;
++
++static void mpp_rkvenc_test_add_flag(const char *name,
++				     struct mpp_fault_knob *knob)
++{
++	char consumed_name[64];
++
++	debugfs_create_atomic_t(name, 0600, mpp_rkvenc_test_dir, &knob->armed);
++	snprintf(consumed_name, sizeof(consumed_name), "%s_consumed", name);
++	debugfs_create_atomic_t(consumed_name, 0400, mpp_rkvenc_test_dir,
++				&knob->consumed);
++}
++
++int mpp_rkvenc_test_init(void)
++{
++	mpp_rkvenc_test_dir = debugfs_create_dir("rkvenc-test", NULL);
++	if (IS_ERR(mpp_rkvenc_test_dir))
++		return PTR_ERR(mpp_rkvenc_test_dir);
++
++	mpp_rkvenc_test_add_flag("fail_service_attach_once", &fail_service_attach);
++	mpp_rkvenc_test_add_flag("fail_ccu_attach_once", &fail_ccu_attach);
++	mpp_rkvenc_test_add_flag("fail_irq_request_once", &fail_irq_request);
++	mpp_rkvenc_test_add_flag("fail_clock_enable_once", &fail_clock_enable);
++	mpp_rkvenc_test_add_flag("fail_session_alloc_once", &fail_session_alloc);
++	debugfs_create_atomic_t("delay_task_completion_ms", 0600,
++				mpp_rkvenc_test_dir, &delay_task_completion.armed);
++	debugfs_create_atomic_t("delay_consumed", 0400, mpp_rkvenc_test_dir,
++				&delay_task_completion.consumed);
++
++	return 0;
++}
++
++void mpp_rkvenc_test_exit(void)
++{
++	debugfs_remove_recursive(mpp_rkvenc_test_dir);
++	mpp_rkvenc_test_dir = NULL;
++}
++
++bool mpp_rkvenc_test_fail_service_attach(void)
++{
++	return mpp_fault_consume_flag(&fail_service_attach);
++}
++
++bool mpp_rkvenc_test_fail_ccu_attach(void)
++{
++	return mpp_fault_consume_flag(&fail_ccu_attach);
++}
++
++bool mpp_rkvenc_test_fail_irq_request(void)
++{
++	return mpp_fault_consume_flag(&fail_irq_request);
++}
++
++bool mpp_rkvenc_test_fail_clock_enable(void)
++{
++	return mpp_fault_consume_flag(&fail_clock_enable);
++}
++
++bool mpp_rkvenc_test_fail_session_alloc(void)
++{
++	return mpp_fault_consume_flag(&fail_session_alloc);
++}
++
++unsigned int mpp_rkvenc_test_completion_delay_ms(void)
++{
++	return mpp_fault_consume_delay(&delay_task_completion);
++}
+diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc_test.h b/drivers/video/rockchip/mpp/mpp_rkvenc_test.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..e0fffac371c257d70bce544a3cfcce4c0418cf88
+--- /dev/null
++++ b/drivers/video/rockchip/mpp/mpp_rkvenc_test.h
+@@ -0,0 +1,53 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef __MPP_RKVENC_TEST_H__
++#define __MPP_RKVENC_TEST_H__
++
++#include <linux/atomic.h>
++#include <linux/types.h>
++
++struct mpp_fault_knob {
++	atomic_t armed;
++	atomic_t consumed;
++};
++
++static inline bool mpp_fault_consume_flag(struct mpp_fault_knob *knob)
++{
++	if (atomic_cmpxchg(&knob->armed, 1, 0) != 1)
++		return false;
++
++	atomic_inc(&knob->consumed);
++	return true;
++}
++
++static inline unsigned int mpp_fault_consume_delay(struct mpp_fault_knob *knob)
++{
++	int delay_ms = atomic_xchg(&knob->armed, 0);
++
++	if (delay_ms <= 0)
++		return 0;
++
++	atomic_inc(&knob->consumed);
++	return delay_ms;
++}
++
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++int mpp_rkvenc_test_init(void);
++void mpp_rkvenc_test_exit(void);
++bool mpp_rkvenc_test_fail_service_attach(void);
++bool mpp_rkvenc_test_fail_ccu_attach(void);
++bool mpp_rkvenc_test_fail_irq_request(void);
++bool mpp_rkvenc_test_fail_clock_enable(void);
++bool mpp_rkvenc_test_fail_session_alloc(void);
++unsigned int mpp_rkvenc_test_completion_delay_ms(void);
++#else
++static inline int mpp_rkvenc_test_init(void) { return 0; }
++static inline void mpp_rkvenc_test_exit(void) { }
++static inline bool mpp_rkvenc_test_fail_service_attach(void) { return false; }
++static inline bool mpp_rkvenc_test_fail_ccu_attach(void) { return false; }
++static inline bool mpp_rkvenc_test_fail_irq_request(void) { return false; }
++static inline bool mpp_rkvenc_test_fail_clock_enable(void) { return false; }
++static inline bool mpp_rkvenc_test_fail_session_alloc(void) { return false; }
++static inline unsigned int mpp_rkvenc_test_completion_delay_ms(void) { return 0; }
++#endif
++
++#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_service.c b/drivers/video/rockchip/mpp/mpp_service.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..d62cdad4a09e8710b4b6fd9504bf496e33d67d69
+index 0000000000000000000000000000000000000000..7944c555ca712612b7c6e48fcd89ee776c5e1c29
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_service.c
-@@ -0,0 +1,553 @@
+@@ -0,0 +1,575 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -25434,6 +25598,7 @@ index 0000000000000000000000000000000000000000..d62cdad4a09e8710b4b6fd9504bf496e
 +
 +#include "mpp_debug.h"
 +#include "mpp_common.h"
++#include "mpp_rkvenc_test.h"
 +#include "mpp_iommu.h"
 +
 +#define MPP_CLASS_NAME		"mpp_class"
@@ -25954,7 +26119,28 @@ index 0000000000000000000000000000000000000000..d62cdad4a09e8710b4b6fd9504bf496e
 +	},
 +};
 +
-+module_platform_driver(mpp_service_driver);
++static int __init mpp_service_init(void)
++{
++	int ret;
++
++	ret = mpp_rkvenc_test_init();
++	if (ret)
++		return ret;
++
++	ret = platform_driver_register(&mpp_service_driver);
++	if (ret)
++		mpp_rkvenc_test_exit();
++
++	return ret;
++}
++module_init(mpp_service_init);
++
++static void __exit mpp_service_exit(void)
++{
++	platform_driver_unregister(&mpp_service_driver);
++	mpp_rkvenc_test_exit();
++}
++module_exit(mpp_service_exit);
 +
 +/* 6.13+: namespace must be a quoted string literal */
 +MODULE_IMPORT_NS("DMA_BUF");

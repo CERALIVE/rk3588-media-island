@@ -42,6 +42,7 @@
 #include "mpp_iommu.h"
 #include "mpp_common.h"
 #include "mpp_request_bounds.h"
+#include "mpp_rkvenc_test.h"
 
 #define RKVENC_DRIVER_NAME			"mpp_rkvenc2"
 
@@ -2155,6 +2156,8 @@ static int rkvenc_init_session(struct mpp_session *session)
 		mpp_err("session is null\n");
 		return -EINVAL;
 	}
+	if (mpp_rkvenc_test_fail_session_alloc())
+		return -ENOMEM;
 
 	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (!priv)
@@ -2696,6 +2699,9 @@ static int rkvenc_clk_on(struct mpp_dev *mpp)
 	struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
 	int ret;
 
+	if (mpp_rkvenc_test_fail_clock_enable())
+		return -EIO;
+
 	ret = mpp_clk_safe_enable(enc->aclk_info.clk);
 	if (ret)
 		return ret;
@@ -2781,9 +2787,13 @@ static int rkvenc2_task_default_process(struct mpp_dev *mpp,
 					struct mpp_task *task)
 {
 	int ret = 0;
+	unsigned int delay_ms;
 
 	if (mpp->dev_ops && mpp->dev_ops->result)
 		ret = mpp->dev_ops->result(mpp, task, NULL);
+	delay_ms = mpp_rkvenc_test_completion_delay_ms();
+	if (delay_ms)
+		msleep(delay_ms);
 
 	mpp_debug_func(DEBUG_TASK_INFO, "kref_read %d, ret %d\n",
 			kref_read(&task->ref), ret);
@@ -3212,6 +3222,8 @@ static int rkvenc_attach_ccu(struct device *dev, struct rkvenc_dev *enc)
 	struct rkvenc_ccu *ccu;
 
 	mpp_debug_enter();
+	if (mpp_rkvenc_test_fail_ccu_attach())
+		return -ENODEV;
 
 	np = of_parse_phandle(dev->of_node, "rockchip,ccu", 0);
 	if (!np || !of_device_is_available(np))
@@ -3547,6 +3559,8 @@ static int rkvenc_core_probe(struct platform_device *pdev)
 
 	mpp = &enc->mpp;
 	platform_set_drvdata(pdev, mpp);
+	if (mpp_rkvenc_test_fail_service_attach())
+		return -ENOMEM;
 
 	if (pdev->dev.of_node) {
 		struct device_node *np = pdev->dev.of_node;
@@ -3575,7 +3589,8 @@ static int rkvenc_core_probe(struct platform_device *pdev)
 	 */
 	rkvenc2_alloc_rcbbuf(pdev, enc);
 
-	ret = devm_request_threaded_irq(dev, mpp->irq,
+	ret = mpp_rkvenc_test_fail_irq_request() ? -EBUSY :
+		devm_request_threaded_irq(dev, mpp->irq,
 					mpp_dev_irq,
 					NULL,
 					IRQF_ONESHOT,
@@ -3618,6 +3633,8 @@ static int rkvenc_probe_default(struct platform_device *pdev)
 
 	mpp = &enc->mpp;
 	platform_set_drvdata(pdev, mpp);
+	if (mpp_rkvenc_test_fail_service_attach())
+		return -ENOMEM;
 
 	if (pdev->dev.of_node) {
 		match = of_match_node(mpp_rkvenc_dt_match, pdev->dev.of_node);
@@ -3635,7 +3652,8 @@ static int rkvenc_probe_default(struct platform_device *pdev)
 	 */
 	rkvenc2_alloc_rcbbuf(pdev, enc);
 
-	ret = devm_request_threaded_irq(dev, mpp->irq,
+	ret = mpp_rkvenc_test_fail_irq_request() ? -EBUSY :
+		devm_request_threaded_irq(dev, mpp->irq,
 					mpp_dev_irq,
 					NULL,
 					IRQF_SHARED,

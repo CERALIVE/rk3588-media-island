@@ -23,6 +23,7 @@
 
 #include "mpp_debug.h"
 #include "mpp_common.h"
+#include "mpp_rkvenc_test.h"
 #include "mpp_iommu.h"
 
 #define MPP_CLASS_NAME		"mpp_class"
@@ -543,7 +544,28 @@ static struct platform_driver mpp_service_driver = {
 	},
 };
 
-module_platform_driver(mpp_service_driver);
+static int __init mpp_service_init(void)
+{
+	int ret;
+
+	ret = mpp_rkvenc_test_init();
+	if (ret)
+		return ret;
+
+	ret = platform_driver_register(&mpp_service_driver);
+	if (ret)
+		mpp_rkvenc_test_exit();
+
+	return ret;
+}
+module_init(mpp_service_init);
+
+static void __exit mpp_service_exit(void)
+{
+	platform_driver_unregister(&mpp_service_driver);
+	mpp_rkvenc_test_exit();
+}
+module_exit(mpp_service_exit);
 
 /* 6.13+: namespace must be a quoted string literal */
 MODULE_IMPORT_NS("DMA_BUF");

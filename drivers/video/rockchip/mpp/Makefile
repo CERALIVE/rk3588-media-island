@@ -18,6 +18,7 @@ ccflags-y += -include $(src)/compat/rockchip_qos_compat.h
 obj-$(CONFIG_ROCKCHIP_MPP_SERVICE) += rk_vcodec.o
 
 rk_vcodec-y := mpp_service.o mpp_common.o mpp_iommu.o
+rk_vcodec-$(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST) += mpp_rkvenc_test.o
 rk_vcodec-$(CONFIG_ROCKCHIP_MPP_RKVDEC) += mpp_rkvdec.o
 rk_vcodec-$(CONFIG_ROCKCHIP_MPP_RKVENC2) += mpp_rkvenc2.o
 rk_vcodec-$(CONFIG_ROCKCHIP_MPP_RKVDEC2) += mpp_rkvdec2.o mpp_rkvdec2_link.o

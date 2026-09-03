@@ -38,6 +38,7 @@ config ROCKCHIP_MPP_JPGDEC
 
 config ROCKCHIP_MPP_CERALIVE_TEST
 	bool "CeraLive MPP fault-injection test seams"
+	depends on DEBUG_FS
 	default n
 	help
 	  Enable the fault and timeout seams used by the island KUnit suite.
