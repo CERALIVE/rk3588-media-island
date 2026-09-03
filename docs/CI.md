@@ -29,7 +29,7 @@ a pin bump would then leave CI proving the series against a kernel nobody ships
 | `action-pins` | every `uses:` is at the current latest major. **Non-blocking** — see §4 |
 | `pin` | nothing — it *reads* the coordinates out of `kernel-pin.env` and emits them |
 | `pin-equality` | the four mirrored `KERNEL_*` values equal the consumer repository's |
-| `cross-compile-modules` | the pinned tag resolves to both pinned objects; the tree configures the way the device is configured; configured `vmlinux.symvers` is exposed under the `Module.symvers` filename external modpost reads; exactly `rk_vcodec.ko` and `rga3.ko` link with `-Werror`; no island `compatible` collides with a mainline `of_match_table` |
+| `cross-compile-modules` | the pinned tag resolves to both pinned objects; the tree configures the way the device is configured; `vmlinux` supplies provider symbols, `modules_prepare` supplies the final-link script, and configured `vmlinux.symvers` is exposed under the `Module.symvers` filename external modpost reads; exactly `rk_vcodec.ko` and `rga3.ko` link with `-Werror`; no island `compatible` collides with a mainline `of_match_table` |
 | `kunit` | `tests/kunit/` passes |
 | `static-analysis` | sparse inspects every selected composite object with findings promoted to errors, followed by coccinelle over both island directories; the plan's conditional smatch arm is not enabled without a suitable runner package |
 
@@ -52,13 +52,13 @@ reason worth stating:
    the cache is written.** The staged island source and the applied
    `integration/` patches would otherwise poison the next run's reset — and a
    poisoned cache fails *green*.
-4. **A configured `vmlinux` is built before the modules.** `modules_prepare`
-   deliberately generates no symbol table, while the explicit `vmlinux` target
-   writes `vmlinux.symvers`, not the `Module.symvers` filename an external
-   `M=` build reads. CI checks that file is non-empty and copies it under the
-   external-modpost name. The two module builds then run without
-   `KBUILD_MODPOST_WARN`: `shim-lint` catches a REAL-DEPENDENCY given a stub body,
-   and strict modpost catches a declaration with no provider behind it.
+4. **A configured `vmlinux` and `modules_prepare` run before the modules.** The
+   first writes `vmlinux.symvers` but not the external-modpost filename; the
+   second writes `scripts/module.lds` but deliberately no symbol table. CI needs
+   both, then checks the symbol dump is non-empty and copies it to
+   `Module.symvers`. The two module builds run without `KBUILD_MODPOST_WARN`:
+   `shim-lint` catches a REAL-DEPENDENCY given a stub body, and strict modpost
+   catches a declaration with no provider behind it.
 
 ### The one split gate
 

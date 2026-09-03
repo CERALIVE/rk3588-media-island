@@ -102,10 +102,10 @@ rk3588-media-island/
 
 The island's deliverables build **out of tree as two modules** against the pinned
 kernel. CI first builds the configured `vmlinux`, then exposes its
-`vmlinux.symvers` as the `Module.symvers` external modpost consumes; otherwise a
-modules-only preparation has no provider symbol table and cannot prove the
-REAL-DEPENDENCY link half. CI never clones a sibling checkout — the kernel comes
-from the URL in `kernel-pin.env`.
+`vmlinux.symvers` as the `Module.symvers` external modpost consumes. A following
+`modules_prepare` generates the module linker script but not that symbol table,
+so both steps are required to prove the REAL-DEPENDENCY link half. CI never
+clones a sibling checkout — the kernel comes from the URL in `kernel-pin.env`.
 
 ```bash
 # 1. Source the pin.
@@ -121,6 +121,8 @@ git clone --depth 1 --branch "$KERNEL_TAG" "$KERNEL_MIRROR" .work/linux
 # 4. Generate the provider symbol table, then cross-build the two modules.
 make -C .work/linux ARCH="$ISLAND_ARCH" CROSS_COMPILE="$ISLAND_CROSS_COMPILE" \
      vmlinux
+make -C .work/linux ARCH="$ISLAND_ARCH" CROSS_COMPILE="$ISLAND_CROSS_COMPILE" \
+     modules_prepare
 cp .work/linux/vmlinux.symvers .work/linux/Module.symvers
 make -C .work/linux ARCH="$ISLAND_ARCH" CROSS_COMPILE="$ISLAND_CROSS_COMPILE" \
      M=drivers/video/rockchip/mpp  modules
