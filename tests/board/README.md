@@ -28,6 +28,7 @@ accepts **both** layouts, so the move is a `git mv` with no edits.
 | `librga-async-probe.cpp` + `librga-ioctl-trace.c` | does pinned librga construct a fence-bearing `IM_ASYNC` request? | todo 54 fence verdict |
 | `probe-telemetry.sh` | are the required MPP/RGA procfs and debugfs trees readable, including any live session's fdinfo-style `stats` file? | todo 54 / todo 15 |
 | `trace-dual-core.sh` | do two complete MPP task lifecycles select, start, and finish on two distinct cores? | todo 15 / todo 16 |
+| `dual-core-matrix.sh` | do the six concurrency workloads sustain their rates, use both RKVENC2 cores, split tiled HEVC frames, and schedule a low-rate session fairly? | todo 16 / G1 / G2 |
 | `trace-rga.sh` | does one real NV12 blit emit a complete RGA queued/selected/started/completed lifecycle, with all six trace events registered? | todo 15 / todo 19 |
 | `sample-cores.sh` | did the second encoder core run, and at what per-process fps? | 3(d) dual-core |
 | `count-journal.sh` | how many copy/fallback events happened in a measured window? | 3(b) copy census |
