@@ -12,7 +12,7 @@ released as a `git am` mailbox series.
 | **Boards** | Radxa Rock 5B+, Orange Pi 5+ |
 | **Release artifact** | a generated `git am` series, plus its `.sha256` — no `.deb`, no kernel, no image |
 | **Versioning** | CalVer, `YYYY.MINOR.PATCH` |
-| **Status** | **SOURCE IMPORTED.** The complete donor/97-member replay, audited 44-commit vendor backlog, CeraLive Linux 7.2 delta and four-patch generated series are present and CI-gated. No release, image or board carries the island yet. |
+| **Status** | **MPP OWNERSHIP INTEGRATED.** The complete donor/97-member replay, audited 44-commit vendor backlog, CeraLive Linux 7.2 delta and seven-patch generated series are present and CI-gated. Encoder, decoder and JPEG nodes are in the applied lane; RGA ownership remains pending. No release, image or board carries the island yet. |
 
 ## Why this is a source repository and not a patch repository
 
@@ -82,7 +82,8 @@ rk3588-media-island/
 │   ├── mpp/                # MPP service + the three compiled clients; compat shims nest at mpp/compat/
 │   └── rga3/               # multi_rga
 ├── include/uapi/linux/     # the UAPI headers the drivers publish
-├── integration/            # patches to MAINLINE files: build hooks and IOMMU provider APIs
+├── integration/            # applied MAINLINE-file patches: hooks, providers and MPP DT
+│   └── pending/            # linted, unshipped RGA3/RGA2 compatible flips
 ├── scripts/                # series generation, provenance and lint tooling
 ├── tests/
 │   ├── board/              # hardware-gated drills and probes
@@ -147,6 +148,7 @@ configuration the device does not run proves the wrong thing.
 | `tests/fuzz/` | CI, no hardware | the UAPI surface survives hostile input |
 | static analysis | CI, no hardware | sparse findings are fatal and coccinelle inspects every selected object; smatch remains conditional on a suitable runner package |
 | every gate's `--self-test` | CI, no hardware | each gate refuses a mutated tree AND accepts a correct one |
+| `tests/dt/` | CI, built DTBs | both supported boards carry sole island MPP compatibles and every MPP client bypasses the unavailable BSP PMU-idle request; RGA remains mainline-owned |
 | `tests/board/` | a real Rock 5B+ or Orange Pi 5+ | everything about silicon |
 
 The board suite is deliberately outside the kernel build. Every script is gated,
