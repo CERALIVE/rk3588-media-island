@@ -2569,13 +2569,13 @@ static int rkvenc_init(struct mpp_dev *mpp)
 	/* Get clock info from dtsi */
 	ret = mpp_get_clk_info(mpp, &enc->aclk_info, "aclk_vcodec");
 	if (ret)
-		mpp_err("failed on clk_get aclk_vcodec\n");
+		return ret;
 	ret = mpp_get_clk_info(mpp, &enc->hclk_info, "hclk_vcodec");
 	if (ret)
-		mpp_err("failed on clk_get hclk_vcodec\n");
+		return ret;
 	ret = mpp_get_clk_info(mpp, &enc->core_clk_info, "clk_core");
 	if (ret)
-		mpp_err("failed on clk_get clk_core\n");
+		return ret;
 	/* Get normal max workload from dtsi */
 	of_property_read_u32(mpp->dev->of_node,
 			     "rockchip,default-max-load",
@@ -2586,12 +2586,21 @@ static int rkvenc_init(struct mpp_dev *mpp)
 
 	/* Get reset control from dtsi */
 	enc->rst_a = mpp_reset_control_get(mpp, RST_TYPE_A, "video_a");
+	if (IS_ERR(enc->rst_a))
+		return dev_err_probe(mpp->dev, PTR_ERR(enc->rst_a),
+				     "failed to acquire video_a reset\n");
 	if (!enc->rst_a)
 		mpp_err("No aclk reset resource define\n");
 	enc->rst_h = mpp_reset_control_get(mpp, RST_TYPE_H, "video_h");
+	if (IS_ERR(enc->rst_h))
+		return dev_err_probe(mpp->dev, PTR_ERR(enc->rst_h),
+				     "failed to acquire video_h reset\n");
 	if (!enc->rst_h)
 		mpp_err("No hclk reset resource define\n");
 	enc->rst_core = mpp_reset_control_get(mpp, RST_TYPE_CORE, "video_core");
+	if (IS_ERR(enc->rst_core))
+		return dev_err_probe(mpp->dev, PTR_ERR(enc->rst_core),
+				     "failed to acquire video_core reset\n");
 	if (!enc->rst_core)
 		mpp_err("No core reset resource define\n");
 
@@ -2669,6 +2678,8 @@ static int rkvenc_reset(struct mpp_dev *mpp)
 		mpp_safe_unreset(enc->rst_core);
 		mpp_pmu_idle_request(mpp, false);
 	}
+	if (ret && !(enc->rst_a && enc->rst_h && enc->rst_core))
+		return ret;
 
 	set_bit(mpp->core_id, &queue->core_idle);
 

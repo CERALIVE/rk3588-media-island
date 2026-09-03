@@ -3250,10 +3250,10 @@ index 0000000000000000000000000000000000000000..39c63f49a0f3a6407fe1ca18bdf23241
 +};
 diff --git a/drivers/video/rockchip/mpp/mpp_common.c b/drivers/video/rockchip/mpp/mpp_common.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..b490af5b66e19e0ecb2dbd2b506d9fe674dd0e10
+index 0000000000000000000000000000000000000000..2702fd10631e39d6afd8103ef9c32d74b2686d1a
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_common.c
-@@ -0,0 +1,3252 @@
+@@ -0,0 +1,3255 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -4040,6 +4040,7 @@ index 0000000000000000000000000000000000000000..b490af5b66e19e0ecb2dbd2b506d9fe6
 +int mpp_dev_reset(struct mpp_dev *mpp)
 +{
 +	int ret;
++	int reset_ret = 0;
 +
 +	dev_info(mpp->dev, "resetting...\n");
 +
@@ -4063,7 +4064,7 @@ index 0000000000000000000000000000000000000000..b490af5b66e19e0ecb2dbd2b506d9fe6
 +	atomic_set(&mpp->reset_request, 0);
 +
 +	if (mpp->hw_ops->reset)
-+		mpp->hw_ops->reset(mpp);
++		reset_ret = mpp->hw_ops->reset(mpp);
 +
 +	/* Note: if the domain does not change, iommu attach will be return
 +	 * as an empty operation. Therefore, force to close and then open,
@@ -4082,6 +4083,8 @@ index 0000000000000000000000000000000000000000..b490af5b66e19e0ecb2dbd2b506d9fe6
 +
 +	dev_info(mpp->dev, "reset done\n");
 +
++	if (reset_ret)
++		return reset_ret;
 +	return ret;
 +}
 +
@@ -21643,10 +21646,10 @@ index 0000000000000000000000000000000000000000..5ab7441b178f7359ee049a13368d79a4
 +};
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc2.c b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..1e1a1bcccc84deb3c5d2ef5b3938187984052cdd
+index 0000000000000000000000000000000000000000..9922eb4a4ae386f584057b6d065b9f9703b5c8f9
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
-@@ -0,0 +1,3791 @@
+@@ -0,0 +1,3802 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
@@ -24218,13 +24221,13 @@ index 0000000000000000000000000000000000000000..1e1a1bcccc84deb3c5d2ef5b39381879
 +	/* Get clock info from dtsi */
 +	ret = mpp_get_clk_info(mpp, &enc->aclk_info, "aclk_vcodec");
 +	if (ret)
-+		mpp_err("failed on clk_get aclk_vcodec\n");
++		return ret;
 +	ret = mpp_get_clk_info(mpp, &enc->hclk_info, "hclk_vcodec");
 +	if (ret)
-+		mpp_err("failed on clk_get hclk_vcodec\n");
++		return ret;
 +	ret = mpp_get_clk_info(mpp, &enc->core_clk_info, "clk_core");
 +	if (ret)
-+		mpp_err("failed on clk_get clk_core\n");
++		return ret;
 +	/* Get normal max workload from dtsi */
 +	of_property_read_u32(mpp->dev->of_node,
 +			     "rockchip,default-max-load",
@@ -24235,12 +24238,21 @@ index 0000000000000000000000000000000000000000..1e1a1bcccc84deb3c5d2ef5b39381879
 +
 +	/* Get reset control from dtsi */
 +	enc->rst_a = mpp_reset_control_get(mpp, RST_TYPE_A, "video_a");
++	if (IS_ERR(enc->rst_a))
++		return dev_err_probe(mpp->dev, PTR_ERR(enc->rst_a),
++				     "failed to acquire video_a reset\n");
 +	if (!enc->rst_a)
 +		mpp_err("No aclk reset resource define\n");
 +	enc->rst_h = mpp_reset_control_get(mpp, RST_TYPE_H, "video_h");
++	if (IS_ERR(enc->rst_h))
++		return dev_err_probe(mpp->dev, PTR_ERR(enc->rst_h),
++				     "failed to acquire video_h reset\n");
 +	if (!enc->rst_h)
 +		mpp_err("No hclk reset resource define\n");
 +	enc->rst_core = mpp_reset_control_get(mpp, RST_TYPE_CORE, "video_core");
++	if (IS_ERR(enc->rst_core))
++		return dev_err_probe(mpp->dev, PTR_ERR(enc->rst_core),
++				     "failed to acquire video_core reset\n");
 +	if (!enc->rst_core)
 +		mpp_err("No core reset resource define\n");
 +
@@ -24318,6 +24330,8 @@ index 0000000000000000000000000000000000000000..1e1a1bcccc84deb3c5d2ef5b39381879
 +		mpp_safe_unreset(enc->rst_core);
 +		mpp_pmu_idle_request(mpp, false);
 +	}
++	if (ret && !(enc->rst_a && enc->rst_h && enc->rst_core))
++		return ret;
 +
 +	set_bit(mpp->core_id, &queue->core_idle);
 +

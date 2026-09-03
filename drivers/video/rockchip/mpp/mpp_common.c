@@ -784,6 +784,7 @@ out_unlock:
 int mpp_dev_reset(struct mpp_dev *mpp)
 {
 	int ret;
+	int reset_ret = 0;
 
 	dev_info(mpp->dev, "resetting...\n");
 
@@ -807,7 +808,7 @@ int mpp_dev_reset(struct mpp_dev *mpp)
 	atomic_set(&mpp->reset_request, 0);
 
 	if (mpp->hw_ops->reset)
-		mpp->hw_ops->reset(mpp);
+		reset_ret = mpp->hw_ops->reset(mpp);
 
 	/* Note: if the domain does not change, iommu attach will be return
 	 * as an empty operation. Therefore, force to close and then open,
@@ -826,6 +827,8 @@ int mpp_dev_reset(struct mpp_dev *mpp)
 
 	dev_info(mpp->dev, "reset done\n");
 
+	if (reset_ret)
+		return reset_ret;
 	return ret;
 }
 
