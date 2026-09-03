@@ -19,6 +19,7 @@ ROOT: Final = Path(__file__).resolve().parents[1]
 @dataclass(frozen=True, slots=True)
 class Sources:
     common: str
+    iommu: str
     rkvenc: str
     service: str
 
@@ -43,6 +44,18 @@ def optional_between(source: str, start: str, end: str) -> str:
 
 def ordered(source: str, first: str, second: str) -> bool:
     return first in source and second in source and source.index(first) < source.index(second)
+
+
+def irqsave_blocks_are_atomic(source: str) -> bool:
+    lines = source.splitlines()
+    for index, line in enumerate(lines):
+        if "spin_lock_irqsave(" not in line:
+            continue
+        tail = lines[index:]
+        end = next((offset for offset, candidate in enumerate(tail) if "spin_unlock_irqrestore(" in candidate), len(tail))
+        if any("mutex_lock(" in candidate for candidate in tail[:end]):
+            return False
+    return True
 
 
 def evaluate_0014(sources: Sources) -> tuple[Result, ...]:
@@ -84,13 +97,21 @@ def evaluate_0015(sources: Sources) -> tuple[Result, ...]:
     )
 
 
-EVALUATORS: Final = {"0014": evaluate_0014, "0015": evaluate_0015}
+def evaluate_0019(sources: Sources) -> tuple[Result, ...]:
+    return (
+        Result("worker never takes a mutex under spin_lock_irqsave", irqsave_blocks_are_atomic(sources.common) and irqsave_blocks_are_atomic(sources.rkvenc)),
+        Result("static dma-buf importer uses unlocked entry points", "dma_buf_map_attachment_unlocked(" in sources.iommu and "dma_buf_unmap_attachment_unlocked(" in sources.iommu and "dma_buf_map_attachment(" not in sources.iommu and "dma_buf_unmap_attachment(" not in sources.iommu),
+    )
+
+
+EVALUATORS: Final = {"0014": evaluate_0014, "0015": evaluate_0015, "0019": evaluate_0019}
 
 
 def load_sources() -> Sources:
     base = ROOT / "drivers/video/rockchip/mpp"
     return Sources(
         common=(base / "mpp_common.c").read_text(),
+        iommu=(base / "mpp_iommu.c").read_text(),
         rkvenc=(base / "mpp_rkvenc2.c").read_text(),
         service=(base / "mpp_service.c").read_text(),
     )
