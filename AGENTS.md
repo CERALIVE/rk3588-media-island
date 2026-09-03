@@ -185,7 +185,7 @@ remaining deferred inputs live in [`docs/CI.md`](docs/CI.md).
 | `pin` | Nothing — it *reads* the coordinates out of `kernel-pin.env` and emits them as job outputs |
 | `pin-equality` | The four mirrored `KERNEL_*` values equal the consumer's |
 | `cross-compile-modules` | Both pinned kernel objects resolve; the tree configures the way the device is configured; `vmlinux` supplies provider symbols, `modules_prepare` supplies the module linker script, and `vmlinux.symvers` is exposed as the `Module.symvers` external modpost requires; the two arm64 modules link with `-Werror` and the exact `.ko` set; no island `compatible` collides with a mainline `of_match_table` |
-| `kunit` | Reports `NO-KUNIT-CASES-YET` until todo 9 lands the first suite, then builds it against the pinned tree |
+| `kunit` | Builds the request-boundary and RKVENC2 fault/lifecycle suites against the pinned tree |
 | `static-analysis` | sparse with findings promoted to errors plus coccinelle over every selected island object; smatch remains conditional on a suitable runner package |
 | `upstream-watch` | Nothing — it opens or updates ONE issue and never edits a pin or dispatches a build |
 
@@ -198,8 +198,8 @@ harness self-test red; the transcript is [`docs/CI.md`](docs/CI.md) §3.
 **The source-dependent gates are live.** Series integrity reconstructs 66 source
 files and three integration payloads, shim/UAPI checks inspect the imported
 surface, sparse checks every selected object, and cross-compile asserts exactly
-`rk_vcodec.ko` plus `rga3.ko`. Only the future DT ownership hunks and KUnit cases
-remain explicit zero-input states; neither is silently reported as a pass.
+`rk_vcodec.ko` plus `rga3.ko`. Only the future DT ownership hunks remain an
+explicit zero-input state; they are not silently reported as a pass.
 
 **No workflow restates a pinned coordinate.** The kernel tag is read from
 `kernel-pin.env`; a literal tag anywhere in `.github/` is a regression, because a

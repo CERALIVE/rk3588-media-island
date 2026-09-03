@@ -143,7 +143,7 @@ configuration the device does not run proves the wrong thing.
 
 | Tier | Runs where | Proves |
 |---|---|---|
-| `tests/kunit/` | CI, no hardware | in-kernel logic units |
+| `tests/kunit/` | CI, no hardware | request-boundary and deterministic RKVENC2 fault/lifecycle logic units |
 | `tests/fuzz/` | CI, no hardware | the UAPI surface survives hostile input |
 | static analysis | CI, no hardware | sparse findings are fatal and coccinelle inspects every selected object; smatch remains conditional on a suitable runner package |
 | every gate's `--self-test` | CI, no hardware | each gate refuses a mutated tree AND accepts a correct one |

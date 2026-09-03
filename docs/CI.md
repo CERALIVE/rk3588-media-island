@@ -30,7 +30,7 @@ a pin bump would then leave CI proving the series against a kernel nobody ships
 | `pin` | nothing — it *reads* the coordinates out of `kernel-pin.env` and emits them |
 | `pin-equality` | the four mirrored `KERNEL_*` values equal the consumer repository's |
 | `cross-compile-modules` | the pinned tag resolves to both pinned objects; the tree configures the way the device is configured; `vmlinux` supplies provider symbols, `modules_prepare` supplies the final-link script, and configured `vmlinux.symvers` is exposed under the `Module.symvers` filename external modpost reads; exactly `rk_vcodec.ko` and `rga3.ko` link with `-Werror`; no island `compatible` collides with a mainline `of_match_table` |
-| `kunit` | `tests/kunit/` passes |
+| `kunit` | the request-boundary and RKVENC2 fault/lifecycle suites in `tests/kunit/` pass against the pinned kernel |
 | `static-analysis` | sparse inspects every selected composite object with findings promoted to errors, followed by coccinelle over both island directories; the plan's conditional smatch arm is not enabled without a suitable runner package |
 
 ### The kernel job, in the order it does things
@@ -88,12 +88,14 @@ non-vacuous:
 | `cross-compile-modules` | strict modpost links exactly `rk_vcodec.ko` and `rga3.ko` against the configured Linux 7.2 provider symbol table |
 | `static-analysis` | sparse checks all selected MPP/RGA objects with `-Wsparse-error`; coccinelle scans both directories |
 
-Two later-wave inputs remain deliberately absent and still say so rather than
+One later-wave input remains deliberately absent and still says so rather than
 claiming a pass:
 
 - `dt-ownership-lint` prints `NO-DT-YET` until todo 10 adds ownership hunks. Its
   pinned-mainline collision arm still runs in the kernel job.
-- `kunit` prints `0 tests. NO-KUNIT-CASES-YET` until todo 9 lands the first suite.
+
+KUnit is now non-vacuous: todo 9's request-boundary and deterministic fault
+controls run as real suites against the pinned kernel.
 
 ---
 
@@ -506,8 +508,8 @@ hold while the module build is skipped.
 
 1. **DT ownership is a later input.** Todo 8 intentionally carries no DT hunk;
    `NO-DT-YET` remains honest until todo 10 assigns compatible strings.
-2. **KUnit is a later input.** Its first real run needs a
-   `tests/kunit/.kunitconfig`; the job already points `kunit.py` at that directory.
+2. **KUnit is live.** Its repo-owned `.kunitconfig` runs the boundary and
+   fault/lifecycle suites against the pinned kernel.
 3. **Smatch is conditional.** The plan requires it when a suitable runner
    package is installable. This workflow currently gates sparse and coccinelle;
    it does not claim a smatch result.
