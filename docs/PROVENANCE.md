@@ -122,7 +122,6 @@ to name the donor directly.
 | `drivers/video/rockchip/mpp/compat/rockchip_pmu_idle.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/mpp/compat/rockchip_qos_compat.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/mpp/compat/soc/rockchip/rockchip_dmc.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
-| `drivers/video/rockchip/mpp/compat/soc/rockchip/rockchip_ipa.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/mpp/compat/soc/rockchip/rockchip_opp_select.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/mpp/compat/soc/rockchip/rockchip_system_monitor.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/mpp/compat/soc/rockchip/vsi_iommu.h` | CeraLive | — | FIRST-PARTY | Fail-closed/no-op compatibility surface for the intentionally omitted AV1-only provider. | `GPL-2.0` |
