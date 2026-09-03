@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.13"
+# dependencies = []
+# ///
+# ─── How to run ───
+# uv run scripts/check-mpp-hardening.py [--self-test]
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import Final
+
+ROOT: Final = Path(__file__).resolve().parents[1]
+
+
+@dataclass(frozen=True, slots=True)
+class Sources:
+    common: str
+    rkvenc: str
+    service: str
+
+
+@dataclass(frozen=True, slots=True)
+class Result:
+    name: str
+    passed: bool
+
+
+def between(source: str, start: str, end: str) -> str:
+    return source[source.index(start) : source.index(end, source.index(start))]
+
+
+def ordered(source: str, first: str, second: str) -> bool:
+    return first in source and second in source and source.index(first) < source.index(second)
+
+
+def evaluate(sources: Sources) -> tuple[Result, ...]:
+    deinit = between(sources.common, "void mpp_session_deinit(", "static void mpp_session_attach_workqueue")
+    reset = between(sources.common, "case MPP_CMD_RESET_SESSION:", "case MPP_CMD_TRANS_FD_TO_IOVA:")
+    worker = between(sources.common, "static void mpp_task_worker_default(", "static int mpp_wait_result_default")
+    wait = between(sources.common, "static int mpp_wait_result_default(", "static int mpp_wait_result(")
+    detach = between(sources.common, "static void mpp_detach_workqueue(", "static int mpp_check_cmd_v1")
+    attach_ccu = between(sources.rkvenc, "static int rkvenc_attach_ccu(", "static void rkvenc_detach_ccu(")
+    remove = between(sources.rkvenc, "static void rkvenc_remove(", "static void rkvenc_shutdown(")
+    return (
+        Result("fwport-0040 unlink-before-private-teardown", ordered(deinit, "list_del_init(&session->service_link)", "session->deinit(session)")),
+        Result("fwport-0041 clear-dma-before-reset destroy", ordered(reset, "session->dma = NULL", "mpp_dma_session_destroy(dma)")),
+        Result("fwport-0052 worker-device guard", "if (unlikely(!mpp))" in worker and "mpp_taskqueue_pop_pending(queue, task)" in worker),
+        Result("fwport-0053 wait-device guard", "if (unlikely(!mpp))" in wait and "mpp_session_pop_pending(session, task)" in wait),
+        Result("queue publication removed before device detach", ordered(detach, "queue->cores[mpp->core_id] = NULL", "mpp->queue = NULL")),
+        Result("failed CCU publication is unlinked", ordered(attach_ccu, "err_detach_core_locked:", "list_del_rcu(&enc->core_link)")),
+        Result("service lifetime pins open files", "srv->mpp_cdev.owner = THIS_MODULE" in sources.service and ".suppress_bind_attrs = true" in sources.service),
+        Result("IRQ quiesced before state teardown", ordered(remove, "devm_free_irq", "mpp_dev_remove")),
+    )
+
+
+def load_sources() -> Sources:
+    base = ROOT / "drivers/video/rockchip/mpp"
+    return Sources(
+        common=(base / "mpp_common.c").read_text(),
+        rkvenc=(base / "mpp_rkvenc2.c").read_text(),
+        service=(base / "mpp_service.c").read_text(),
+    )
+
+
+def report(results: tuple[Result, ...]) -> int:
+    passed = sum(result.passed for result in results)
+    for result in results:
+        print(f"{'PASS' if result.passed else 'FAIL'}: {result.name}")
+    print(f"mpp-hardening-0014: pass:{passed} fail:{len(results) - passed} total:{len(results)}")
+    return 0 if passed == len(results) else 1
+
+
+def self_test() -> int:
+    sources = load_sources()
+    baseline = evaluate(sources)
+    if len(baseline) != 8:
+        return 1
+    mutations = (
+        replace(sources, common=sources.common.replace("list_del_init(&session->service_link);", "", 1)),
+        replace(sources, common=sources.common.replace("session->dma = NULL;", "")),
+        replace(sources, service=sources.service.replace("srv->mpp_cdev.owner = THIS_MODULE;", "", 1)),
+    )
+    for mutation in mutations:
+        if all(result.passed for result in evaluate(mutation)):
+            return 1
+    print("mpp-hardening self-test: pass:3 fail:0 total:3")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--self-test", action="store_true")
+    args = parser.parse_args()
+    return self_test() if args.self_test else report(evaluate(load_sources()))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -77,6 +77,7 @@ jobs:
             scripts/verify-series-parity.py \
             scripts/check-compat-shims.py \
             scripts/check-dt-ownership.py \
+            scripts/check-mpp-hardening.py \
             scripts/check-upstream-freshness.py; do
             printf '=== %s --self-test ===\n' "$tool"
             python3 "$tool" --self-test || rc=1
