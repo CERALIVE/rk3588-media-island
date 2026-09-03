@@ -463,12 +463,17 @@ jobs:
           source kernel-pin.env
           git clone --depth 1 --single-branch --branch "$KERNEL_TAG" \
             "$KERNEL_MIRROR" .work/linux
-          for dir in $ISLAND_MODULE_DIRS; do
-            [ -d "$dir" ] && cp -a "$dir" ".work/linux/$(dirname "$dir")/"
-          done
+          mkdir -p .work/linux/drivers/video/rockchip/mpp
+          cp drivers/video/rockchip/mpp/mpp_request_bounds.h \
+            .work/linux/drivers/video/rockchip/mpp/
           cp -a tests/kunit ".work/linux/drivers/video/rockchip/"
+          printf '\nsource "drivers/video/rockchip/kunit/Kconfig"\n' \
+            >>.work/linux/drivers/video/Kconfig
+          printf '\nobj-y += rockchip/kunit/\n' \
+            >>.work/linux/drivers/video/Makefile
           ./.work/linux/tools/testing/kunit/kunit.py run \
-            --kunitconfig=tests/kunit --build_dir=.work/kunit
+            --kunitconfig="$PWD/tests/kunit" \
+            --build_dir="$PWD/.work/kunit"
 
   static-analysis:
     name: static analysis
