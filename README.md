@@ -43,9 +43,11 @@ island tag  ──▶  rk3588-kernel-patches `island/` lane bump
                           ──▶  image build  ──▶  device
 ```
 
-1. **Island release.** A tag triggers the release workflow, which regenerates the
-   series from source, byte-compares it against the checked-in `patches/`, and
-   publishes it as an immutable release asset with its checksum.
+1. **Island release.** An owner-approved dispatch from canonical `main`
+   regenerates the series from source, byte-compares it against the checked-in
+   `patches/`, then atomically claims the requested tag and publishes the
+   immutable release asset with its checksum. The workflow has no tag trigger:
+   an existing tag is refused rather than used as release input.
 2. **Consumer lane bump.** `rk3588-kernel-patches` consumes that asset
    **byte-preserved** into its `island/` lane. Provenance on an `island/` member
    is its own variant naming the island tag, commit and asset digest — never an
