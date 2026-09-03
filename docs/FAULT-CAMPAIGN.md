@@ -1,5 +1,13 @@
 # RKVENC fault campaign
 
+The malformed-ioctl expectations are ported byte-for-byte in
+`tests/expected-errno.tsv`; `tests/board/rkvenc-fault-campaign.sh --self-test`
+pins every case and scores the known `valid-after-failures` red separately. That
+case remains expected `OK` in the table, but the board harness is expected to
+observe `EINVAL`: its BASE-only write omits the PIC class required to identify
+the task format, so `rkvenc_task_get_format()` correctly refuses it before
+dispatch. A green aggregate `--all-malformed` is therefore not claimed.
+
 This ledger records whether each CeraLive hardening intent was already present
 in the imported yisding source or required a CeraLive fix. Board-only results
 remain pending until the later board gate; workstation KUnit and script
