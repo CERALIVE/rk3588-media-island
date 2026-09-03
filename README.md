@@ -92,6 +92,7 @@ rk3588-media-island/
 └── docs/
     ├── CI.md               # what each CI job asserts + the mutation transcripts
     ├── COMPAT.md           # shim + external-symbol inventory; ALSO the shim-lint input
+    ├── KEEP-STUB.md        # deliberate no-op contracts + reopening conditions
     ├── OWNERSHIP.md        # silicon ownership table + the one-compatible rule
     ├── REFERENCES.md       # every pinned coordinate
     ├── PROVENANCE.md       # per-file import ledger

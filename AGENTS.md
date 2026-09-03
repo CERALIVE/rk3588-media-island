@@ -58,6 +58,7 @@ rk3588-media-island/
 │   └── fuzz/                    # UAPI fuzz targets
 └── docs/
     ├── COMPAT.md                # shim + external-symbol inventory; ALSO the shim-lint input
+    ├── KEEP-STUB.md             # deliberate stubs and their reopening conditions
     ├── OWNERSHIP.md             # silicon ownership table; ALSO the dt-ownership-lint input
     ├── REFERENCES.md            # every pinned coordinate
     ├── PROVENANCE.md            # per-file import ledger

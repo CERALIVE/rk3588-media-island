@@ -162,6 +162,43 @@ staging paths both pass the scheduler device's normalized maximum to
 `sg_alloc_table_from_pages_segment()`, so neither silently falls back to a
 page-sized or universal segment policy. KUnit's 1 GiB case locks that limit.
 
+## Todo-54 QUICK-WIN completion ledger
+
+Every QUICK-WIN row above resolves to one of these landed commits. Symbols are
+listed individually so the promotion column has no implicit wildcard:
+
+| symbol | implementation commit |
+|---|---|
+| `compat/soc/rockchip/rockchip_iommu.h` | `b88a8eb` — provider media hooks imported as real integration |
+| `compat/soc/rockchip/rockchip_ipa.h` | `d92ba95` — deleted |
+| `soc/rockchip/rockchip_iommu.h` | `b88a8eb` — real provider header and exports |
+| `soc/rockchip/rockchip_ipa.h` | `d92ba95` — deleted |
+| `rockchip_iommu_disable` | `b88a8eb` |
+| `rockchip_iommu_enable` | `b88a8eb` |
+| `rockchip_iommu_enable_irq_delivery` | `b88a8eb` |
+| `rockchip_iommu_force_reset` | `b88a8eb` |
+| `rockchip_iommu_is_enabled` | `b88a8eb` |
+| `rockchip_iommu_mask_irq` | `b88a8eb` |
+| `rockchip_iommu_prepare_irq` | `b88a8eb` |
+| `rockchip_iommu_set_fault_handler` | `b88a8eb` |
+| `rockchip_iommu_sync_fault_handler` | `b88a8eb` |
+| `rockchip_iommu_unmask_irq` | `b88a8eb` |
+| `rockchip_ipa_get_static_power` | `d92ba95` — deleted with its dead header |
+| `rockchip_ipa_power_model_init` | `d92ba95` — deleted with its dead header |
+| `iommu_dma_get_iova_domain` | `a10e5bc` — narrow real IOVA-provider export |
+| `reserve_iova_exclusive` | `b88a8eb` — exclusive reservation provider export |
+| `rga_fence_context_init` | `22d9702` — mainline dma-fence implementation always linked |
+| `rga_fence_context_remove` | `22d9702` |
+| `rga_dma_fence_alloc` | `22d9702` |
+| `rga_dma_fence_get_fd` | `22d9702` |
+| `rga_get_dma_fence_from_fd` | `22d9702` |
+| `rga_dma_fence_wait` | `22d9702` |
+| `rga_dma_fence_add_callback` | `22d9702` |
+| `rga_dma_fence_remove_callback` | `22d9702` |
+| `rga_dma_fence_put` | `22d9702` |
+| `rga_dma_fence_signal` | `22d9702` |
+| `rga_dma_fence_get_status` | `22d9702` |
+
 ## A14 licence inventory
 
 The repository policy says Yi Ding's kernel-source additions are
@@ -206,20 +243,20 @@ the later repository bootstrap.
 
 ## Completeness and count reconciliation
 
-The exact required lexical command (extended only to recurse and normalize the
-opening parenthesis) produced **33** unique `rockchip_*` names; every one has an
-individual row above. Four are explicit lexical-census-only entries
-(`rockchip_dmcfreq_lock_nested`, both `rockchip_ipa_*`, and
-`rockchip_pmu_block`).
+The original lexical command produced **33** unique `rockchip_*` names. Todo 54
+deleted the two dead `rockchip_ipa_*` definitions, so the maintained source now
+contains **31**; their two historical rows remain as the auditable deletion
+record. The surviving lexical-census-only entries are
+`rockchip_dmcfreq_lock_nested` and `rockchip_pmu_block`.
 
-The source has **8** unique `<soc/rockchip/...>` includes:
-`pm_domains.h`, `rockchip_dmc.h`, `rockchip_iommu.h`, `rockchip_ipa.h`,
+The original source had **8** unique `<soc/rockchip/...>` includes:
+`pm_domains.h`, `rockchip_dmc.h`, `rockchip_iommu.h`, historical `rockchip_ipa.h`,
 `rockchip_opp_select.h`, `rockchip_sip.h`, `rockchip_system_monitor.h`, and
 `vsi_iommu.h`; each has a header row. Patch `0001` created **8** compat headers;
 the replayed tree has **7** because `rockchip_iommu.h` graduated into the real
-provider contract in `0005`. The island adds the eighth current compat header,
-the deliberately disabled VSI provider branch above. The historical Rockchip
-shim and current real header both have rows, deliberately.
+provider contract in `0005`. The island added the disabled VSI provider branch
+as an eighth current compat header; todo 54 then deleted dead `rockchip_ipa.h`,
+leaving seven. Historical deleted and current real headers both retain rows.
 
 The additional non-`rockchip_*` external dependency census is closed by one
 `sip_smc_vpu_reset` row, seven `vsi_iommu_*` rows, two IOVA-provider rows, and
@@ -229,10 +266,12 @@ phantom row was created. MPP procfs and the RGA debugger are imported internal
 code, not shims or unresolved externs; todo 54 makes them required-on rather
 than classifying them here as dependencies.
 
-Expected Markdown data-row count is therefore **71** = 17 header-identity rows
+Expected Markdown data-row count is therefore **73** = 17 header-identity rows
 (8 original compat paths plus all 8 current `<soc/rockchip/...>` include
 spellings plus the island-local VSI shim; four include spellings resolve to
-compat files and are intentionally shown both ways) + 33 required Rockchip lexical symbols + 1 SIP + 7 VSI + 2 IOVA + 11 fence rows. This exceeds
+compat files and are intentionally shown both ways) + 33 original Rockchip
+lexical symbols + 1 SIP + 7 VSI + 2 IOVA + 11 fence rows + 2 RGA power-helper
+rows. This exceeds
 the 33-symbol grep denominator for the documented reasons above; `wc -l` alone
 is not used to confuse document lines with table rows.
 
