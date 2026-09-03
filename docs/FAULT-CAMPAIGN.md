@@ -16,14 +16,30 @@ self-tests are not presented as hardware evidence.
 | `0016` request shape and result-window bounds | **RED → fix → GREEN** | `fwport-0054`, local commit `4eb6e05`, stable patch-id `58dbb9c8f035bde19094933b48d1dbc7b3df749e`; `fwport-0076`, local commit `e83b415`, stable patch-id `2d2b3598b8213d71cc692151d2bc12c4fe1f9182` | `mpp_req_shape_rejects_*`, `mpp_req_result_window_uses_actual_buffer_test`, and decoder/JPGDEC boundary cases in `tests/kunit/mpp_request_bounds_test.c` |
 | `0019a` worker lock context | **GREEN-ON-IMPORT** | `fwport-0001`, stable patch-id `041c151608227cc55845fba2c0ad33cb378dbbf0`, imports the MPP queue architecture with pending acquisition before `running_lock`; no compiled RKVENC2 worker takes a mutex inside an irqsave spin section | `scripts/check-mpp-hardening.py --intent 0019` passes the irqsave-block scan; moving `pending_lock` inside `running_lock` on throwaway branch `mutation/0019-proof` made this row RED at 1/2 |
 | `0019b` static dma-buf importer API | **GREEN-ON-IMPORT** | `fwport-0001`, stable patch-id `041c151608227cc55845fba2c0ad33cb378dbbf0`, adds the MPP importer with `dma_buf_map_attachment_unlocked()` / `dma_buf_unmap_attachment_unlocked()` | The same test passes the production importer scan; reverting those exact member lines to the reservation-lock-requiring entry points on `mutation/0019-proof` made this row RED at 1/2 |
+| `0020` service recovery after one-core unbind/rebind | **RED → fix → GREEN** | The imported service has no terminal LIVE/DEAD state, so a successful probe can republish naturally, but core removal left `sub_devices[]` and `hw_support` pointing at the departing devm allocation instead of creating a safe reversible absence. | `scripts/check-mpp-hardening.py --intent 0020` was RED at 1/3 and is GREEN at 3/3 after `cb9e98b`; remove now withdraws only the matching core before IRQ/state teardown, while the existing successful probe path republishes it under the same service lock. |
 | `0022` class coverage, element and request-count bounds | **RED → fix → GREEN** | `fwport-0062`, local commit `6ed2da0`, stable patch-id `3e228bc54c1b53228a2cf98f53a840edf163962f`; `fwport-0076` as above | Explicit `mpp_req_hevc_sqi_scl_span_test` accepts the 3,228-byte SQI+SCL programme with its 24-byte map hole; `mpp_req_class_overrun_rejected_test` requires `-EINVAL`; element/count cases remain permanent |
 | `0026`-class decoder/JPGDEC bounds | **RED → fix → GREEN** | Shared request validation from `fwport-0054`/`0076`; no claim that HDMI-RX patch `0026` is an MPP change | `mpp_req_rkvdec2_bounds_test` and `mpp_req_jpgdec_bounds_test` exercise the production helper used by `mpp_check_req()` |
 
-Rows for `0020`–`0021` are added with their
+Rows for `0021` are added with their
 terminal evidence by the board/lifecycle part of this campaign; an absent row
 is not a pass.
 
 ## Test-first transcript
+
+Intent `0020` preserved the imported architecture's naturally reversible
+service (there is no terminal state to reset), but exposed its stale publication
+during the unbound interval:
+
+```text
+FAIL: core unbind withdraws service publication
+FAIL: RKVENC2 remove unpublishes before teardown
+PASS: successful rebind republishes service
+mpp-hardening-0020: pass:1 fail:2 total:3
+```
+
+After `cb9e98b`, the same command reported
+`mpp-hardening-0020: pass:3 fail:0 total:3`. The complete KUnit run remained
+green at `pass:13 fail:0 total:13`.
 
 Both independent `0019` defects are GREEN-ON-IMPORT through
 `fwport-0001`. The permanent source-contract test reported:
