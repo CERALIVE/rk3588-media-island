@@ -18,8 +18,11 @@
 
 CROSS_COMPILE ?= aarch64-linux-gnu-
 CC            := $(CROSS_COMPILE)gcc
+CXX           := $(CROSS_COMPILE)g++
 CFLAGS        := -std=c11 -Wall -Wextra -Werror -O2 -I.
+CXXFLAGS      := -std=c++17 -Wall -Wextra -Werror -O2
 OUT           ?= build
+LIBRGA_PREFIX ?=
 
 PROBES := probe-mpp-uapi probe-rga-uapi librga-compat-probe
 
@@ -27,7 +30,7 @@ PROBES := probe-mpp-uapi probe-rga-uapi librga-compat-probe
 # loader and nothing else. The other two speak ioctls only.
 LDLIBS_librga-compat-probe := -ldl
 
-.PHONY: all clean selftest hostbuild
+.PHONY: all async-fence-probe clean selftest hostbuild
 
 all: $(addprefix $(OUT)/,$(PROBES))
 
@@ -36,6 +39,17 @@ $(OUT):
 
 $(OUT)/%: %.c | $(OUT)
 	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS_$*)
+
+async-fence-probe: | $(OUT)
+	@test -n "$(LIBRGA_PREFIX)" || { \
+	  printf '%s\n' 'LIBRGA_PREFIX must name a librga SDK root'; exit 2; \
+	}
+	$(CXX) $(CXXFLAGS) -I$(LIBRGA_PREFIX)/include \
+	  -L$(LIBRGA_PREFIX)/libs/Linux/gcc-aarch64 \
+	  -Wl,-rpath,'$$ORIGIN' -o $(OUT)/librga-async-probe \
+	  librga-async-probe.cpp -lrga
+	$(CC) $(CFLAGS) -fPIC -shared -o $(OUT)/librga-ioctl-trace.so \
+	  librga-ioctl-trace.c -ldl
 
 # hostbuild — the same sources through the host compiler, which is what the
 # --self-test legs execute on a dev host with no board attached.

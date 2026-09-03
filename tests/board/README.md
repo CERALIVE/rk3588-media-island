@@ -25,6 +25,7 @@ accepts **both** layouts, so the move is a `git mv` with no edits.
 | `probe-mpp-uapi.c` | which MPP clients does the running kernel actually expose, and what does each answer? | 3(a) decode truth |
 | `probe-rga-uapi.c` | is there a multi_rga character device, and can it blit an NV12 dma-buf? | 3(b) copy census, RGA flip |
 | `librga-compat-probe.c` | what does librga's "compatibility mode" really do with no `/dev/rga`? | A2 |
+| `librga-async-probe.cpp` + `librga-ioctl-trace.c` | does pinned librga construct a fence-bearing `IM_ASYNC` request? | todo 54 fence verdict |
 | `sample-cores.sh` | did the second encoder core run, and at what per-process fps? | 3(d) dual-core |
 | `count-journal.sh` | how many copy/fallback events happened in a measured window? | 3(b) copy census |
 | `fd-trace.sh` | did a buffer cross this boundary, or was it copied? | 3(b) copy census |
@@ -80,6 +81,19 @@ The C probes cross-build for the device with the target-suite toolchain:
 
 ```bash
 make CROSS_COMPILE=aarch64-linux-gnu- clean all
+```
+
+The async-fence probe is compiled against the exact SDK being qualified rather
+than a host development package. The preload shim substitutes `/dev/null` for
+`/dev/rga`, logs the request bytes before the expected `-ENOTTY`, and therefore
+measures librga's request construction without claiming a driver result:
+
+```bash
+make CROSS_COMPILE=aarch64-linux-gnu- \
+  LIBRGA_PREFIX=/path/to/airockchip-librga-v1.10.0 async-fence-probe
+LD_LIBRARY_PATH=build \
+LD_PRELOAD="$PWD/build/librga-ioctl-trace.so" \
+  ./build/librga-async-probe
 ```
 
 `-Wall -Wextra -Werror` is not decoration. Every UAPI struct in `uapi/` carries
