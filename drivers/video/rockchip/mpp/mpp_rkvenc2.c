@@ -3765,6 +3765,7 @@ static void rkvenc_remove(struct platform_device *pdev)
 		struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
 
 		dev_info(dev, "remove core\n");
+		mpp_dev_unregister_srv(mpp, mpp->srv);
 		rkvenc_release_irq(pdev, mpp);
 		rkvenc2_free_rcbbuf(pdev, enc);
 		rkvenc_detach_ccu(enc);
@@ -3775,6 +3776,7 @@ static void rkvenc_remove(struct platform_device *pdev)
 		struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
 
 		dev_info(dev, "remove device\n");
+		mpp_dev_unregister_srv(mpp, mpp->srv);
 		rkvenc_release_irq(pdev, mpp);
 		rkvenc2_free_rcbbuf(pdev, enc);
 		mpp_dev_remove(mpp);

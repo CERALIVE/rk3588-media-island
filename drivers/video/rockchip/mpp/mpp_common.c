@@ -2864,10 +2864,24 @@ int mpp_dev_register_srv(struct mpp_dev *mpp, struct mpp_service *srv)
 {
 	enum MPP_DEVICE_TYPE device_type = mpp->var->device_type;
 
+	mutex_lock(&srv->session_lock);
 	srv->sub_devices[device_type] = mpp;
 	set_bit(device_type, &srv->hw_support);
+	mutex_unlock(&srv->session_lock);
 
 	return 0;
+}
+
+void mpp_dev_unregister_srv(struct mpp_dev *mpp, struct mpp_service *srv)
+{
+	enum MPP_DEVICE_TYPE device_type = mpp->var->device_type;
+
+	mutex_lock(&srv->session_lock);
+	if (srv->sub_devices[device_type] == mpp) {
+		srv->sub_devices[device_type] = NULL;
+		clear_bit(device_type, &srv->hw_support);
+	}
+	mutex_unlock(&srv->session_lock);
 }
 
 irqreturn_t mpp_dev_irq(int irq, void *param)

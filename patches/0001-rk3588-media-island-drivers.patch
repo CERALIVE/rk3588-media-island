@@ -3250,10 +3250,10 @@ index 0000000000000000000000000000000000000000..39c63f49a0f3a6407fe1ca18bdf23241
 +};
 diff --git a/drivers/video/rockchip/mpp/mpp_common.c b/drivers/video/rockchip/mpp/mpp_common.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..2702fd10631e39d6afd8103ef9c32d74b2686d1a
+index 0000000000000000000000000000000000000000..0caf76dd0234e27199b252ddc110d3ed0315ff2a
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_common.c
-@@ -0,0 +1,3255 @@
+@@ -0,0 +1,3269 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -6120,10 +6120,24 @@ index 0000000000000000000000000000000000000000..2702fd10631e39d6afd8103ef9c32d74
 +{
 +	enum MPP_DEVICE_TYPE device_type = mpp->var->device_type;
 +
++	mutex_lock(&srv->session_lock);
 +	srv->sub_devices[device_type] = mpp;
 +	set_bit(device_type, &srv->hw_support);
++	mutex_unlock(&srv->session_lock);
 +
 +	return 0;
++}
++
++void mpp_dev_unregister_srv(struct mpp_dev *mpp, struct mpp_service *srv)
++{
++	enum MPP_DEVICE_TYPE device_type = mpp->var->device_type;
++
++	mutex_lock(&srv->session_lock);
++	if (srv->sub_devices[device_type] == mpp) {
++		srv->sub_devices[device_type] = NULL;
++		clear_bit(device_type, &srv->hw_support);
++	}
++	mutex_unlock(&srv->session_lock);
 +}
 +
 +irqreturn_t mpp_dev_irq(int irq, void *param)
@@ -6511,10 +6525,10 @@ index 0000000000000000000000000000000000000000..2702fd10631e39d6afd8103ef9c32d74
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_common.h b/drivers/video/rockchip/mpp/mpp_common.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..96b318a9822ee66257c79b259ad4c3e1734abb56
+index 0000000000000000000000000000000000000000..73b8a487246fed8e5cfc69c3f54fcbf514378b54
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_common.h
-@@ -0,0 +1,890 @@
+@@ -0,0 +1,891 @@
 +/* SPDX-License-Identifier: (GPL-2.0+ OR MIT) */
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -7200,6 +7214,7 @@ index 0000000000000000000000000000000000000000..96b318a9822ee66257c79b259ad4c3e1
 +int mpp_dev_remove(struct mpp_dev *mpp);
 +void mpp_dev_shutdown(struct platform_device *pdev);
 +int mpp_dev_register_srv(struct mpp_dev *mpp, struct mpp_service *srv);
++void mpp_dev_unregister_srv(struct mpp_dev *mpp, struct mpp_service *srv);
 +
 +int mpp_power_on(struct mpp_dev *mpp);
 +int mpp_power_off(struct mpp_dev *mpp);
@@ -21646,10 +21661,10 @@ index 0000000000000000000000000000000000000000..5ab7441b178f7359ee049a13368d79a4
 +};
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc2.c b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..9922eb4a4ae386f584057b6d065b9f9703b5c8f9
+index 0000000000000000000000000000000000000000..09a10a8f0ae176414e54c3aa637a84920951646a
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
-@@ -0,0 +1,3802 @@
+@@ -0,0 +1,3804 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
@@ -25417,6 +25432,7 @@ index 0000000000000000000000000000000000000000..9922eb4a4ae386f584057b6d065b9f97
 +		struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
 +
 +		dev_info(dev, "remove core\n");
++		mpp_dev_unregister_srv(mpp, mpp->srv);
 +		rkvenc_release_irq(pdev, mpp);
 +		rkvenc2_free_rcbbuf(pdev, enc);
 +		rkvenc_detach_ccu(enc);
@@ -25427,6 +25443,7 @@ index 0000000000000000000000000000000000000000..9922eb4a4ae386f584057b6d065b9f97
 +		struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
 +
 +		dev_info(dev, "remove device\n");
++		mpp_dev_unregister_srv(mpp, mpp->srv);
 +		rkvenc_release_irq(pdev, mpp);
 +		rkvenc2_free_rcbbuf(pdev, enc);
 +		mpp_dev_remove(mpp);
