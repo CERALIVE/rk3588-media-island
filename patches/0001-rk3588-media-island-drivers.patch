@@ -41743,7 +41743,7 @@ index 0000000000000000000000000000000000000000..f100894dff638ed3a915ceee19d0aed4
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_debugger.c b/drivers/video/rockchip/rga3/rga_debugger.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..239992b414d89f8a0edc44c1ad0a8fd8bc1f3485
+index 0000000000000000000000000000000000000000..cdaa521583f091ac7b0122aecbe9f18e7b8c8018
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_debugger.c
 @@ -0,0 +1,1068 @@
@@ -41784,7 +41784,7 @@ index 0000000000000000000000000000000000000000..239992b414d89f8a0edc44c1ad0a8fd8
 +int RGA_DEBUG_CHECK_MODE;
 +int RGA_DEBUG_INTERNAL_MODE;
 +int RGA_DEBUG_NONUSE;
-+int RGA_DEBUG_DEBUG_MODE;
++static int RGA_DEBUG_DEBUG_MODE;
 +int RGA_DEBUG_DUMP_IMAGE;
 +
 +#ifdef CONFIG_NO_GKI
