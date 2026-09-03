@@ -56,13 +56,17 @@ jobs:
       - name: Install what the board-harness self-tests execute
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ffmpeg
+          sudo apt-get install -y --no-install-recommends device-tree-compiler ffmpeg
 
       - name: Every board harness proves itself against its own fixtures
         run: |
           set -euo pipefail
           rc=0
           for script in tests/board/*.sh; do
+            printf '=== %s --self-test ===\n' "$script"
+            bash "$script" --self-test || rc=1
+          done
+          for script in tests/dt/*.sh; do
             printf '=== %s --self-test ===\n' "$script"
             bash "$script" --self-test || rc=1
           done
@@ -282,7 +286,8 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            bc bison ccache flex gcc-aarch64-linux-gnu libelf-dev libssl-dev
+            bc bison ccache device-tree-compiler flex gcc-aarch64-linux-gnu \
+            libelf-dev libssl-dev
 
       - name: Cache ccache
         uses: actions/cache@v6
@@ -418,6 +423,20 @@ jobs:
             echo "::error::expected ${expected[*]}, got ${modules[*]}"
             exit 1
           }
+
+      - name: Build both board DTBs and prove device ownership
+        env:
+          ARCH: ${{ needs.pin.outputs.arch }}
+          CROSS_COMPILE: ${{ needs.pin.outputs.cross_compile }}
+        run: |
+          set -euo pipefail
+          export PATH="/usr/lib/ccache:$PATH"
+          make -C .work/linux -j"$(nproc)" \
+            rockchip/rk3588-rock-5b-plus.dtb \
+            rockchip/rk3588-orangepi-5-plus.dtb
+          tests/dt/check-dtb-ownership.sh \
+            .work/linux/arch/arm64/boot/dts/rockchip/rk3588-rock-5b-plus.dtb \
+            .work/linux/arch/arm64/boot/dts/rockchip/rk3588-orangepi-5-plus.dtb
 
       # The second arm of dt-ownership-lint, run where the pinned tree already
       # is: no island compatible string may appear in a mainline of_match_table.
