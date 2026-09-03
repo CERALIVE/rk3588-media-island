@@ -14,6 +14,7 @@
 #include <linux/cdev.h>
 #include <linux/clk.h>
 #include <linux/dma-buf.h>
+#include <linux/debugfs.h>
 #include <linux/kfifo.h>
 #include <linux/types.h>
 #include <linux/time.h>
@@ -279,6 +280,18 @@ struct mpp_load_info {
 	u32 utilization_frac;
 };
 
+struct mpp_telemetry {
+	atomic64_t busy_ns;
+	atomic64_t tasks;
+	atomic64_t errors;
+	atomic64_t resets;
+};
+
+struct mpp_session_telemetry {
+	atomic64_t tasks;
+	atomic64_t bytes;
+};
+
 struct mpp_dev {
 	struct device *dev;
 	const struct mpp_dev_var *var;
@@ -338,9 +351,12 @@ struct mpp_dev {
 	u32 timing_check;
 	u32 load_en;
 	struct mpp_load_info load_info;
+	struct mpp_telemetry telemetry;
+	struct dentry *telemetry_dir;
 };
 
 struct mpp_session {
+	struct kref telemetry_ref;
 	enum MPP_DEVICE_TYPE device_type;
 	u32 index;
 	/* the session related device private data */
@@ -388,6 +404,8 @@ struct mpp_session {
 	struct list_head list_msgs;
 	struct list_head list_msgs_idle;
 	spinlock_t lock_msgs;
+	struct mpp_session_telemetry telemetry;
+	struct dentry *telemetry_dir;
 };
 
 /* task state in work thread */
@@ -405,6 +423,8 @@ enum mpp_task_state {
 	TASK_STATE_ABORT	= 9,
 	TASK_STATE_ABORT_READY	= 10,
 	TASK_STATE_PROC_DONE	= 11,
+	TASK_STATE_ERROR_REPORTED = 12,
+	TASK_STATE_DONE_REPORTED = 13,
 
 	/* timing debug state */
 	TASK_TIMING_CREATE	= 16,
@@ -471,6 +491,8 @@ struct mpp_task {
 	/* hw cycles */
 	u32 hw_cycles;
 	u32 hw_time;
+	ktime_t telemetry_start;
+	u64 bytes;
 };
 
 struct mpp_taskqueue {
@@ -562,6 +584,10 @@ struct mpp_service {
 
 	/* bit mask for iommu shared */
 	u32 iommu_shared_mask;
+	struct dentry *telemetry_root;
+	struct dentry *telemetry_cores;
+	struct dentry *telemetry_sessions;
+	atomic_t telemetry_queue_depth;
 };
 
 unsigned long mpp_service_visible_hw_support(struct mpp_service *srv);
@@ -675,6 +701,8 @@ void mpp_reg_show_range(struct mpp_dev *mpp, u32 start, u32 end);
 void mpp_free_task(struct kref *ref);
 
 void mpp_session_deinit(struct mpp_session *session);
+bool mpp_session_get(struct mpp_session *session);
+void mpp_session_put(struct mpp_session *session);
 void mpp_session_cleanup_detach(struct mpp_taskqueue *queue,
 				struct kthread_work *work);
 
@@ -723,6 +751,8 @@ int mpp_clk_set_rate(struct mpp_clk_info *clk_info,
 		     enum MPP_CLOCK_MODE mode);
 void mpp_dev_load(struct mpp_dev *mpp, struct mpp_task *mpp_task);
 void mpp_dev_load_clear(struct mpp_dev *mpp);
+void mpp_telemetry_add_session(struct mpp_session *session);
+void mpp_telemetry_remove_session(struct mpp_session *session);
 
 static inline int mpp_write(struct mpp_dev *mpp, u32 reg, u32 val)
 {

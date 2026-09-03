@@ -1,0 +1,8 @@
+kworker/0:1-22 [000] .... 10.000001: mpp_task_queued: session=3 task=41 client=16
+kworker/0:1-22 [000] .... 10.000002: mpp_core_selected: task=41 core=0 idle=0x3
+kworker/0:1-22 [000] .... 10.000003: mpp_task_started: core=0 task=41
+kworker/0:1-22 [000] .... 10.001003: mpp_task_done: core=0 task=41 ns=1000000
+kworker/1:1-23 [001] .... 10.000004: mpp_task_queued: session=4 task=42 client=16
+kworker/1:1-23 [001] .... 10.000005: mpp_core_selected: task=42 core=1 idle=0x2
+kworker/1:1-23 [001] .... 10.000006: mpp_task_started: core=1 task=42
+kworker/1:1-23 [001] .... 10.001006: mpp_task_done: core=1 task=42 ns=1000000

@@ -7,7 +7,7 @@
 # include/soc/rockchip and drivers/iommu/rockchip-iommu.c.
 # MPP_VERSION replaces the donor's git-shellout version string.
 
-ccflags-y += -I$(src)/compat
+ccflags-y += -I$(src) -I$(src)/compat
 ccflags-y += -DMPP_VERSION=\"6.18-rkvenc-fwport\"
 
 # rkvdec2 link.c calls rockchip_save_qos()/_restore_qos(): the real upstream
@@ -17,7 +17,7 @@ ccflags-y += -include $(src)/compat/rockchip_qos_compat.h
 
 obj-$(CONFIG_ROCKCHIP_MPP_SERVICE) += rk_vcodec.o
 
-rk_vcodec-y := mpp_service.o mpp_common.o mpp_iommu.o
+rk_vcodec-y := mpp_service.o mpp_common.o mpp_iommu.o mpp_trace.o
 rk_vcodec-$(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST) += mpp_rkvenc_test.o
 rk_vcodec-$(CONFIG_ROCKCHIP_MPP_RKVDEC) += mpp_rkvdec.o
 rk_vcodec-$(CONFIG_ROCKCHIP_MPP_RKVENC2) += mpp_rkvenc2.o

@@ -11,6 +11,7 @@
 #include "rga_common.h"
 #include "rga_hw_config.h"
 #include "rga_debugger.h"
+#include "rga_job.h"
 
 enum rga2_scale_mode_reg {
 	RGA2_SCALE_BYPASS = 0x0,
@@ -3255,7 +3256,7 @@ static int rga2_set_reg(struct rga_job *job, struct rga_scheduler_t *scheduler)
 		rga_write(0, RGA2_INT, scheduler);
 		rga_write(0, RGA2_CMD_REG_BASE + RGA2_MODE_CTRL_OFFSET, scheduler);
 		/* replace auto_rst */
-		rga2_soft_reset(scheduler);
+		rga_telemetry_reset(scheduler, 0, rga2_soft_reset);
 	} else {
 		sys_ctrl |= m_RGA2_SYS_CTRL_AUTO_RST;
 	}
@@ -3439,7 +3440,8 @@ static int rga2_irq(struct rga_scheduler_t *scheduler)
 			job->intr_status, job->hw_status, job->cmd_status,
 			job->work_cycle, job->work_cycle);
 
-		scheduler->ops->soft_reset(scheduler);
+		rga_telemetry_reset(scheduler, -EIO,
+				    scheduler->ops->soft_reset);
 	} else if (job->intr_status &
 		   (m_RGA2_INT_CUR_CMD_DONE_INT_FLAG | m_RGA2_INT_ALL_CMD_DONE_INT_FLAG)) {
 		if (job->task_count == 1) {

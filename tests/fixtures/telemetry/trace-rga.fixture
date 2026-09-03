@@ -1,0 +1,6 @@
+kworker/2:1-31 [002] .... 11.000001: rga_req_queued: session=5 request=21 tasks=1
+kworker/2:1-31 [002] .... 11.000002: rga_core_selected: request=21 scheduler=2 requested=0x6
+kworker/2:1-31 [002] .... 11.000003: rga_job_started: scheduler=2 request=21
+kworker/2:1-31 [002] .... 11.001003: rga_job_done: scheduler=2 request=21 ns=1000000
+kworker/1:1-30 [001] .... 11.010001: rga_job_timeout: scheduler=1 request=22
+kworker/1:1-30 [001] .... 11.010002: rga_reset: scheduler=1 reason=-110

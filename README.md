@@ -98,6 +98,7 @@ rk3588-media-island/
     ├── OWNERSHIP.md        # silicon ownership table + the one-compatible rule
     ├── REFERENCES.md       # every pinned coordinate
     ├── PROVENANCE.md       # per-file import ledger
+    ├── TELEMETRY.md        # tracefs/debugfs schemas + frozen proc formats
     ├── VENDOR-BACKLOG.md   # exhaustive post-donor vendor PICK/SKIP ledger
     ├── UPSTREAM-STATUS.md  # what mainline is doing; the issue-only watch
     └── BOARD-QUALIFICATION.md  # what real hardware must demonstrate
@@ -155,6 +156,7 @@ configuration the device does not run proves the wrong thing.
 | static analysis | CI, no hardware | sparse findings are fatal and coccinelle inspects every selected object; smatch remains conditional on a suitable runner package |
 | every gate's `--self-test` | CI, no hardware | each gate refuses a mutated tree AND accepts a correct one |
 | module contract | CI, source + built modules | every OF table is exported, the compiled aliases exist, and the hard-IRQ-only RKVENC2 path never uses `IRQF_ONESHOT` |
+| telemetry contract | CI + KUnit | tracepoint call sites and ordering, debugfs counters and session snapshots, static-key definitions, and the frozen MPP formatters remain intact |
 | `tests/dt/` | CI, built DTBs | both supported boards carry sole island MPP compatibles and every MPP client bypasses the unavailable BSP PMU-idle request; RGA remains mainline-owned |
 | `tests/board/` | a real Rock 5B+ or Orange Pi 5+ | everything about silicon |
 
@@ -163,6 +165,9 @@ takes board identity only through environment variables, and never locates
 credentials or references a path above this repository's root. What each drill
 must demonstrate before it may be ticked is
 [`docs/BOARD-QUALIFICATION.md`](docs/BOARD-QUALIFICATION.md).
+
+The tracefs event schemas, cumulative debugfs trees, and byte-frozen procfs
+formats are documented in [`docs/TELEMETRY.md`](docs/TELEMETRY.md).
 
 ## Versioning
 

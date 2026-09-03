@@ -20,7 +20,7 @@ a pin bump would then leave CI proving the series against a kernel nobody ships
 | Job | Asserts |
 |---|---|
 | `shellcheck` | every tracked shell script lints clean at `-S style`, excluding only `SC1091` (a runtime-resolved `source` cannot be followed) |
-| `self-tests` | every board/DT harness and every CI tool, including the MPP hardening and module-metadata source-contract checkers, passes its own scored fixtures. **A separate job on purpose** — see §3 |
+| `self-tests` | every board/DT harness and every CI tool, including MPP hardening, module metadata, trace schemas, counter roots, the dual-core MPP parser, and the RGA lifecycle parser, passes scored fixtures. **A separate job on purpose** — see §3 |
 | `series-integrity` | `patches/` regenerates byte-identically from `drivers/` + `integration/`, and an independent checker that does not import the generator agrees |
 | `shim-lint` | no compat header gives a `REAL-DEPENDENCY` symbol a body; no unclassified `<soc/rockchip/*.h>` include or `rockchip_*` census symbol exists |
 | `dt-ownership-lint` | every island-owned node in `docs/OWNERSHIP.md` is left with exactly one `compatible` string |
@@ -30,7 +30,7 @@ a pin bump would then leave CI proving the series against a kernel nobody ships
 | `pin` | nothing — it *reads* the coordinates out of `kernel-pin.env` and emits them |
 | `pin-equality` | the four mirrored `KERNEL_*` values equal the consumer repository's |
 | `cross-compile-modules` | the pinned tag resolves to both pinned objects; the tree configures the way the device is configured; `vmlinux` supplies provider symbols, `modules_prepare` supplies the final-link script, and configured `vmlinux.symvers` is exposed under the `Module.symvers` filename external modpost reads; exactly `rk_vcodec.ko` and `rga3.ko` link with `-Werror` and publish the OF aliases needed for module autoload; both board DTBs build and pass the ownership/skip-PMU checker; no island `compatible` collides with a mainline `of_match_table` |
-| `kunit` | the request-boundary and RKVENC2 fault/lifecycle suites in `tests/kunit/` pass against the pinned kernel |
+| `kunit` | every suite in `tests/kunit/` passes against the pinned kernel; CI also asserts the telemetry symbol resolved `=y` and the telemetry session-format case appeared in the run |
 | `static-analysis` | sparse inspects every selected composite object with findings promoted to errors, followed by coccinelle over both island directories; the plan's conditional smatch arm is not enabled without a suitable runner package |
 
 ### The kernel job, in the order it does things
@@ -92,12 +92,27 @@ non-vacuous:
 
 | Gate | Live assertion |
 |---|---|
-| `series-integrity` | seven generated mailboxes reconstruct all 69 island source files and carry all six applied integration payloads byte-identically; `integration/pending/` remains excluded |
+| `series-integrity` | seven generated mailboxes reconstruct all 76 island source files and carry all six applied integration payloads byte-identically; `integration/pending/` remains excluded |
 | `shim-lint` | all classified compatibility headers and source call sites are scanned; a REAL-DEPENDENCY body remains forbidden |
 | `uapi-parity` | the imported kernel header is compared with both pinned userspace/vendor references, including every command value and layout assertion |
 | `cross-compile-modules` | strict modpost links exactly `rk_vcodec.ko` and `rga3.ko` against the configured Linux 7.2 provider symbol table, verifies their OF aliases with `modinfo`, then builds and inspects both supported board DTBs |
 | `static-analysis` | sparse checks all selected MPP/RGA objects with `-Wsparse-error`; coccinelle scans both directories |
 | `dt-ownership-lint` | three applied MPP DT patches and two pending RGA DT patches each leave sole island compatibles; the pinned-tree arm rejects any mainline driver collision |
+
+The telemetry source contract additionally mutation-tests event loss, real
+call-site loss, lifecycle ordering, the fdinfo-style session file, and a missing
+production debugfs symbol. KUnit calls the driver's own load-row and session-row
+formatters and freezes their whitespace, field order, and fractional rendering.
+Both module builds compile the tracepoint definition units with `-Werror`, which
+catches duplicate `CREATE_TRACE_POINTS`, malformed fields, and unavailable
+debugfs APIs. Both independent series collectors reject generated `*.mod.c`
+files, so an in-tree module build cannot leak metadata back into the release
+mailbox.
+
+The configured-kernel step also requires `FTRACE`, `ENABLE_DEFAULT_TRACERS`,
+`TRACING`, `EVENT_TRACING`, and `TRACEPOINTS` to resolve `=y`, while
+`FUNCTION_TRACER` stays off. This is the minimal closure that registers event
+tracepoints and tracefs without adding function-entry instrumentation.
 
 RGA ownership remains deliberately unshipped. Its two patches are linted under
 `integration/pending/`, and the DTB checker proves the compiled live tree still
@@ -535,7 +550,8 @@ hold while the module build is skipped.
    and RGA2 compatible flips remain under `integration/pending/` until todo 19
    promotes both in one release.
 2. **KUnit is live.** Its repo-owned `.kunitconfig` runs the boundary and
-   fault/lifecycle suites against the pinned kernel.
+    fault/lifecycle, telemetry-format, capability, DMA-policy, and RGA-fence
+    suites against the pinned kernel.
 3. **Smatch is conditional.** The plan requires it when a suitable runner
    package is installable. This workflow currently gates sparse and coccinelle;
    it does not claim a smatch result.
