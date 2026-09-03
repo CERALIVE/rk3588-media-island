@@ -29,6 +29,7 @@ accepts **both** layouts, so the move is a `git mv` with no edits.
 | `count-journal.sh` | how many copy/fallback events happened in a measured window? | 3(b) copy census |
 | `fd-trace.sh` | did a buffer cross this boundary, or was it copied? | 3(b) copy census |
 | `encode-psnr-oracle.sh` | is the shipped encoder CLEAN or DIRTY at fixed QP? | 3(e) ENC-CORRUPT |
+| `control-encode-per-codec.sh` | does a cold boot encode every supported control codec, with H.265 deliberately first? | todo 9 / board gates 14, 16 and 17 |
 | `run-baseline.sh` | all five, written into the baseline document and the ledger | 3(a)–(e) |
 
 ---
@@ -70,6 +71,7 @@ for s in ./*.sh; do
 done
 
 make selftest          # host-builds the three C probes and runs their --self-test
+./control-encode-per-codec.sh --self-test
 ```
 
 The C probes cross-build for the device with the target-suite toolchain:
