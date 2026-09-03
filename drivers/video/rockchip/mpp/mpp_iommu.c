@@ -661,6 +661,8 @@ int mpp_iommu_attach(struct mpp_iommu_info *info)
 
 	if (!info)
 		return 0;
+	if (!info->domain || !info->group)
+		return -ENODEV;
 
 	/* if device changed, detach last first */
 	last_info = info->queue->last_iommu_info;

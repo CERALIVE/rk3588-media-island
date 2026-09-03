@@ -9007,10 +9007,10 @@ index 0000000000000000000000000000000000000000..97f3d74b127425838f2efa61e2cd7db6
 +EXPORT_SYMBOL(rockchip_iep2_driver);
 diff --git a/drivers/video/rockchip/mpp/mpp_iommu.c b/drivers/video/rockchip/mpp/mpp_iommu.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..c2ebe43d62546706b9c3f207f35da274fb379d8b
+index 0000000000000000000000000000000000000000..1da1425d361e566b2197f77e9c9877e9a99928d9
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_iommu.c
-@@ -0,0 +1,1469 @@
+@@ -0,0 +1,1471 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -9674,6 +9674,8 @@ index 0000000000000000000000000000000000000000..c2ebe43d62546706b9c3f207f35da274
 +
 +	if (!info)
 +		return 0;
++	if (!info->domain || !info->group)
++		return -ENODEV;
 +
 +	/* if device changed, detach last first */
 +	last_info = info->queue->last_iommu_info;
@@ -21661,10 +21663,10 @@ index 0000000000000000000000000000000000000000..5ab7441b178f7359ee049a13368d79a4
 +};
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc2.c b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..09a10a8f0ae176414e54c3aa637a84920951646a
+index 0000000000000000000000000000000000000000..703176a57f1e11984128f76a5c47ad7a8229af72
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
-@@ -0,0 +1,3804 @@
+@@ -0,0 +1,3805 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
@@ -23008,7 +23010,8 @@ index 0000000000000000000000000000000000000000..09a10a8f0ae176414e54c3aa637a8492
 +	for (i = 0; i <= core_id_max; i++) {
 +		struct mpp_dev *mpp = queue->cores[i];
 +
-+		if (mpp && mpp->disable)
++		if (mpp && (mpp->disable || !mpp->iommu_info ||
++			    !mpp->iommu_info->domain))
 +			clear_bit(i, &core_idle);
 +	}
 +

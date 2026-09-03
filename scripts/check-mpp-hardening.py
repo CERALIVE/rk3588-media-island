@@ -124,10 +124,11 @@ def evaluate_0021(sources: Sources) -> tuple[Result, ...]:
     prepare = between(sources.rkvenc, "static void *rkvenc2_prepare(", "static int rkvenc2_patch_dchs(")
     iommu_attach = between(sources.iommu, "int mpp_iommu_attach(", "static int mpp_iommu_attach_current_domain(")
     after_isr = running.split("mpp->dev_ops->isr(mpp);", maxsplit=1)[-1]
+    compact_prepare = " ".join(prepare.split())
     return (
         Result("failed hw_run releases resources exactly once", run.count("mpp_power_off(mpp)") >= 4 and "mpp_taskqueue_fail_running(queue, task)" in worker and "mpp_task_finish" not in fail_running),
         Result("worker does not reread a released task", "mpp_task" not in after_isr and ordered(fail_running, "wake_up(&task->wait)", "mpp_taskqueue_pop_running(queue, task)") and "if (mpp && mpp->dev_ops->free_task)" in free_task),
-        Result("secondary dispatch requires a usable IOMMU domain", "!mpp->iommu_info || !mpp->iommu_info->domain" in prepare and "!info->domain || !info->group" in iommu_attach),
+        Result("secondary dispatch requires a usable IOMMU domain", "!mpp->iommu_info || !mpp->iommu_info->domain" in compact_prepare and "!info->domain || !info->group" in iommu_attach),
     )
 
 

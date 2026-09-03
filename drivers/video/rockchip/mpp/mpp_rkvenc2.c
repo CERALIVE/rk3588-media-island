@@ -1341,7 +1341,8 @@ static void *rkvenc2_prepare(struct mpp_dev *mpp, struct mpp_task *mpp_task)
 	for (i = 0; i <= core_id_max; i++) {
 		struct mpp_dev *mpp = queue->cores[i];
 
-		if (mpp && mpp->disable)
+		if (mpp && (mpp->disable || !mpp->iommu_info ||
+			    !mpp->iommu_info->domain))
 			clear_bit(i, &core_idle);
 	}
 
