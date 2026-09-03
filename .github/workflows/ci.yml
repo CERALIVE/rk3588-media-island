@@ -263,7 +263,8 @@ jobs:
   # --------------------------------------------------------------------
   # The heavy gate. It clones the pinned kernel (cached on the immutable
   # commit), configures it the way the device is configured, and runs the
-  # modules-only build.
+  # selected-module build. A configured vmlinux is built first so modpost sees
+  # the real provider symbol table instead of accepting unresolved symbols.
   # --------------------------------------------------------------------
 
   cross-compile-modules:
@@ -365,22 +366,22 @@ jobs:
           set -euo pipefail
           export PATH="/usr/lib/ccache:$PATH"
           make -C .work/linux -j"$(nproc)" defconfig
-          # The island's OWN Kconfig symbols are the third input the README
-          # names. They arrive with the driver import; until then this is a
-          # two-way merge and the log says so rather than implying otherwise.
+          # Keep the device fragment and island selection as separate inputs so
+          # a kernel or product-policy pin can move without hiding the other.
           ./.work/linux/scripts/kconfig/merge_config.sh \
             -m -O .work/linux \
             .work/linux/.config .work/rk3588-edge.fragment \
             configs/rk3588-media-island.fragment
           make -C .work/linux -j"$(nproc)" olddefconfig
 
-      - name: Prepare the tree for out-of-tree module builds
+      - name: Build the configured provider symbol table
         env:
           ARCH: ${{ needs.pin.outputs.arch }}
           CROSS_COMPILE: ${{ needs.pin.outputs.cross_compile }}
         run: |
+          set -euo pipefail
           export PATH="/usr/lib/ccache:$PATH"
-          make -C .work/linux -j"$(nproc)" modules_prepare
+          make -C .work/linux -j"$(nproc)" vmlinux
 
       # THE LINK HALF OF THE SHIM GATE. A REAL-DEPENDENCY declared with no
       # provider is an undefined symbol at modpost time, which is the only place
@@ -395,38 +396,27 @@ jobs:
           export PATH="/usr/lib/ccache:$PATH"
           built=0
           for dir in ${{ needs.pin.outputs.module_dirs }}; do
-            if [ ! -f ".work/linux/$dir/Makefile" ]; then
-              echo "NO-MODULES-YET: $dir carries no kernel Makefile, so it compiles"
-              echo "NO-MODULES-YET: zero modules. The .ko assertion below is SKIPPED,"
-              echo "NO-MODULES-YET: not passed. It becomes required the moment the"
-              echo "NO-MODULES-YET: driver import lands non-empty source in this path."
-              continue
-            fi
+            [ -f ".work/linux/$dir/Makefile" ] || {
+              echo "::error::$dir has no kernel Makefile"
+              exit 1
+            }
             make -C .work/linux -j"$(nproc)" M="$dir" modules \
-              KCFLAGS="-Werror" KBUILD_MODPOST_WARN=1
+              KCFLAGS="-Werror"
             built=$((built + 1))
           done
 
           mapfile -t modules < <(find .work/linux -name '*.ko' -printf '%f\n' | sort)
-          if [ "$built" -eq 0 ]; then
-            echo "NO-MODULES-YET: 0 module directory/ies built; ${#modules[@]} .ko produced."
-            [ "${#modules[@]}" -eq 0 ] || {
-              echo "::error::no module directory was built, yet .ko files exist"
-              exit 1
-            }
-          else
-            echo "Built $built module directory/ies:"
-            printf '  %s\n' "${modules[@]}"
-            [ "${#modules[@]}" -gt 0 ] || {
-              echo "::error::a module directory was built but produced no .ko"
-              exit 1
-            }
-            expected=(rga3.ko rk_vcodec.ko)
-            [ "${modules[*]}" = "${expected[*]}" ] || {
-              echo "::error::expected ${expected[*]}, got ${modules[*]}"
-              exit 1
-            }
-          fi
+          echo "Built $built module directory/ies:"
+          printf '  %s\n' "${modules[@]}"
+          [ "$built" -eq 2 ] || {
+            echo "::error::expected 2 module directories, built $built"
+            exit 1
+          }
+          expected=(rga3.ko rk_vcodec.ko)
+          [ "${modules[*]}" = "${expected[*]}" ] || {
+            echo "::error::expected ${expected[*]}, got ${modules[*]}"
+            exit 1
+          }
 
       # The second arm of dt-ownership-lint, run where the pinned tree already
       # is: no island compatible string may appear in a mainline of_match_table.
@@ -444,9 +434,6 @@ jobs:
           git -C .work/linux clean -fdxq || true
 
   # --------------------------------------------------------------------
-  # Test tiers that have nothing to run yet. Each states that in words and
-  # exits 0; neither fabricates a result, and both become required the
-  # moment their inputs exist.
   # --------------------------------------------------------------------
 
   kunit:
@@ -540,9 +527,17 @@ jobs:
         run: |
           set -euo pipefail
           for dir in ${{ needs.pin.outputs.module_dirs }}; do
+            case "$dir" in
+              drivers/video/rockchip/mpp) target=rk_vcodec.o ;;
+              drivers/video/rockchip/rga3) target=rga3.o ;;
+              *)
+                echo "::error::no static-analysis object target registered for $dir"
+                exit 1
+                ;;
+            esac
             make -C .work/linux ARCH="${{ needs.pin.outputs.arch }}" \
               CROSS_COMPILE="${{ needs.pin.outputs.cross_compile }}" -j"$(nproc)" \
-              C=2 M="$dir" modules KCFLAGS="-Werror" KBUILD_MODPOST_WARN=1
+              C=2 CF="-Wsparse-error" M="$dir" "$target" KCFLAGS="-Werror"
             make -C .work/linux ARCH="${{ needs.pin.outputs.arch }}" \
               coccicheck MODE=report M="$dir"
           done

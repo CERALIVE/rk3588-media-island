@@ -29,9 +29,9 @@ a pin bump would then leave CI proving the series against a kernel nobody ships
 | `action-pins` | every `uses:` is at the current latest major. **Non-blocking** — see §4 |
 | `pin` | nothing — it *reads* the coordinates out of `kernel-pin.env` and emits them |
 | `pin-equality` | the four mirrored `KERNEL_*` values equal the consumer repository's |
-| `cross-compile-modules` | the pinned tag resolves to both pinned objects; the tree configures the way the device is configured; the modules-only build links; no island `compatible` collides with a mainline `of_match_table` |
+| `cross-compile-modules` | the pinned tag resolves to both pinned objects; the tree configures the way the device is configured; a configured `vmlinux` supplies the real provider symbol table; exactly `rk_vcodec.ko` and `rga3.ko` link with `-Werror`; no island `compatible` collides with a mainline `of_match_table` |
 | `kunit` | `tests/kunit/` passes |
-| `static-analysis` | sparse, smatch and coccinelle over the island directories |
+| `static-analysis` | sparse inspects every selected composite object with findings promoted to errors, followed by coccinelle over both island directories; the plan's conditional smatch arm is not enabled without a suitable runner package |
 
 ### The kernel job, in the order it does things
 
@@ -42,19 +42,22 @@ reason worth stating:
    alone cannot detect a tag object that was re-created — re-signed, re-dated,
    re-worded — while still pointing at the same commit, and the tag object is
    what a signature verifies against.
-2. **The config is `defconfig` + the device's own Kconfig fragment**, fetched at
+2. **The config is `defconfig` + the device's own Kconfig fragment + the island
+   fragment**, with the device fragment fetched at
    the immutable `image-building-pipeline` commit pinned in
    [`REFERENCES.md`](REFERENCES.md). Building against a bare `defconfig` would
-   prove the island against a configuration nobody boots. The island's own
-   Kconfig symbols are the third input the README names; they arrive with the
-   driver import, and until then the job performs a two-way merge and says so.
+   prove the island against a configuration nobody boots. CI also asserts the
+   resulting module values and exact selectable-client set.
 3. **The tree is cached on the immutable commit and restored to pristine before
    the cache is written.** The staged island source and the applied
    `integration/` patches would otherwise poison the next run's reset — and a
    poisoned cache fails *green*.
-4. **The modules build is the LINK half of the shim gate.** `shim-lint` catches a
-   `REAL-DEPENDENCY` given a stub body; only modpost catches a declaration with
-   no provider behind it. Neither alone is sufficient, which is why both exist.
+4. **A configured `vmlinux` is built before the modules.** `modules_prepare`
+   deliberately does not generate `Module.symvers`; allowing modpost's missing
+   symbols as warnings would make the link gate vacuous. The provider build
+   supplies the real symbol table, and the two module builds run without
+   `KBUILD_MODPOST_WARN`. `shim-lint` catches a `REAL-DEPENDENCY` given a stub
+   body; strict modpost catches a declaration with no provider behind it.
 
 ### The one split gate
 
@@ -71,32 +74,25 @@ note would be the worse trade.
 
 ---
 
-## 2. What is vacuous today, and exactly when it stops being
+## 2. Import-era gate state
 
-The driver import has not landed. Four gates therefore have nothing to inspect,
-and every one of them **says so in words and exits 0** rather than reporting a
-clean run it did not perform.
+The driver import has landed. Every gate whose input is part of todo 8 is now
+non-vacuous:
 
-| Gate | Marker it prints | Becomes required when |
-|---|---|---|
-| `series-integrity` | `NO-SOURCE-YET` — the island roots hold no kernel source and `integration/` holds no patch, so the series is empty by construction | the driver import lands source or an integration patch |
-| `shim-lint` | `NO-SOURCE-YET` — 21 `REAL-DEPENDENCY` symbols are read from `docs/COMPAT.md`, but steps 2–4 have no file to scan | the driver import lands source |
-| `dt-ownership-lint` | `NO-DT-YET` — 11 island-owned node labels are read, but `integration/` carries no device-tree patch | the DT integration lands |
-| `uapi-parity` | `NO-HEADER-YET` — a **skipped** test class, not a passing one | `include/uapi/linux/rk-mpp.h` exists |
-| `cross-compile-modules` | `NO-MODULES-YET` — the module directories carry no kernel `Makefile`, so the `.ko` assertion is skipped | a module directory gains a `Makefile` |
-| `kunit` | `0 tests. NO-KUNIT-CASES-YET` — no suite exists, so no UML kernel is built | the first KUnit case lands |
-| `static-analysis` | `NOTHING-TO-ANALYZE: 0 island .c file(s)` — the three analysers have no translation unit | the driver import lands source |
+| Gate | Live assertion |
+|---|---|
+| `series-integrity` | four generated mailboxes reconstruct all 66 island source files and carry all three integration payloads byte-identically |
+| `shim-lint` | all classified compatibility headers and source call sites are scanned; a REAL-DEPENDENCY body remains forbidden |
+| `uapi-parity` | the imported kernel header is compared with both pinned userspace/vendor references, including every command value and layout assertion |
+| `cross-compile-modules` | strict modpost links exactly `rk_vcodec.ko` and `rga3.ko` against the configured Linux 7.2 provider symbol table |
+| `static-analysis` | sparse checks all selected MPP/RGA objects with `-Wsparse-error`; coccinelle scans both directories |
 
-Two of these are **not** vacuous today and are worth calling out:
+Two later-wave inputs remain deliberately absent and still say so rather than
+claiming a pass:
 
-- `cross-compile-modules` still clones the pinned kernel, verifies both objects,
-  fetches the device fragment, configures, and runs `modules_prepare` — every
-  expensive step **except** the module build itself. The toolchain, the cache and
-  the config path are therefore exercised now, so the import does not discover a
-  broken kernel job on the day it needs one.
-- `uapi-parity` runs six real assertions today against the pinned vendor/libmpp
-  fixture, including an **independent** re-derivation of `_IOW('v', 1, unsigned
-  int)` in Python. Only the island-header comparison is skipped.
+- `dt-ownership-lint` prints `NO-DT-YET` until todo 10 adds ownership hunks. Its
+  pinned-mainline collision arm still runs in the kernel job.
+- `kunit` prints `0 tests. NO-KUNIT-CASES-YET` until todo 9 lands the first suite.
 
 ---
 
@@ -259,11 +255,10 @@ FAIL (independent): patches/series does not match patches/
 exit=1
 ```
 
-**The richer form of this mutation — a source file drifting from the patch that
-carries it — cannot be shown in this repository yet**, because there is no source
-to drift. It is proven instead against a synthetic island in a scratch tree, in
-§6, and it becomes reproducible here the moment the import lands. That gap is
-stated rather than papered over.
+The richer form is now live against the imported tree: editing any one of the 66
+source files without regeneration makes both the producer check and independent
+reconstruction check fail. The synthetic proof in §6 remains the small,
+auditable mutation transcript for the same invariant.
 
 ### M4 — `shim-lint`: source growth fails closed
 
@@ -450,7 +445,7 @@ exit=0
 
 ---
 
-## 9. Timings
+## 9. Historical scaffold timings
 
 Measured on GitHub's `ubuntu-latest` runners, both runs on `main`, 2026-09-02.
 Run `33685651864` populated the kernel cache (**cold**); run `33686051743` hit it
@@ -467,12 +462,11 @@ Run `33685651864` populated the kernel cache (**cold**); run `33686051743` hit i
 | `dt-ownership-lint` / `uapi-parity` / `pin` | 5–7 s | 5 s |
 | `shim-lint` / `action-pins` / `kunit` / `static-analysis` | 3–4 s | 4–6 s |
 
-The plan's budget is 25 minutes cold and 8 warm; both are met with room to
-spare. **That is not the steady-state number and must not be quoted as one** —
-`cross-compile-modules` is fast today precisely because the module build itself
-is skipped (`NO-MODULES-YET`) while every step around it runs in full. Expect it
-to grow substantially when the import lands real source, and re-measure then
-rather than carrying this table forward as if it still applied.
+These measurements predate the source import and are retained only as the
+scaffold baseline. **They are not current performance numbers and must not be
+quoted as such.** The live gate now builds a configured `vmlinux` for strict
+provider-symbol validation and then links both modules, so the next green run is
+the first meaningful import-era timing.
 
 The `ccache` cache reported a miss on both runs, which is correct and not a
 defect: its key includes `github.sha`, and nothing has been compiled for it to
@@ -480,28 +474,17 @@ hold while the module build is skipped.
 
 ---
 
-## 10. Known gaps these gates leave for the driver import
+## 10. Remaining deferred gates
 
-Recorded so the import is not surprised by them:
-
-1. **The link half of the shim gate is unexercised.** `shim-lint`'s static half
-   names a `REAL-DEPENDENCY` with no provider, but the authoritative check is an
-   undefined symbol at modpost, and there is nothing to link yet.
-2. **The census is deliberately strict.** Step 4 refuses *any* `rockchip_*` name
-   with no `docs/COMPAT.md` row — including one the island itself defines. That is
-   the specification's "fails closed until its semantics are classified", and it
-   means the import adds table rows in the same change as the source. It is not a
-   bug to work around.
-3. **`integration/` patches are applied with `git apply` in `--verbose` mode and
-   nothing re-anchors them.** The island has no `rebase/<tag>.rules` equivalent;
-   a hunk that stops applying at a new base is a red build and a source edit.
-4. **The island Kconfig fragment does not exist**, so `cross-compile-modules`
-   merges `defconfig` + the device fragment only. The import adds the third input
-   and this document's §1 item 2 stops being a two-way merge.
-5. **`kunit` builds nothing today.** Its first real run will need a
-   `tests/kunit/.kunitconfig`; the job passes `--kunitconfig=tests/kunit` already.
-6. **`release.yml` has never been dispatched**, in either mode. `ci.yml` has now
-   run green end to end on GitHub's runners across a cold and a warm cache (§9),
-   which validates that YAML as well as the gates; the release workflow is
-   written and reviewed but unexecuted, and §7 says so. `ccache` has also never
-   held anything, because there is nothing to compile yet.
+1. **DT ownership is a later input.** Todo 8 intentionally carries no DT hunk;
+   `NO-DT-YET` remains honest until todo 10 assigns compatible strings.
+2. **KUnit is a later input.** Its first real run needs a
+   `tests/kunit/.kunitconfig`; the job already points `kunit.py` at that directory.
+3. **Smatch is conditional.** The plan requires it when a suitable runner
+   package is installable. This workflow currently gates sparse and coccinelle;
+   it does not claim a smatch result.
+4. **Integration patches are context-sensitive.** They apply with verbose
+   `git apply`; there is no fuzzy re-anchor layer. A Linux pin change that moves
+   a hunk is intentionally a red build and an explicit source update.
+5. **`release.yml` has never been dispatched**, in either validation or publish
+   mode. Its implementation is reviewed, but no release claim is made here.
