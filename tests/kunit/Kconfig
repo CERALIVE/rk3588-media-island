@@ -6,3 +6,11 @@ config ROCKCHIP_MPP_BOUNDARY_KUNIT_TEST
 	help
 	  Exercise the pure request-shape, element-count, class-coverage, and
 	  result-copy bounds shared by the RK3588 MPP clients.
+
+config ROCKCHIP_MPP_FAULT_KUNIT_TEST
+	tristate "Rockchip MPP fault-injection tests"
+	depends on KUNIT
+	default KUNIT_ALL_TESTS
+	help
+	  Exercise the atomic one-shot semantics used by the opt-in RKVENC2
+	  fault-injection controls.
