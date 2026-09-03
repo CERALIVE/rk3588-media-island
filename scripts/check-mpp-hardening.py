@@ -115,11 +115,28 @@ def evaluate_0020(sources: Sources) -> tuple[Result, ...]:
     )
 
 
+def evaluate_0021(sources: Sources) -> tuple[Result, ...]:
+    run = between(sources.common, "static int mpp_task_run(", "void mpp_dev_load(")
+    fail_running = between(sources.common, "static void mpp_taskqueue_fail_running(", "static void\nmpp_taskqueue_trigger_work(")
+    worker = between(sources.common, "static void mpp_task_worker_default(", "static int mpp_wait_result_default(")
+    running = between(sources.common, "static void try_process_running_task(", "static void mpp_task_worker_default(")
+    free_task = between(sources.common, "void mpp_free_task(", "static void mpp_task_timeout_work(")
+    prepare = between(sources.rkvenc, "static void *rkvenc2_prepare(", "static int rkvenc2_patch_dchs(")
+    iommu_attach = between(sources.iommu, "int mpp_iommu_attach(", "static int mpp_iommu_attach_current_domain(")
+    after_isr = running.split("mpp->dev_ops->isr(mpp);", maxsplit=1)[-1]
+    return (
+        Result("failed hw_run releases resources exactly once", run.count("mpp_power_off(mpp)") >= 4 and "mpp_taskqueue_fail_running(queue, task)" in worker and "mpp_task_finish" not in fail_running),
+        Result("worker does not reread a released task", "mpp_task" not in after_isr and ordered(fail_running, "wake_up(&task->wait)", "mpp_taskqueue_pop_running(queue, task)") and "if (mpp && mpp->dev_ops->free_task)" in free_task),
+        Result("secondary dispatch requires a usable IOMMU domain", "!mpp->iommu_info || !mpp->iommu_info->domain" in prepare and "!info->domain || !info->group" in iommu_attach),
+    )
+
+
 EVALUATORS: Final = {
     "0014": evaluate_0014,
     "0015": evaluate_0015,
     "0019": evaluate_0019,
     "0020": evaluate_0020,
+    "0021": evaluate_0021,
 }
 
 
