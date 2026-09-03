@@ -1460,6 +1460,7 @@ static const struct of_device_id rga3_dt_ids[] = {
 	},
 	{},
 };
+MODULE_DEVICE_TABLE(of, rga3_dt_ids);
 
 static const struct of_device_id rga2_dt_ids[] = {
 	{
@@ -1473,6 +1474,7 @@ static const struct of_device_id rga2_dt_ids[] = {
 	},
 	{},
 };
+MODULE_DEVICE_TABLE(of, rga2_dt_ids);
 
 static int init_scheduler(struct rga_scheduler_t *scheduler,
 			  struct device *dev,

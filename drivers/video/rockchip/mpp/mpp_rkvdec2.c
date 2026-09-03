@@ -1768,6 +1768,7 @@ static const struct of_device_id mpp_rkvdec2_dt_match[] = {
 #endif
 	{},
 };
+MODULE_DEVICE_TABLE(of, mpp_rkvdec2_dt_match);
 
 static int rkvdec2_ccu_remove(struct device *dev)
 {

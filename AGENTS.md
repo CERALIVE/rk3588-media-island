@@ -178,7 +178,7 @@ remaining deferred inputs live in [`docs/CI.md`](docs/CI.md).
 | Job | Asserts |
 |-----|---------|
 | `shellcheck` | Every tracked shell script lints clean at `-S style` (only `SC1091` excluded) |
-| `self-tests` | Every board harness and every CI tool passes its own scored fixtures |
+| `self-tests` | Every board harness and every CI tool passes its own scored fixtures; the module contract also checks all maintained source match tables and the RKVENC2 IRQ flags |
 | `series-integrity` | `patches/` regenerates byte-identically from `drivers/` + `integration/`, verified again by an independent parity checker |
 | `shim-lint` | No compat header gives a `REAL-DEPENDENCY` symbol a body; no unclassified `<soc/rockchip/*.h>` include or `rockchip_*` symbol exists |
 | `dt-ownership-lint` | Applied MPP and pending RGA lanes are checked separately for one compatible, one island match and no pinned-mainline collision |
@@ -187,7 +187,7 @@ remaining deferred inputs live in [`docs/CI.md`](docs/CI.md).
 | `action-pins` | Every `uses:` is at the current latest major. **Non-blocking** — an action's release cadence must not redden an unrelated PR |
 | `pin` | Nothing — it *reads* the coordinates out of `kernel-pin.env` and emits them as job outputs |
 | `pin-equality` | The four mirrored `KERNEL_*` values equal the consumer's |
-| `cross-compile-modules` | Both pinned kernel objects resolve; the tree configures the way the device is configured; `vmlinux` supplies provider symbols, `modules_prepare` supplies the module linker script, and `vmlinux.symvers` is exposed as the `Module.symvers` external modpost requires; the two arm64 modules link with `-Werror`; both supported board DTBs build and pass `tests/dt/check-dtb-ownership.sh`; no island `compatible` collides with a mainline `of_match_table` |
+| `cross-compile-modules` | Both pinned kernel objects resolve; the tree configures the way the device is configured; `vmlinux` supplies provider symbols, `modules_prepare` supplies the module linker script, and `vmlinux.symvers` is exposed as the `Module.symvers` external modpost requires; the two arm64 modules link with `-Werror` and expose their required OF aliases; both supported board DTBs build and pass `tests/dt/check-dtb-ownership.sh`; no island `compatible` collides with a mainline `of_match_table` |
 | `kunit` | Builds the request-boundary and RKVENC2 fault/lifecycle suites against the pinned tree |
 | `static-analysis` | sparse with findings promoted to errors plus coccinelle over every selected island object; smatch remains conditional on a suitable runner package |
 | `upstream-watch` | Nothing — it opens or updates ONE issue and never edits a pin or dispatches a build |
@@ -201,7 +201,9 @@ harness self-test red; the transcript is [`docs/CI.md`](docs/CI.md) §3.
 **The source-dependent gates are live.** Series integrity reconstructs 69 source
 files and six applied integration payloads, shim/UAPI checks inspect the imported
 surface, sparse checks every selected object, and cross-compile asserts exactly
-`rk_vcodec.ko` plus `rga3.ko`. DT ownership is also live: the MPP nodes ship,
+`rk_vcodec.ko` plus `rga3.ko` and rejects either module if its compiled OF aliases
+are absent. The source-side half also rejects a device match table that is not
+published and an `IRQF_ONESHOT` hard-IRQ request with no threaded handler. DT ownership is also live: the MPP nodes ship,
 both board DTBs are inspected, and the two pending RGA hunks are linted without
 entering the generated series.
 

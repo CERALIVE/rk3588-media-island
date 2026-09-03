@@ -136,8 +136,11 @@ make -C .work/linux ARCH="$ISLAND_ARCH" CROSS_COMPILE="$ISLAND_CROSS_COMPILE" \
 ```
 
 The asserted outputs are the inherited vendor filenames `rk_vcodec.ko` and
-`rga3.ko`; see [`docs/PROVENANCE.md`](docs/PROVENANCE.md) for their measured
-version and licence identity.
+`rga3.ko`. CI also inspects both outputs with `modinfo`: every maintained MPP and
+RGA device-tree match table must produce an OF alias, so the kernel can autoload
+the module from a device-tree modalias rather than requiring a manual `modprobe`.
+See [`docs/PROVENANCE.md`](docs/PROVENANCE.md) for their measured version and
+licence identity.
 
 The build config is arm64 `defconfig` plus the device image's own kernel fragment
 plus the island's `Kconfig` symbols — not a bare `defconfig`. Building against a
@@ -151,6 +154,7 @@ configuration the device does not run proves the wrong thing.
 | `tests/fuzz/` | CI, no hardware | the UAPI surface survives hostile input |
 | static analysis | CI, no hardware | sparse findings are fatal and coccinelle inspects every selected object; smatch remains conditional on a suitable runner package |
 | every gate's `--self-test` | CI, no hardware | each gate refuses a mutated tree AND accepts a correct one |
+| module contract | CI, source + built modules | every OF table is exported, the compiled aliases exist, and the hard-IRQ-only RKVENC2 path never uses `IRQF_ONESHOT` |
 | `tests/dt/` | CI, built DTBs | both supported boards carry sole island MPP compatibles and every MPP client bypasses the unavailable BSP PMU-idle request; RGA remains mainline-owned |
 | `tests/board/` | a real Rock 5B+ or Orange Pi 5+ | everything about silicon |
 

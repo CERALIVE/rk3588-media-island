@@ -10800,10 +10800,10 @@ index 0000000000000000000000000000000000000000..c4f661cb313b82975cce93e705158f13
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_jpgdec.c b/drivers/video/rockchip/mpp/mpp_jpgdec.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..94e8b8425b68ecbbbb698fcbec659d3eafa66dda
+index 0000000000000000000000000000000000000000..eb7562c57483a2dcc95bba4d86422ba8161aac7c
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_jpgdec.c
-@@ -0,0 +1,671 @@
+@@ -0,0 +1,672 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2020 Rockchip Electronics Co., Ltd.
@@ -11406,6 +11406,7 @@ index 0000000000000000000000000000000000000000..94e8b8425b68ecbbbb698fcbec659d3e
 +	},
 +	{},
 +};
++MODULE_DEVICE_TABLE(of, mpp_jpgdec_dt_match);
 +
 +static int jpgdec_probe(struct platform_device *pdev)
 +{
@@ -14244,10 +14245,10 @@ index 0000000000000000000000000000000000000000..89214c2c7e5b3bca2d4f3a62d06b6995
 +EXPORT_SYMBOL(rockchip_rkvdec_driver);
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvdec2.c b/drivers/video/rockchip/mpp/mpp_rkvdec2.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..564e0c8776d10425a56b32772b97788f8160f371
+index 0000000000000000000000000000000000000000..9092a431cd1b5f427fc90a0ed10c2449739b46fb
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvdec2.c
-@@ -0,0 +1,2337 @@
+@@ -0,0 +1,2338 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2020 Rockchip Electronics Co., Ltd.
@@ -16018,6 +16019,7 @@ index 0000000000000000000000000000000000000000..564e0c8776d10425a56b32772b97788f
 +#endif
 +	{},
 +};
++MODULE_DEVICE_TABLE(of, mpp_rkvdec2_dt_match);
 +
 +static int rkvdec2_ccu_remove(struct device *dev)
 +{
@@ -21706,10 +21708,10 @@ index 0000000000000000000000000000000000000000..039752db69c71b3befeade39a91d81bf
 +};
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc2.c b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..59fce0f8a0a61fbbb7d6956de145aed51f22b559
+index 0000000000000000000000000000000000000000..9180b4789eaae4e3a3df83f28435b735fcedb720
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
-@@ -0,0 +1,3804 @@
+@@ -0,0 +1,3805 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
@@ -24912,6 +24914,7 @@ index 0000000000000000000000000000000000000000..59fce0f8a0a61fbbb7d6956de145aed5
 +	},
 +	{},
 +};
++MODULE_DEVICE_TABLE(of, mpp_rkvenc_dt_match);
 +
 +static int rkvenc_ccu_probe(struct platform_device *pdev)
 +{
@@ -25316,7 +25319,7 @@ index 0000000000000000000000000000000000000000..59fce0f8a0a61fbbb7d6956de145aed5
 +		devm_request_threaded_irq(dev, mpp->irq,
 +					mpp_dev_irq,
 +					NULL,
-+					IRQF_ONESHOT,
++					0,
 +					dev_name(dev), mpp);
 +	if (ret) {
 +		dev_err(dev, "register interrupter runtime failed\n");
@@ -43697,10 +43700,10 @@ index 0000000000000000000000000000000000000000..a0f6d1e2269db091fca81cc75089379c
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_drv.c b/drivers/video/rockchip/rga3/rga_drv.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..14a8aaa280d8e109b2ed009e7185a9f749b5eb47
+index 0000000000000000000000000000000000000000..0b2359434703e1d2d3d60eaa8e0372ad8b089b14
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_drv.c
-@@ -0,0 +1,1948 @@
+@@ -0,0 +1,1950 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -45163,6 +45166,7 @@ index 0000000000000000000000000000000000000000..14a8aaa280d8e109b2ed009e7185a9f7
 +	},
 +	{},
 +};
++MODULE_DEVICE_TABLE(of, rga3_dt_ids);
 +
 +static const struct of_device_id rga2_dt_ids[] = {
 +	{
@@ -45176,6 +45180,7 @@ index 0000000000000000000000000000000000000000..14a8aaa280d8e109b2ed009e7185a9f7
 +	},
 +	{},
 +};
++MODULE_DEVICE_TABLE(of, rga2_dt_ids);
 +
 +static int init_scheduler(struct rga_scheduler_t *scheduler,
 +			  struct device *dev,
