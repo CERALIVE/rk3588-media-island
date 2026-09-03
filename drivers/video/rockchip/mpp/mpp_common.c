@@ -39,6 +39,7 @@
 #include "mpp_debug.h"
 #include "mpp_common.h"
 #include "mpp_iommu.h"
+#include "mpp_request_bounds.h"
 
 /* input parmater structure for version 1 */
 struct mpp_msg_v1 {
@@ -1621,8 +1622,12 @@ static int __mpp_process_request(struct mpp_session *session,
 	case MPP_CMD_INIT_TRANS_TABLE: {
 		if (session && req->size) {
 			int trans_tbl_size = sizeof(session->trans_table);
+			u32 trans_count;
 
-			if (req->size > trans_tbl_size) {
+			if (mpp_req_element_count(req->size,
+						  sizeof(session->trans_table[0]),
+						  ARRAY_SIZE(session->trans_table),
+						  &trans_count)) {
 				mpp_err("init table size %d more than %d\n",
 					req->size, trans_tbl_size);
 				return -ENOMEM;
@@ -1633,8 +1638,7 @@ static int __mpp_process_request(struct mpp_session *session,
 				mpp_err("copy_from_user failed\n");
 				return -EINVAL;
 			}
-			session->trans_count =
-				req->size / sizeof(session->trans_table[0]);
+			session->trans_count = trans_count;
 		}
 	} break;
 	case MPP_CMD_SET_REG_WRITE:
@@ -2426,49 +2430,16 @@ int mpp_check_req(struct mpp_request *req, int base,
 	 * 0x80000000 became negative and passed every bound below, after which
 	 * the caller copied through it.
 	 */
-	u32 req_off;
+	u32 checked_size;
 
 	if (base < 0 || max_size < 0) {
 		mpp_err("error: base %x, max_size %x\n", base, max_size);
 		return -EINVAL;
 	}
-	if (req->offset < (u32)base) {
-		mpp_err("error: base %x, offset %x\n",
-			base, req->offset);
+	if (mpp_req_buffer_check(req->offset, req->size, base, max_size,
+				 off_s, off_e, &checked_size))
 		return -EINVAL;
-	}
-	req_off = req->offset - (u32)base;
-	if (req->size > U32_MAX - req_off) {
-		mpp_err("error: req_off %x, req_size %x wraps\n",
-			req_off, req->size);
-		return -EINVAL;
-	}
-	if ((req_off + req->size) < off_s) {
-		mpp_err("error: req_off %x, req_size %x, off_s %x\n",
-			req_off, req->size, off_s);
-		return -EINVAL;
-	}
-	if ((u32)max_size < off_e) {
-		mpp_err("error: off_e %x, max_size %x\n",
-			off_e, max_size);
-		return -EINVAL;
-	}
-	if (req_off > (u32)max_size) {
-		mpp_err("error: req_off %x, max_size %x\n",
-			req_off, max_size);
-		return -EINVAL;
-	}
-	/*
-	 * Clamp to the space that is actually left. The previous expression
-	 * computed the overflow amount instead, which left req->size untouched
-	 * whenever req_off == max_size and shrank it to the wrong value
-	 * otherwise.
-	 */
-	if (req->size > (u32)max_size - req_off) {
-		mpp_err("error: req_off %x, req_size %x, max_size %x\n",
-			req_off, req->size, max_size);
-		req->size = (u32)max_size - req_off;
-	}
+	req->size = checked_size;
 
 	return 0;
 }

@@ -41,6 +41,7 @@
 #include "mpp_debug.h"
 #include "mpp_iommu.h"
 #include "mpp_common.h"
+#include "mpp_request_bounds.h"
 
 #define RKVENC_DRIVER_NAME			"mpp_rkvenc2"
 
@@ -103,11 +104,6 @@ enum RKVENC_VEPU_TYPE {
 	RKVENC_VEPU_BUTT,
 };
 
-struct rkvenc_reg_msg {
-	u32 base_s;
-	u32 base_e;
-};
-
 struct rkvenc_class_msg {
 	u32 offset;
 	u32 size;
@@ -118,7 +114,7 @@ struct rkvenc_hw_info {
 	struct mpp_hw_info hw;
 	/* for register range check */
 	u32 reg_class;
-	struct rkvenc_reg_msg reg_msg[RKVENC_CLASS_BUTT];
+	struct mpp_req_class reg_msg[RKVENC_CLASS_BUTT];
 	/* for fd translate */
 	u32 fd_class;
 	struct {
@@ -808,27 +804,10 @@ static int rkvenc_soft_reset(struct mpp_dev *mpp);
 static bool req_over_class(struct mpp_request *req,
 			   struct rkvenc_task *task, int class)
 {
-	bool ret;
-	u32 base_s, base_e, req_e;
-	struct rkvenc_hw_info *hw = task->hw_info;
+	struct mpp_req_part part;
 
-	base_s = hw->reg_msg[class].base_s;
-	base_e = hw->reg_msg[class].base_e;
-
-	/*
-	 * offset and size are both user-controlled u32. A window shorter than
-	 * one register, or one whose end wraps, describes no class at all --
-	 * accepting it would hand a wrapped end on to rkvenc_update_req().
-	 */
-	if (req->size < sizeof(u32))
-		return false;
-	req_e = req->offset + (req->size - sizeof(u32));
-	if (req_e < req->offset)
-		return false;
-
-	ret = (req->offset <= base_e && req_e >= base_s) ? true : false;
-
-	return ret;
+	return !mpp_req_class_part(req->offset, req->size,
+				   &task->hw_info->reg_msg[class], &part);
 }
 
 static int rkvenc_free_class_msg(struct rkvenc_task *task)
@@ -869,30 +848,16 @@ static int rkvenc_update_req(struct rkvenc_task *task, int class,
 			     struct mpp_request *req_in,
 			     struct mpp_request *req_out)
 {
-	u32 base_s, base_e, req_e, s, e;
-	struct rkvenc_hw_info *hw = task->hw_info;
+	struct mpp_req_part part;
 
-	base_s = hw->reg_msg[class].base_s;
-	base_e = hw->reg_msg[class].base_e;
-
-	if (req_in->size < sizeof(u32))
-		return -EINVAL;
-	req_e = req_in->offset + (req_in->size - sizeof(u32));
-	if (req_e < req_in->offset)
+	if (mpp_req_class_part(req_in->offset, req_in->size,
+				       &task->hw_info->reg_msg[class], &part))
 		return -EINVAL;
 
-	s = max(req_in->offset, base_s);
-	e = min(req_e, base_e);
-	/*
-	 * An inverted window would underflow the size below to nearly 4G and
-	 * run copy_from_user() off the end of the class allocation.
-	 */
-	if (e < s)
-		return -EINVAL;
-
-	req_out->offset = s;
-	req_out->size = e - s + sizeof(u32);
-	req_out->data = (u8 __user *)req_in->data + (s - req_in->offset);
+	req_out->offset = part.offset;
+	req_out->size = part.size;
+	req_out->data = (u8 __user *)req_in->data +
+			(part.offset - req_in->offset);
 
 	return 0;
 }
@@ -1004,7 +969,8 @@ static int rkvenc_extract_task_msg(struct mpp_session *session,
 					mpp_err("alloc class msg %d fail.\n", j);
 					goto fail;
 				}
-				if (task->w_req_cnt >= MPP_MAX_MSG_NUM) {
+				if (mpp_req_count_room(task->w_req_cnt,
+						       ARRAY_SIZE(task->w_reqs))) {
 					mpp_err("w_req_cnt %d overflow\n", task->w_req_cnt);
 					ret = -EINVAL;
 					goto fail;
@@ -1050,7 +1016,8 @@ static int rkvenc_extract_task_msg(struct mpp_session *session,
 					mpp_err("alloc class msg reg %d fail.\n", j);
 					goto fail;
 				}
-				if (task->r_req_cnt >= MPP_MAX_MSG_NUM) {
+				if (mpp_req_count_room(task->r_req_cnt,
+						       ARRAY_SIZE(task->r_reqs))) {
 					mpp_err("r_req_cnt %d overflow\n", task->r_req_cnt);
 					ret = -EINVAL;
 					goto fail;
@@ -2095,10 +2062,16 @@ static int rkvenc_result(struct mpp_dev *mpp,
 
 	for (i = 0; i < task->r_req_cnt; i++) {
 		struct mpp_request *req = &task->r_reqs[i];
-		u32 *reg = rkvenc_get_class_reg(task, req->offset);
+		struct rkvenc_class_msg msg;
+		u32 window_offset;
+		u32 *reg;
 
-		if (!reg)
+		if (rkvenc_get_class_msg(task, req->offset, &msg))
 			return -EINVAL;
+		if (mpp_req_window_offset(req->offset, req->size, msg.offset,
+					  msg.size, &window_offset))
+			return -EINVAL;
+		reg = (u32 *)((u8 *)msg.data + window_offset);
 		if (copy_to_user(req->data, reg, req->size)) {
 			mpp_err("copy_to_user reg fail\n");
 			return -EIO;

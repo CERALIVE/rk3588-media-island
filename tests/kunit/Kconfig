@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0
+config ROCKCHIP_MPP_BOUNDARY_KUNIT_TEST
+	tristate "Rockchip MPP request-boundary tests"
+	depends on KUNIT
+	default KUNIT_ALL_TESTS
+	help
+	  Exercise the pure request-shape, element-count, class-coverage, and
+	  result-copy bounds shared by the RK3588 MPP clients.
