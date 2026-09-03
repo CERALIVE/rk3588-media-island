@@ -182,7 +182,7 @@ remaining deferred inputs live in [`docs/CI.md`](docs/CI.md).
 | `action-pins` | Every `uses:` is at the current latest major. **Non-blocking** — an action's release cadence must not redden an unrelated PR |
 | `pin` | Nothing — it *reads* the coordinates out of `kernel-pin.env` and emits them as job outputs |
 | `pin-equality` | The four mirrored `KERNEL_*` values equal the consumer's |
-| `cross-compile-modules` | Both pinned kernel objects resolve; the tree configures the way the device is configured; a configured `vmlinux` supplies the real provider symbol table; the two arm64 modules link with `-Werror` and the exact `.ko` set; no island `compatible` collides with a mainline `of_match_table` |
+| `cross-compile-modules` | Both pinned kernel objects resolve; the tree configures the way the device is configured; the configured `vmlinux.symvers` is exposed as the `Module.symvers` external modpost requires; the two arm64 modules link with `-Werror` and the exact `.ko` set; no island `compatible` collides with a mainline `of_match_table` |
 | `kunit` | Reports `NO-KUNIT-CASES-YET` until todo 9 lands the first suite, then builds it against the pinned tree |
 | `static-analysis` | sparse with findings promoted to errors plus coccinelle over every selected island object; smatch remains conditional on a suitable runner package |
 | `upstream-watch` | Nothing — it opens or updates ONE issue and never edits a pin or dispatches a build |
