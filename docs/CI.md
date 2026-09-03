@@ -20,7 +20,7 @@ a pin bump would then leave CI proving the series against a kernel nobody ships
 | Job | Asserts |
 |---|---|
 | `shellcheck` | every tracked shell script lints clean at `-S style`, excluding only `SC1091` (a runtime-resolved `source` cannot be followed) |
-| `self-tests` | every board harness and every CI tool, including the MPP hardening source-contract checker, passes its own scored fixtures. **A separate job on purpose** — see §3 |
+| `self-tests` | every board/DT harness and every CI tool, including the MPP hardening source-contract checker, passes its own scored fixtures. **A separate job on purpose** — see §3 |
 | `series-integrity` | `patches/` regenerates byte-identically from `drivers/` + `integration/`, and an independent checker that does not import the generator agrees |
 | `shim-lint` | no compat header gives a `REAL-DEPENDENCY` symbol a body; no unclassified `<soc/rockchip/*.h>` include or `rockchip_*` census symbol exists |
 | `dt-ownership-lint` | every island-owned node in `docs/OWNERSHIP.md` is left with exactly one `compatible` string |
@@ -29,7 +29,7 @@ a pin bump would then leave CI proving the series against a kernel nobody ships
 | `action-pins` | every `uses:` is at the current latest major. **Non-blocking** — see §4 |
 | `pin` | nothing — it *reads* the coordinates out of `kernel-pin.env` and emits them |
 | `pin-equality` | the four mirrored `KERNEL_*` values equal the consumer repository's |
-| `cross-compile-modules` | the pinned tag resolves to both pinned objects; the tree configures the way the device is configured; `vmlinux` supplies provider symbols, `modules_prepare` supplies the final-link script, and configured `vmlinux.symvers` is exposed under the `Module.symvers` filename external modpost reads; exactly `rk_vcodec.ko` and `rga3.ko` link with `-Werror`; no island `compatible` collides with a mainline `of_match_table` |
+| `cross-compile-modules` | the pinned tag resolves to both pinned objects; the tree configures the way the device is configured; `vmlinux` supplies provider symbols, `modules_prepare` supplies the final-link script, and configured `vmlinux.symvers` is exposed under the `Module.symvers` filename external modpost reads; exactly `rk_vcodec.ko` and `rga3.ko` link with `-Werror`; both board DTBs build and pass the ownership/skip-PMU checker; no island `compatible` collides with a mainline `of_match_table` |
 | `kunit` | the request-boundary and RKVENC2 fault/lifecycle suites in `tests/kunit/` pass against the pinned kernel |
 | `static-analysis` | sparse inspects every selected composite object with findings promoted to errors, followed by coccinelle over both island directories; the plan's conditional smatch arm is not enabled without a suitable runner package |
 
@@ -58,7 +58,12 @@ reason worth stating:
    both, then checks the symbol dump is non-empty and copies it to
    `Module.symvers`. The two module builds run without `KBUILD_MODPOST_WARN`:
    `shim-lint` catches a REAL-DEPENDENCY given a stub body, and strict modpost
-   catches a declaration with no provider behind it.
+    catches a declaration with no provider behind it.
+5. **Both supported board DTBs are built from the applied lane.**
+   `tests/dt/check-dtb-ownership.sh` reads the compiled blobs with `fdtget`,
+   proves every MPP node's sole compatible and every client node's
+   `rockchip,skip-pmu-idle-request`, and proves the pending RGA compatibles did
+   not leak into the live tree.
 
 ### The one split gate
 
@@ -75,24 +80,39 @@ note would be the worse trade.
 
 ---
 
-## 2. Import-era gate state
+## 2. Ownership-era gate state
 
 The driver import has landed. Every gate whose input is part of todo 8 is now
 non-vacuous:
 
 | Gate | Live assertion |
 |---|---|
-| `series-integrity` | four generated mailboxes reconstruct all 66 island source files and carry all three integration payloads byte-identically |
+| `series-integrity` | seven generated mailboxes reconstruct all 69 island source files and carry all six applied integration payloads byte-identically; `integration/pending/` remains excluded |
 | `shim-lint` | all classified compatibility headers and source call sites are scanned; a REAL-DEPENDENCY body remains forbidden |
 | `uapi-parity` | the imported kernel header is compared with both pinned userspace/vendor references, including every command value and layout assertion |
-| `cross-compile-modules` | strict modpost links exactly `rk_vcodec.ko` and `rga3.ko` against the configured Linux 7.2 provider symbol table |
+| `cross-compile-modules` | strict modpost links exactly `rk_vcodec.ko` and `rga3.ko` against the configured Linux 7.2 provider symbol table, then builds and inspects both supported board DTBs |
 | `static-analysis` | sparse checks all selected MPP/RGA objects with `-Wsparse-error`; coccinelle scans both directories |
+| `dt-ownership-lint` | three applied MPP DT patches and two pending RGA DT patches each leave sole island compatibles; the pinned-tree arm rejects any mainline driver collision |
 
-One later-wave input remains deliberately absent and still says so rather than
-claiming a pass:
+RGA ownership remains deliberately unshipped. Its two patches are linted under
+`integration/pending/`, and the DTB checker proves the compiled live tree still
+uses the mainline RGA compatibles until todo 19 promotes both together.
 
-- `dt-ownership-lint` prints `NO-DT-YET` until todo 10 adds ownership hunks. Its
-  pinned-mainline collision arm still runs in the kernel job.
+### Todo 10 local DTB evidence
+
+On 2026-09-03, both board targets were built from the pinned Linux v7.2 tree
+after applying all six live integration patches:
+
+```text
+DTC arch/arm64/boot/dts/rockchip/rk3588-rock-5b-plus.dtb
+DTC arch/arm64/boot/dts/rockchip/rk3588-orangepi-5-plus.dtb
+PASS: both RK3588 board DTBs satisfy MPP ownership; RGA remains pending
+```
+
+The same two targets were built from a separate pristine `v7.2` worktree. Both
+the baseline and patched `stderr` warning logs contained **zero lines**, and
+`cmp` found them byte-identical. This is the required no-new-`dtc`-warnings
+comparison, not an inference from a successful build.
 
 KUnit is now non-vacuous: todo 9's request-boundary and deterministic fault
 controls run as real suites against the pinned kernel.
@@ -506,8 +526,9 @@ hold while the module build is skipped.
 
 ## 10. Remaining deferred gates
 
-1. **DT ownership is a later input.** Todo 8 intentionally carries no DT hunk;
-   `NO-DT-YET` remains honest until todo 10 assigns compatible strings.
+1. **RGA ownership is a later input.** The MPP ownership lane is live. The RGA3
+   and RGA2 compatible flips remain under `integration/pending/` until todo 19
+   promotes both in one release.
 2. **KUnit is live.** Its repo-owned `.kunitconfig` runs the boundary and
    fault/lifecycle suites against the pinned kernel.
 3. **Smatch is conditional.** The plan requires it when a suitable runner
