@@ -1283,6 +1283,7 @@ static long rga_ioctl(struct file *file, uint32_t cmd, unsigned long arg)
 #ifdef CONFIG_ROCKCHIP_RGA_DEBUGGER
 static int rga_debugger_init(struct rga_debugger **debugger_p)
 {
+	int ret;
 	struct rga_debugger *debugger;
 
 	*debugger_p = kzalloc(sizeof(struct rga_debugger), GFP_KERNEL);
@@ -1303,10 +1304,21 @@ static int rga_debugger_init(struct rga_debugger **debugger_p)
 	INIT_LIST_HEAD(&debugger->procfs_entry_list);
 #endif
 
-	rga_debugfs_init();
-	rga_procfs_init();
+	ret = rga_debugfs_init();
+	if (ret)
+		goto err_free;
+	ret = rga_procfs_init();
+	if (ret) {
+		rga_debugfs_remove();
+		goto err_free;
+	}
 
 	return 0;
+
+err_free:
+	kfree(*debugger_p);
+	*debugger_p = NULL;
+	return ret;
 }
 
 static int rga_debugger_remove(struct rga_debugger **debugger_p)
@@ -1832,13 +1844,17 @@ static int __init rga_init(void)
 		goto err_remove_managers;
 
 #ifdef CONFIG_ROCKCHIP_RGA_DEBUGGER
-	rga_debugger_init(&rga_drvdata->debugger);
+	ret = rga_debugger_init(&rga_drvdata->debugger);
+	if (ret)
+		goto err_remove_fence;
 #endif
 
 	pr_info("Module initialized. v%s\n", DRIVER_VERSION);
 
 	return 0;
 
+err_remove_fence:
+	rga_fence_context_remove(&rga_drvdata->fence_ctx);
 err_remove_managers:
 	rga_session_manager_remove(&rga_drvdata->session_manager);
 	rga_request_manager_remove(&rga_drvdata->pend_request_manager);

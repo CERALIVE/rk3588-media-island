@@ -204,6 +204,12 @@ surface, sparse checks every selected object, and cross-compile asserts exactly
 both board DTBs are inspected, and the two pending RGA hunks are linted without
 entering the generated series.
 
+**Telemetry is part of the production island contract.** The island fragment
+forces MPP procfs and the RGA procfs debugger on. Module init fails rather than
+silently succeeding when either required root cannot be created, and
+`tests/board/probe-telemetry.sh` checks the operator-facing files. Debugfs stays
+optional; `/proc/mpp_service` and `/proc/rkrga/load` are the stable surfaces.
+
 **No workflow restates a pinned coordinate.** The kernel tag is read from
 `kernel-pin.env`; a literal tag anywhere in `.github/` is a regression, because a
 pin bump would otherwise leave CI proving the series against a kernel nobody ships

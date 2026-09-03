@@ -26,6 +26,7 @@ accepts **both** layouts, so the move is a `git mv` with no edits.
 | `probe-rga-uapi.c` | is there a multi_rga character device, and can it blit an NV12 dma-buf? | 3(b) copy census, RGA flip |
 | `librga-compat-probe.c` | what does librga's "compatibility mode" really do with no `/dev/rga`? | A2 |
 | `librga-async-probe.cpp` + `librga-ioctl-trace.c` | does pinned librga construct a fence-bearing `IM_ASYNC` request? | todo 54 fence verdict |
+| `probe-telemetry.sh` | are the required MPP and RGA procfs telemetry files readable? | todo 54 / todo 15 |
 | `sample-cores.sh` | did the second encoder core run, and at what per-process fps? | 3(d) dual-core |
 | `count-journal.sh` | how many copy/fallback events happened in a measured window? | 3(b) copy census |
 | `fd-trace.sh` | did a buffer cross this boundary, or was it copied? | 3(b) copy census |

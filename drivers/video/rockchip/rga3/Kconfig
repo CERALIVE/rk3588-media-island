@@ -17,9 +17,10 @@ config ROCKCHIP_RGA_ASYNC
 	  Async dma_fence/sync_file support is part of the island ABI.
 
 config ROCKCHIP_RGA_PROC_FS
-	bool "Enable RGA procfs"
+	bool
 	select ROCKCHIP_RGA_DEBUGGER
 	depends on PROC_FS
+	default y
 	help
 	  Enable procfs to debug multi RGA driver.
 

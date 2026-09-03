@@ -363,6 +363,8 @@ static int mpp_show_device_load(struct seq_file *file, void *v)
 
 static int mpp_procfs_init(struct mpp_service *srv)
 {
+	struct proc_dir_entry *entry;
+
 	srv->procfs = proc_mkdir(MPP_SERVICE_NAME, NULL);
 	if (IS_ERR_OR_NULL(srv->procfs)) {
 		mpp_err("failed on mkdir /proc/%s\n", MPP_SERVICE_NAME);
@@ -370,23 +372,46 @@ static int mpp_procfs_init(struct mpp_service *srv)
 		return -EIO;
 	}
 	/* show version */
-	proc_create_single("version", 0444, srv->procfs, mpp_show_version);
+	entry = proc_create_single("version", 0444, srv->procfs,
+				   mpp_show_version);
+	if (!entry)
+		goto fail;
 	/* for show session info */
-	proc_create_single_data("sessions-summary", 0444,
-				srv->procfs, mpp_show_session_summary, srv);
+	entry = proc_create_single_data("sessions-summary", 0444,
+					srv->procfs, mpp_show_session_summary, srv);
+	if (!entry)
+		goto fail;
 	/* show support dev cmd */
-	proc_create_single("supports-cmd", 0444, srv->procfs, mpp_show_support_cmd);
+	entry = proc_create_single("supports-cmd", 0444, srv->procfs,
+				   mpp_show_support_cmd);
+	if (!entry)
+		goto fail;
 	/* show support devices */
-	proc_create_single_data("supports-device", 0444,
+	entry = proc_create_single_data("supports-device", 0444,
 				srv->procfs, mpp_show_support_device, srv);
+	if (!entry)
+		goto fail;
 	srv->timing_en = 1;
-	mpp_procfs_create_u32("timing_en", 0644, srv->procfs, &srv->timing_en);
+	entry = mpp_procfs_create_u32("timing_en", 0644, srv->procfs,
+				      &srv->timing_en);
+	if (!entry)
+		goto fail;
 	/* show per device load info */
-	proc_create_single_data("load", 0444, srv->procfs, mpp_show_device_load, srv);
+	entry = proc_create_single_data("load", 0444, srv->procfs,
+					mpp_show_device_load, srv);
+	if (!entry)
+		goto fail;
 	srv->load_interval = 0;
-	mpp_procfs_create_u32("load_interval", 0644, srv->procfs, &srv->load_interval);
+	entry = mpp_procfs_create_u32("load_interval", 0644, srv->procfs,
+				      &srv->load_interval);
+	if (!entry)
+		goto fail;
 
 	return 0;
+
+fail:
+	mpp_procfs_remove(srv);
+	return -ENOMEM;
 }
 #else
 static inline int mpp_procfs_remove(struct mpp_service *srv)
@@ -474,7 +499,9 @@ static int mpp_service_probe(struct platform_device *pdev)
 	}
 	mutex_init(&srv->session_lock);
 	INIT_LIST_HEAD(&srv->session_list);
-	mpp_procfs_init(srv);
+	ret = mpp_procfs_init(srv);
+	if (ret)
+		goto fail_procfs;
 
 	/* register sub drivers */
 	MPP_REGISTER_DRIVER(srv, HAS_RKVDEC, RKVDEC, rkvdec);
@@ -496,6 +523,8 @@ static int mpp_service_probe(struct platform_device *pdev)
 
 	return 0;
 
+fail_procfs:
+	mpp_remove_service(srv);
 fail_register:
 	class_destroy(srv->cls);
 

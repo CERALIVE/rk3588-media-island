@@ -25708,10 +25708,10 @@ index 0000000000000000000000000000000000000000..e0fffac371c257d70bce544a3cfcce4c
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_service.c b/drivers/video/rockchip/mpp/mpp_service.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..05c5f51a2f56468db8fc1cedd756a45455d8456f
+index 0000000000000000000000000000000000000000..d50b72a5dc44189be9efbac8e140f3bc79ea6eab
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_service.c
-@@ -0,0 +1,578 @@
+@@ -0,0 +1,607 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -26077,6 +26077,8 @@ index 0000000000000000000000000000000000000000..05c5f51a2f56468db8fc1cedd756a454
 +
 +static int mpp_procfs_init(struct mpp_service *srv)
 +{
++	struct proc_dir_entry *entry;
++
 +	srv->procfs = proc_mkdir(MPP_SERVICE_NAME, NULL);
 +	if (IS_ERR_OR_NULL(srv->procfs)) {
 +		mpp_err("failed on mkdir /proc/%s\n", MPP_SERVICE_NAME);
@@ -26084,23 +26086,46 @@ index 0000000000000000000000000000000000000000..05c5f51a2f56468db8fc1cedd756a454
 +		return -EIO;
 +	}
 +	/* show version */
-+	proc_create_single("version", 0444, srv->procfs, mpp_show_version);
++	entry = proc_create_single("version", 0444, srv->procfs,
++				   mpp_show_version);
++	if (!entry)
++		goto fail;
 +	/* for show session info */
-+	proc_create_single_data("sessions-summary", 0444,
-+				srv->procfs, mpp_show_session_summary, srv);
++	entry = proc_create_single_data("sessions-summary", 0444,
++					srv->procfs, mpp_show_session_summary, srv);
++	if (!entry)
++		goto fail;
 +	/* show support dev cmd */
-+	proc_create_single("supports-cmd", 0444, srv->procfs, mpp_show_support_cmd);
++	entry = proc_create_single("supports-cmd", 0444, srv->procfs,
++				   mpp_show_support_cmd);
++	if (!entry)
++		goto fail;
 +	/* show support devices */
-+	proc_create_single_data("supports-device", 0444,
++	entry = proc_create_single_data("supports-device", 0444,
 +				srv->procfs, mpp_show_support_device, srv);
++	if (!entry)
++		goto fail;
 +	srv->timing_en = 1;
-+	mpp_procfs_create_u32("timing_en", 0644, srv->procfs, &srv->timing_en);
++	entry = mpp_procfs_create_u32("timing_en", 0644, srv->procfs,
++				      &srv->timing_en);
++	if (!entry)
++		goto fail;
 +	/* show per device load info */
-+	proc_create_single_data("load", 0444, srv->procfs, mpp_show_device_load, srv);
++	entry = proc_create_single_data("load", 0444, srv->procfs,
++					mpp_show_device_load, srv);
++	if (!entry)
++		goto fail;
 +	srv->load_interval = 0;
-+	mpp_procfs_create_u32("load_interval", 0644, srv->procfs, &srv->load_interval);
++	entry = mpp_procfs_create_u32("load_interval", 0644, srv->procfs,
++				      &srv->load_interval);
++	if (!entry)
++		goto fail;
 +
 +	return 0;
++
++fail:
++	mpp_procfs_remove(srv);
++	return -ENOMEM;
 +}
 +#else
 +static inline int mpp_procfs_remove(struct mpp_service *srv)
@@ -26188,7 +26213,9 @@ index 0000000000000000000000000000000000000000..05c5f51a2f56468db8fc1cedd756a454
 +	}
 +	mutex_init(&srv->session_lock);
 +	INIT_LIST_HEAD(&srv->session_list);
-+	mpp_procfs_init(srv);
++	ret = mpp_procfs_init(srv);
++	if (ret)
++		goto fail_procfs;
 +
 +	/* register sub drivers */
 +	MPP_REGISTER_DRIVER(srv, HAS_RKVDEC, RKVDEC, rkvdec);
@@ -26210,6 +26237,8 @@ index 0000000000000000000000000000000000000000..05c5f51a2f56468db8fc1cedd756a454
 +
 +	return 0;
 +
++fail_procfs:
++	mpp_remove_service(srv);
 +fail_register:
 +	class_destroy(srv->cls);
 +
@@ -31198,10 +31227,10 @@ index 0000000000000000000000000000000000000000..784781726ea0b8779dcbdef6441cf561
 +#endif
 diff --git a/drivers/video/rockchip/rga3/Kconfig b/drivers/video/rockchip/rga3/Kconfig
 new file mode 100644
-index 0000000000000000000000000000000000000000..38937d6cacafb003fb621d664751735c19554434
+index 0000000000000000000000000000000000000000..aff932c94292105a8025e0c45018f936250747f8
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/Kconfig
-@@ -0,0 +1,62 @@
+@@ -0,0 +1,63 @@
 +# SPDX-License-Identifier: GPL-2.0
 +menuconfig ROCKCHIP_MULTI_RGA
 +	tristate "MULTI_RGA"
@@ -31221,9 +31250,10 @@ index 0000000000000000000000000000000000000000..38937d6cacafb003fb621d664751735c
 +	  Async dma_fence/sync_file support is part of the island ABI.
 +
 +config ROCKCHIP_RGA_PROC_FS
-+	bool "Enable RGA procfs"
++	bool
 +	select ROCKCHIP_RGA_DEBUGGER
 +	depends on PROC_FS
++	default y
 +	help
 +	  Enable procfs to debug multi RGA driver.
 +
@@ -43715,10 +43745,10 @@ index 0000000000000000000000000000000000000000..a0f6d1e2269db091fca81cc75089379c
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_drv.c b/drivers/video/rockchip/rga3/rga_drv.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..039b42ad95118eb84918e196b448da72aebf3f62
+index 0000000000000000000000000000000000000000..14a8aaa280d8e109b2ed009e7185a9f749b5eb47
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_drv.c
-@@ -0,0 +1,1932 @@
+@@ -0,0 +1,1948 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -45004,6 +45034,7 @@ index 0000000000000000000000000000000000000000..039b42ad95118eb84918e196b448da72
 +#ifdef CONFIG_ROCKCHIP_RGA_DEBUGGER
 +static int rga_debugger_init(struct rga_debugger **debugger_p)
 +{
++	int ret;
 +	struct rga_debugger *debugger;
 +
 +	*debugger_p = kzalloc(sizeof(struct rga_debugger), GFP_KERNEL);
@@ -45024,10 +45055,21 @@ index 0000000000000000000000000000000000000000..039b42ad95118eb84918e196b448da72
 +	INIT_LIST_HEAD(&debugger->procfs_entry_list);
 +#endif
 +
-+	rga_debugfs_init();
-+	rga_procfs_init();
++	ret = rga_debugfs_init();
++	if (ret)
++		goto err_free;
++	ret = rga_procfs_init();
++	if (ret) {
++		rga_debugfs_remove();
++		goto err_free;
++	}
 +
 +	return 0;
++
++err_free:
++	kfree(*debugger_p);
++	*debugger_p = NULL;
++	return ret;
 +}
 +
 +static int rga_debugger_remove(struct rga_debugger **debugger_p)
@@ -45553,13 +45595,17 @@ index 0000000000000000000000000000000000000000..039b42ad95118eb84918e196b448da72
 +		goto err_remove_managers;
 +
 +#ifdef CONFIG_ROCKCHIP_RGA_DEBUGGER
-+	rga_debugger_init(&rga_drvdata->debugger);
++	ret = rga_debugger_init(&rga_drvdata->debugger);
++	if (ret)
++		goto err_remove_fence;
 +#endif
 +
 +	pr_info("Module initialized. v%s\n", DRIVER_VERSION);
 +
 +	return 0;
 +
++err_remove_fence:
++	rga_fence_context_remove(&rga_drvdata->fence_ctx);
 +err_remove_managers:
 +	rga_session_manager_remove(&rga_drvdata->session_manager);
 +	rga_request_manager_remove(&rga_drvdata->pend_request_manager);
