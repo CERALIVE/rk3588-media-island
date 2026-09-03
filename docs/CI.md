@@ -20,7 +20,7 @@ a pin bump would then leave CI proving the series against a kernel nobody ships
 | Job | Asserts |
 |---|---|
 | `shellcheck` | every tracked shell script lints clean at `-S style`, excluding only `SC1091` (a runtime-resolved `source` cannot be followed) |
-| `self-tests` | every board harness and every CI tool passes its own scored fixtures. **A separate job on purpose** — see §3 |
+| `self-tests` | every board harness and every CI tool, including the MPP hardening source-contract checker, passes its own scored fixtures. **A separate job on purpose** — see §3 |
 | `series-integrity` | `patches/` regenerates byte-identically from `drivers/` + `integration/`, and an independent checker that does not import the generator agrees |
 | `shim-lint` | no compat header gives a `REAL-DEPENDENCY` symbol a body; no unclassified `<soc/rockchip/*.h>` include or `rockchip_*` census symbol exists |
 | `dt-ownership-lint` | every island-owned node in `docs/OWNERSHIP.md` is left with exactly one `compatible` string |
