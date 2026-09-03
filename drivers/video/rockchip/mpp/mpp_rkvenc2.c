@@ -3599,6 +3599,7 @@ static int rkvenc_core_probe(struct platform_device *pdev)
 		dev_err(dev, "register interrupter runtime failed\n");
 		goto err_detach_ccu;
 	}
+	mpp->is_irq_startup = true;
 	mpp->session_max_buffers = RKVENC_SESSION_MAX_BUFFERS;
 	enc->hw_info = to_rkvenc_info(mpp->var->hw_info);
 	mpp->fault_handler = rkvenc2_iommu_fault_handle;
@@ -3662,6 +3663,7 @@ static int rkvenc_probe_default(struct platform_device *pdev)
 		dev_err(dev, "register interrupter runtime failed\n");
 		goto failed_get_irq;
 	}
+	mpp->is_irq_startup = true;
 	mpp->session_max_buffers = RKVENC_SESSION_MAX_BUFFERS;
 	enc->hw_info = to_rkvenc_info(mpp->var->hw_info);
 	rkvenc_procfs_init(mpp);
@@ -3729,6 +3731,17 @@ static int rkvenc2_free_rcbbuf(struct platform_device *pdev, struct rkvenc_dev *
 	return 0;
 }
 
+static void rkvenc_release_irq(struct platform_device *pdev, struct mpp_dev *mpp)
+{
+	if (!mpp->is_irq_startup)
+		return;
+
+	disable_irq(mpp->irq);
+	synchronize_irq(mpp->irq);
+	devm_free_irq(&pdev->dev, mpp->irq, mpp);
+	mpp->is_irq_startup = false;
+}
+
 static void rkvenc_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -3741,6 +3754,7 @@ static void rkvenc_remove(struct platform_device *pdev)
 		struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
 
 		dev_info(dev, "remove core\n");
+		rkvenc_release_irq(pdev, mpp);
 		rkvenc2_free_rcbbuf(pdev, enc);
 		rkvenc_detach_ccu(enc);
 		mpp_dev_remove(&enc->mpp);
@@ -3750,6 +3764,7 @@ static void rkvenc_remove(struct platform_device *pdev)
 		struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
 
 		dev_info(dev, "remove device\n");
+		rkvenc_release_irq(pdev, mpp);
 		rkvenc2_free_rcbbuf(pdev, enc);
 		mpp_dev_remove(mpp);
 		rkvenc_procfs_remove(mpp);

@@ -21643,10 +21643,10 @@ index 0000000000000000000000000000000000000000..5ab7441b178f7359ee049a13368d79a4
 +};
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc2.c b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..566411fe1baa67fe2b61ebcd1e7e8820a9e9b853
+index 0000000000000000000000000000000000000000..1e1a1bcccc84deb3c5d2ef5b3938187984052cdd
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
-@@ -0,0 +1,3776 @@
+@@ -0,0 +1,3791 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
@@ -25248,6 +25248,7 @@ index 0000000000000000000000000000000000000000..566411fe1baa67fe2b61ebcd1e7e8820
 +		dev_err(dev, "register interrupter runtime failed\n");
 +		goto err_detach_ccu;
 +	}
++	mpp->is_irq_startup = true;
 +	mpp->session_max_buffers = RKVENC_SESSION_MAX_BUFFERS;
 +	enc->hw_info = to_rkvenc_info(mpp->var->hw_info);
 +	mpp->fault_handler = rkvenc2_iommu_fault_handle;
@@ -25311,6 +25312,7 @@ index 0000000000000000000000000000000000000000..566411fe1baa67fe2b61ebcd1e7e8820
 +		dev_err(dev, "register interrupter runtime failed\n");
 +		goto failed_get_irq;
 +	}
++	mpp->is_irq_startup = true;
 +	mpp->session_max_buffers = RKVENC_SESSION_MAX_BUFFERS;
 +	enc->hw_info = to_rkvenc_info(mpp->var->hw_info);
 +	rkvenc_procfs_init(mpp);
@@ -25378,6 +25380,17 @@ index 0000000000000000000000000000000000000000..566411fe1baa67fe2b61ebcd1e7e8820
 +	return 0;
 +}
 +
++static void rkvenc_release_irq(struct platform_device *pdev, struct mpp_dev *mpp)
++{
++	if (!mpp->is_irq_startup)
++		return;
++
++	disable_irq(mpp->irq);
++	synchronize_irq(mpp->irq);
++	devm_free_irq(&pdev->dev, mpp->irq, mpp);
++	mpp->is_irq_startup = false;
++}
++
 +static void rkvenc_remove(struct platform_device *pdev)
 +{
 +	struct device *dev = &pdev->dev;
@@ -25390,6 +25403,7 @@ index 0000000000000000000000000000000000000000..566411fe1baa67fe2b61ebcd1e7e8820
 +		struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
 +
 +		dev_info(dev, "remove core\n");
++		rkvenc_release_irq(pdev, mpp);
 +		rkvenc2_free_rcbbuf(pdev, enc);
 +		rkvenc_detach_ccu(enc);
 +		mpp_dev_remove(&enc->mpp);
@@ -25399,6 +25413,7 @@ index 0000000000000000000000000000000000000000..566411fe1baa67fe2b61ebcd1e7e8820
 +		struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
 +
 +		dev_info(dev, "remove device\n");
++		rkvenc_release_irq(pdev, mpp);
 +		rkvenc2_free_rcbbuf(pdev, enc);
 +		mpp_dev_remove(mpp);
 +		rkvenc_procfs_remove(mpp);

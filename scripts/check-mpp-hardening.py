@@ -33,6 +33,14 @@ def between(source: str, start: str, end: str) -> str:
     return source[source.index(start) : source.index(end, source.index(start))]
 
 
+def optional_between(source: str, start: str, end: str) -> str:
+    start_index = source.find(start)
+    if start_index < 0:
+        return ""
+    end_index = source.find(end, start_index)
+    return source[start_index:] if end_index < 0 else source[start_index:end_index]
+
+
 def ordered(source: str, first: str, second: str) -> bool:
     return first in source and second in source and source.index(first) < source.index(second)
 
@@ -44,6 +52,7 @@ def evaluate(sources: Sources) -> tuple[Result, ...]:
     wait = between(sources.common, "static int mpp_wait_result_default(", "static int mpp_wait_result(")
     detach = between(sources.common, "static void mpp_detach_workqueue(", "static int mpp_check_cmd_v1")
     attach_ccu = between(sources.rkvenc, "static int rkvenc_attach_ccu(", "static void rkvenc_detach_ccu(")
+    irq_release = optional_between(sources.rkvenc, "static void rkvenc_release_irq(", "static void rkvenc_remove(")
     remove = between(sources.rkvenc, "static void rkvenc_remove(", "static void rkvenc_shutdown(")
     return (
         Result("fwport-0040 unlink-before-private-teardown", ordered(deinit, "list_del_init(&session->service_link)", "session->deinit(session)")),
@@ -53,7 +62,7 @@ def evaluate(sources: Sources) -> tuple[Result, ...]:
         Result("queue publication removed before device detach", ordered(detach, "queue->cores[mpp->core_id] = NULL", "mpp->queue = NULL")),
         Result("failed CCU publication is unlinked", ordered(attach_ccu, "err_detach_core_locked:", "list_del_rcu(&enc->core_link)")),
         Result("service lifetime pins open files", "srv->mpp_cdev.owner = THIS_MODULE" in sources.service and ".suppress_bind_attrs = true" in sources.service),
-        Result("IRQ quiesced before state teardown", ordered(remove, "devm_free_irq", "mpp_dev_remove")),
+        Result("IRQ quiesced before state teardown", ordered(irq_release, "disable_irq", "synchronize_irq") and ordered(irq_release, "synchronize_irq", "devm_free_irq") and ordered(remove, "rkvenc_release_irq", "mpp_dev_remove")),
     )
 
 
