@@ -5,7 +5,7 @@ Subject: [PATCH 1/7] video: rockchip: add the CeraLive RK3588 media island
 
 The Rockchip MPP service with its three compiled clients (RKVENC2, RKVDEC2, JPGDEC), the multi_rga 2D engine driver, and the UAPI headers they publish.
 
-72 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
+71 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
 
 GENERATED from the rk3588-media-island source tree by scripts/build-series.py. The source is the truth and this series is its output; per-file provenance is docs/PROVENANCE.md and the originating commits' Origin: trailers, never this mailbox header.
 
@@ -325,52 +325,6 @@ index 0000000000000000000000000000000000000000..c365505572307716812ee154ed7bad3c
 +static inline void rockchip_dmcfreq_unlock(void) { }
 +
 +#endif /* _MPP_COMPAT_SOC_ROCKCHIP_DMC_H */
-diff --git a/drivers/video/rockchip/mpp/compat/soc/rockchip/rockchip_ipa.h b/drivers/video/rockchip/mpp/compat/soc/rockchip/rockchip_ipa.h
-new file mode 100644
-index 0000000000000000000000000000000000000000..92da9173181aabdf6b0c7d88c9617a062c5bed3f
---- /dev/null
-+++ b/drivers/video/rockchip/mpp/compat/soc/rockchip/rockchip_ipa.h
-@@ -0,0 +1,40 @@
-+/* SPDX-License-Identifier: GPL-2.0 */
-+/*
-+ * Forward-port compat shim for RK3588 VEPU580 (rkvenc2) on mainline 6.18.
-+ *
-+ * The BSP header <soc/rockchip/rockchip_ipa.h> does not exist upstream.
-+ * mpp_rkvenc2.c #includes it (line ~31) but references NO rockchip_ipa_*
-+ * symbol whatsoever -- it is a dead include.  This empty stub exists only so
-+ * the #include resolves; the include line may be deleted outright (W6).
-+ *
-+ * Minimal struct + no-op stubs are provided in case a future refactor pulls
-+ * the IPA static-power model back in; they degrade to "no static power model".
-+ */
-+#ifndef _MPP_COMPAT_SOC_ROCKCHIP_IPA_H
-+#define _MPP_COMPAT_SOC_ROCKCHIP_IPA_H
-+
-+#include <linux/types.h>
-+
-+struct device;
-+
-+struct ipa_power_model_data {
-+	u32 static_coefficient;
-+	s32 ts[4];
-+	struct thermal_zone_device *tz;
-+	bool valid;
-+};
-+
-+static inline struct ipa_power_model_data *
-+rockchip_ipa_power_model_init(struct device *dev, char *lkg_name)
-+{
-+	return NULL;
-+}
-+
-+static inline unsigned long
-+rockchip_ipa_get_static_power(struct ipa_power_model_data *model_data,
-+			      unsigned long voltage)
-+{
-+	return 0;
-+}
-+
-+#endif /* _MPP_COMPAT_SOC_ROCKCHIP_IPA_H */
 diff --git a/drivers/video/rockchip/mpp/compat/soc/rockchip/rockchip_opp_select.h b/drivers/video/rockchip/mpp/compat/soc/rockchip/rockchip_opp_select.h
 new file mode 100644
 index 0000000000000000000000000000000000000000..cdb1aef323a79b3296f2c204713edddefe119d8a
@@ -20281,10 +20235,10 @@ index 0000000000000000000000000000000000000000..94c354c118eb41d831c48cb42459c838
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc.c b/drivers/video/rockchip/mpp/mpp_rkvenc.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..5ab7441b178f7359ee049a13368d79a4b7253dae
+index 0000000000000000000000000000000000000000..039752db69c71b3befeade39a91d81bfdac94d04
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvenc.c
-@@ -0,0 +1,1466 @@
+@@ -0,0 +1,1465 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -20315,7 +20269,6 @@ index 0000000000000000000000000000000000000000..5ab7441b178f7359ee049a13368d79a4
 +#include <linux/workqueue.h>
 +#include <soc/rockchip/pm_domains.h>
 +#include <soc/rockchip/rockchip_iommu.h>
-+#include <soc/rockchip/rockchip_ipa.h>
 +#include <soc/rockchip/rockchip_opp_select.h>
 +#include <soc/rockchip/rockchip_system_monitor.h>
 +
@@ -21753,10 +21706,10 @@ index 0000000000000000000000000000000000000000..5ab7441b178f7359ee049a13368d79a4
 +};
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc2.c b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..703176a57f1e11984128f76a5c47ad7a8229af72
+index 0000000000000000000000000000000000000000..59fce0f8a0a61fbbb7d6956de145aed51f22b559
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
-@@ -0,0 +1,3805 @@
+@@ -0,0 +1,3804 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
@@ -21788,7 +21741,6 @@ index 0000000000000000000000000000000000000000..703176a57f1e11984128f76a5c47ad7a
 +#include <linux/nospec.h>
 +#include <linux/workqueue.h>
 +#include <soc/rockchip/pm_domains.h>
-+#include <soc/rockchip/rockchip_ipa.h>
 +#include <soc/rockchip/rockchip_opp_select.h>
 +#include <soc/rockchip/rockchip_system_monitor.h>
 +#include <soc/rockchip/rockchip_iommu.h>
