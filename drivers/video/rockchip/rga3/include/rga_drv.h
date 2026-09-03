@@ -532,9 +532,7 @@ struct rga_drvdata_t {
 
 	struct rga_session_manager *session_manager;
 
-#ifdef CONFIG_ROCKCHIP_RGA_ASYNC
 	struct rga_fence_context *fence_ctx;
-#endif
 
 #ifdef CONFIG_ROCKCHIP_RGA_DEBUGGER
 	struct rga_debugger *debugger;

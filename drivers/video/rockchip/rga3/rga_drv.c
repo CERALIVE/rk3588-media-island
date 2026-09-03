@@ -1124,12 +1124,6 @@ static long rga_ioctl(struct file *file, uint32_t cmd, unsigned long arg)
 	if (DEBUGGER_EN(NONUSE))
 		return 0;
 
-	if (cmd == RGA_BLIT_ASYNC && !IS_ENABLED(CONFIG_ROCKCHIP_RGA_ASYNC)) {
-		rga_log("The current driver does not support asynchronous mode, please enable CONFIG_ROCKCHIP_RGA_ASYNC.\n");
-
-		return -EINVAL;
-	}
-
 	down_read(&session->release_rwsem);
 	down_read(&rga_drvdata->rwsem);
 
@@ -1825,9 +1819,9 @@ static int __init rga_init(void)
 
 	rga_session_manager_init(&rga_drvdata->session_manager);
 
-#ifdef CONFIG_ROCKCHIP_RGA_ASYNC
-	rga_fence_context_init(&rga_drvdata->fence_ctx);
-#endif
+	ret = rga_fence_context_init(&rga_drvdata->fence_ctx);
+	if (ret)
+		goto err_remove_managers;
 
 #ifdef CONFIG_ROCKCHIP_RGA_DEBUGGER
 	rga_debugger_init(&rga_drvdata->debugger);
@@ -1836,6 +1830,12 @@ static int __init rga_init(void)
 	pr_info("Module initialized. v%s\n", DRIVER_VERSION);
 
 	return 0;
+
+err_remove_managers:
+	rga_session_manager_remove(&rga_drvdata->session_manager);
+	rga_request_manager_remove(&rga_drvdata->pend_request_manager);
+	rga_mm_remove(&rga_drvdata->mm);
+	rga_cancel_timer();
 
 err_destroy_buf_pool:
 	for (i = 0; i < rga_drvdata->num_of_scheduler; i++) {
@@ -1870,9 +1870,7 @@ static void __exit rga_exit(void)
 	rga_debugger_remove(&rga_drvdata->debugger);
 #endif
 
-#ifdef CONFIG_ROCKCHIP_RGA_ASYNC
 	rga_fence_context_remove(&rga_drvdata->fence_ctx);
-#endif
 
 	rga_mm_remove(&rga_drvdata->mm);
 

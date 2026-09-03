@@ -14,3 +14,12 @@ config ROCKCHIP_MPP_FAULT_KUNIT_TEST
 	help
 	  Exercise the atomic one-shot semantics used by the opt-in RKVENC2
 	  fault-injection controls.
+
+config ROCKCHIP_RGA_FENCE_KUNIT_TEST
+	tristate "Rockchip RGA release-fence tests"
+	depends on KUNIT
+	select DMA_SHARED_BUFFER
+	default KUNIT_ALL_TESTS
+	help
+	  Exercise the production release-fence terminal helper for every RGA
+	  request exit class that must wake an asynchronous consumer.

@@ -31105,7 +31105,7 @@ index 0000000000000000000000000000000000000000..784781726ea0b8779dcbdef6441cf561
 +#endif
 diff --git a/drivers/video/rockchip/rga3/Kconfig b/drivers/video/rockchip/rga3/Kconfig
 new file mode 100644
-index 0000000000000000000000000000000000000000..9aa6cc9ba23d77ffea560b1fb9f4a29e03dbe643
+index 0000000000000000000000000000000000000000..38937d6cacafb003fb621d664751735c19554434
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/Kconfig
 @@ -0,0 +1,62 @@
@@ -31121,11 +31121,11 @@ index 0000000000000000000000000000000000000000..9aa6cc9ba23d77ffea560b1fb9f4a29e
 +if ROCKCHIP_MULTI_RGA
 +
 +config ROCKCHIP_RGA_ASYNC
-+	bool "Enable async mode"
++	bool
 +	depends on SYNC_FILE
 +	default y
 +	help
-+	  Asynchronous calls will be supported.
++	  Async dma_fence/sync_file support is part of the island ABI.
 +
 +config ROCKCHIP_RGA_PROC_FS
 +	bool "Enable RGA procfs"
@@ -31173,7 +31173,7 @@ index 0000000000000000000000000000000000000000..9aa6cc9ba23d77ffea560b1fb9f4a29e
 +endif
 diff --git a/drivers/video/rockchip/rga3/Makefile b/drivers/video/rockchip/rga3/Makefile
 new file mode 100644
-index 0000000000000000000000000000000000000000..97871b5db9e0d726af5b35e1c1f1e23f869539d2
+index 0000000000000000000000000000000000000000..4142531501f7c8d11347c9f571f90768d59e8ec0
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/Makefile
 @@ -0,0 +1,10 @@
@@ -31182,8 +31182,8 @@ index 0000000000000000000000000000000000000000..97871b5db9e0d726af5b35e1c1f1e23f
 +ccflags-y += -I$(src)/include
 +
 +rga3-y	:= rga_drv.o rga_common.o rga3_reg_info.o rga_iommu.o rga_dma_buf.o \
-+	   rga_job.o rga_hw_config.o rga2_reg_info.o rga_policy.o rga_mm.o
-+rga3-$(CONFIG_ROCKCHIP_RGA_ASYNC)	+= rga_fence.o
++	   rga_job.o rga_hw_config.o rga2_reg_info.o rga_policy.o rga_mm.o \
++	   rga_fence.o
 +rga3-$(CONFIG_ROCKCHIP_RGA_DEBUGGER)	+= rga_debugger.o
 +
 +obj-$(CONFIG_ROCKCHIP_MULTI_RGA)	+= rga3.o
@@ -33678,10 +33678,10 @@ index 0000000000000000000000000000000000000000..da55b823b0787058ffdbee6bf66c720a
 +
 diff --git a/drivers/video/rockchip/rga3/include/rga_drv.h b/drivers/video/rockchip/rga3/include/rga_drv.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..daf530c0879a6979ee10800fe49eb52118cb0336
+index 0000000000000000000000000000000000000000..8e8dc5adab172564ce32bdd59efa25957f4be684
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/include/rga_drv.h
-@@ -0,0 +1,577 @@
+@@ -0,0 +1,575 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -34216,9 +34216,7 @@ index 0000000000000000000000000000000000000000..daf530c0879a6979ee10800fe49eb521
 +
 +	struct rga_session_manager *session_manager;
 +
-+#ifdef CONFIG_ROCKCHIP_RGA_ASYNC
 +	struct rga_fence_context *fence_ctx;
-+#endif
 +
 +#ifdef CONFIG_ROCKCHIP_RGA_DEBUGGER
 +	struct rga_debugger *debugger;
@@ -34261,10 +34259,10 @@ index 0000000000000000000000000000000000000000..daf530c0879a6979ee10800fe49eb521
 +#endif /* __LINUX_RGA_FENCE_H_ */
 diff --git a/drivers/video/rockchip/rga3/include/rga_fence.h b/drivers/video/rockchip/rga3/include/rga_fence.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..e24dbed09333ef124b23b9ae442a40708c76fcee
+index 0000000000000000000000000000000000000000..6379ad834d0b6586ecdac4ea9b7a23eb39b43065
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/include/rga_fence.h
-@@ -0,0 +1,108 @@
+@@ -0,0 +1,58 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -34281,7 +34279,6 @@ index 0000000000000000000000000000000000000000..e24dbed09333ef124b23b9ae442a4070
 +	spinlock_t spinlock;
 +};
 +
-+#ifdef CONFIG_ROCKCHIP_RGA_ASYNC
 +int rga_fence_context_init(struct rga_fence_context **ctx);
 +void rga_fence_context_remove(struct rga_fence_context **ctx);
 +
@@ -34322,55 +34319,6 @@ index 0000000000000000000000000000000000000000..e24dbed09333ef124b23b9ae442a4070
 +	else
 +		return 1;
 +}
-+
-+#else
-+static inline struct dma_fence *rga_dma_fence_alloc(void)
-+{
-+	return ERR_PTR(-EINVAL);
-+}
-+
-+static inline int rga_dma_fence_get_fd(struct dma_fence *fence)
-+{
-+	return -1;
-+}
-+
-+static inline struct dma_fence *rga_get_dma_fence_from_fd(int fence_fd)
-+{
-+	return NULL;
-+}
-+
-+static inline int rga_dma_fence_wait(struct dma_fence *fence)
-+{
-+	return 0;
-+}
-+
-+static inline int rga_dma_fence_add_callback(struct dma_fence *fence,
-+					     struct dma_fence_cb *callback,
-+					     dma_fence_func_t func)
-+{
-+	return -EINVAL;
-+}
-+
-+static inline bool rga_dma_fence_remove_callback(struct dma_fence *fence,
-+						 struct dma_fence_cb *callback)
-+{
-+	return false;
-+}
-+
-+static inline void rga_dma_fence_put(struct dma_fence *fence)
-+{
-+}
-+
-+static inline void rga_dma_fence_signal(struct dma_fence *fence, int error)
-+{
-+}
-+
-+static inline int rga_dma_fence_get_status(struct dma_fence *fence)
-+{
-+	return -EINVAL;
-+}
-+
-+#endif /* #ifdef CONFIG_SYNC_FILE */
 +
 +#endif /* __LINUX_RGA_FENCE_H_ */
 diff --git a/drivers/video/rockchip/rga3/include/rga_hw_config.h b/drivers/video/rockchip/rga3/include/rga_hw_config.h
@@ -43632,10 +43580,10 @@ index 0000000000000000000000000000000000000000..a0f6d1e2269db091fca81cc75089379c
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_drv.c b/drivers/video/rockchip/rga3/rga_drv.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..25de268fac1b780b22c445413fa5638923575faa
+index 0000000000000000000000000000000000000000..5024f2de160050ea0cd561a4758d80f8f0ec9d1c
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_drv.c
-@@ -0,0 +1,1926 @@
+@@ -0,0 +1,1924 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -44762,12 +44710,6 @@ index 0000000000000000000000000000000000000000..25de268fac1b780b22c445413fa56389
 +	if (DEBUGGER_EN(NONUSE))
 +		return 0;
 +
-+	if (cmd == RGA_BLIT_ASYNC && !IS_ENABLED(CONFIG_ROCKCHIP_RGA_ASYNC)) {
-+		rga_log("The current driver does not support asynchronous mode, please enable CONFIG_ROCKCHIP_RGA_ASYNC.\n");
-+
-+		return -EINVAL;
-+	}
-+
 +	down_read(&session->release_rwsem);
 +	down_read(&rga_drvdata->rwsem);
 +
@@ -45463,9 +45405,9 @@ index 0000000000000000000000000000000000000000..25de268fac1b780b22c445413fa56389
 +
 +	rga_session_manager_init(&rga_drvdata->session_manager);
 +
-+#ifdef CONFIG_ROCKCHIP_RGA_ASYNC
-+	rga_fence_context_init(&rga_drvdata->fence_ctx);
-+#endif
++	ret = rga_fence_context_init(&rga_drvdata->fence_ctx);
++	if (ret)
++		goto err_remove_managers;
 +
 +#ifdef CONFIG_ROCKCHIP_RGA_DEBUGGER
 +	rga_debugger_init(&rga_drvdata->debugger);
@@ -45474,6 +45416,12 @@ index 0000000000000000000000000000000000000000..25de268fac1b780b22c445413fa56389
 +	pr_info("Module initialized. v%s\n", DRIVER_VERSION);
 +
 +	return 0;
++
++err_remove_managers:
++	rga_session_manager_remove(&rga_drvdata->session_manager);
++	rga_request_manager_remove(&rga_drvdata->pend_request_manager);
++	rga_mm_remove(&rga_drvdata->mm);
++	rga_cancel_timer();
 +
 +err_destroy_buf_pool:
 +	for (i = 0; i < rga_drvdata->num_of_scheduler; i++) {
@@ -45508,9 +45456,7 @@ index 0000000000000000000000000000000000000000..25de268fac1b780b22c445413fa56389
 +	rga_debugger_remove(&rga_drvdata->debugger);
 +#endif
 +
-+#ifdef CONFIG_ROCKCHIP_RGA_ASYNC
 +	rga_fence_context_remove(&rga_drvdata->fence_ctx);
-+#endif
 +
 +	rga_mm_remove(&rga_drvdata->mm);
 +
