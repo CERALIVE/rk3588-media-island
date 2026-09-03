@@ -5,9 +5,9 @@ replay, 6.18 equality checkpoint, CeraLive 7.2 delta and generated release
 series are committed. The ledgers below describe the maintained source now in
 the repository.
 
-The source import fills every table here in the same change that adds the code.
-A file landing in `drivers/video/rockchip/` without its row is a review blocker,
-not a follow-up.
+The import is not complete until every table here is filled. Any future file
+landing in `drivers/video/rockchip/` without its row is a review blocker, not a
+follow-up.
 
 ## Why this document exists
 

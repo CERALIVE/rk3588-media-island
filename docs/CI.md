@@ -225,6 +225,32 @@ byte 0 and dragged `#ifndef`/`#define` into the prefix — making a prototype re
 as a call site. Fixed in `declarator_prefix()`, and the self-test's
 declared-only fixture now carries a header guard so it cannot come back.
 
+### M2b — strict modpost: the real IOMMU provider disappears
+
+M2 proves that the static half rejects a REAL-DEPENDENCY body. The other failure
+shape is a declaration with no provider. After configuring and building the
+pinned Linux 7.2 provider symbol table, the mutation removed only its
+`rockchip_iommu_*` export rows — exactly the symbol-table result of omitting
+`integration/0002` — and rebuilt the selected MPP module without
+`KBUILD_MODPOST_WARN`:
+
+```text
+MODPOST Module.symvers
+ERROR: modpost: "rockchip_iommu_mask_irq" [rk_vcodec.ko] undefined!
+ERROR: modpost: "rockchip_iommu_sync_fault_handler" [rk_vcodec.ko] undefined!
+ERROR: modpost: "rockchip_iommu_enable" [rk_vcodec.ko] undefined!
+ERROR: modpost: "rockchip_iommu_unmask_irq" [rk_vcodec.ko] undefined!
+ERROR: modpost: "rockchip_iommu_set_fault_handler" [rk_vcodec.ko] undefined!
+ERROR: modpost: "rockchip_iommu_disable" [rk_vcodec.ko] undefined!
+ERROR: modpost: "rockchip_iommu_prepare_irq" [rk_vcodec.ko] undefined!
+ERROR: modpost: "rockchip_iommu_enable_irq_delivery" [rk_vcodec.ko] undefined!
+provider-link-negative=PASS exit=2
+```
+
+Control — restoring the unmodified symbol table and rebuilding emits
+`rk_vcodec.ko` with exit 0. This is why the CI job builds `vmlinux` rather than
+turning unresolved modpost failures into warnings.
+
 ### M3 — `series-integrity`: a hand-edited `patches/`
 
 `patches/` is generated, so both a hand-added file and a hand-edited `series`

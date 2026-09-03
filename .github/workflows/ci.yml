@@ -130,11 +130,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Layers 1 and 2 (the pinned vendor/libmpp fixture and an independent
-      # _IOC re-derivation) run today. Layer 3 -- the island's own
-      # include/uapi/linux/rk-mpp.h against that fixture -- SKIPS with a named
-      # reason until the driver import creates the header, and the suite refuses
-      # to report a pass for a comparison it did not make.
       - name: the MPP ioctl contract matches both pinned sources
         run: python3 -m unittest discover -s tests/uapi -v
 
