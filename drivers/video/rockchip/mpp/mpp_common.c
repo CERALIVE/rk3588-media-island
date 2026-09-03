@@ -38,6 +38,7 @@
 #include <soc/rockchip/pm_domains.h>
 
 #include "mpp_debug.h"
+#include "mpp_capabilities.h"
 #include "mpp_common.h"
 #include "mpp_iommu.h"
 #include "mpp_request_bounds.h"
@@ -100,6 +101,26 @@ const char *enc_info_item_name[ENC_INFO_BUTT] = {
 
 static void mpp_attach_workqueue(struct mpp_dev *mpp,
 				 struct mpp_taskqueue *queue);
+
+static unsigned long mpp_compiled_client_mask(void)
+{
+	unsigned long mask = 0;
+
+	if (IS_ENABLED(CONFIG_ROCKCHIP_MPP_RKVDEC2))
+		mask |= BIT(MPP_DEVICE_RKVDEC);
+	if (IS_ENABLED(CONFIG_ROCKCHIP_MPP_JPGDEC))
+		mask |= BIT(MPP_DEVICE_RKJPEGD);
+	if (IS_ENABLED(CONFIG_ROCKCHIP_MPP_RKVENC2))
+		mask |= BIT(MPP_DEVICE_RKVENC);
+
+	return mask;
+}
+
+unsigned long mpp_service_visible_hw_support(struct mpp_service *srv)
+{
+	return mpp_visible_device_mask(mpp_compiled_client_mask(),
+				       READ_ONCE(srv->hw_support));
+}
 
 static int
 mpp_taskqueue_pop_pending(struct mpp_taskqueue *queue,
@@ -1503,7 +1524,7 @@ static int __mpp_process_request(struct mpp_session *session,
 
 	switch (req->cmd) {
 	case MPP_CMD_QUERY_HW_SUPPORT: {
-		u32 hw_support = srv->hw_support;
+		u32 hw_support = mpp_service_visible_hw_support(srv);
 
 		mpp_debug(DEBUG_IOCTL, "hw_support %08x\n", hw_support);
 		if (put_user(hw_support, (u32 __user *)req->data))
@@ -2863,6 +2884,10 @@ void mpp_dev_shutdown(struct platform_device *pdev)
 int mpp_dev_register_srv(struct mpp_dev *mpp, struct mpp_service *srv)
 {
 	enum MPP_DEVICE_TYPE device_type = mpp->var->device_type;
+	unsigned long compiled_mask = mpp_compiled_client_mask();
+
+	if (!(compiled_mask & BIT(device_type)))
+		return -EINVAL;
 
 	mutex_lock(&srv->session_lock);
 	srv->sub_devices[device_type] = mpp;

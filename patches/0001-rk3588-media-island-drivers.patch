@@ -5,7 +5,7 @@ Subject: [PATCH 1/7] video: rockchip: add the CeraLive RK3588 media island
 
 The Rockchip MPP service with its three compiled clients (RKVENC2, RKVDEC2, JPGDEC), the multi_rga 2D engine driver, and the UAPI headers they publish.
 
-69 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
+70 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
 
 GENERATED from the rk3588-media-island source tree by scripts/build-series.py. The source is the truth and this series is its output; per-file provenance is docs/PROVENANCE.md and the originating commits' Origin: trailers, never this mailbox header.
 
@@ -3248,12 +3248,29 @@ index 0000000000000000000000000000000000000000..39c63f49a0f3a6407fe1ca18bdf23241
 +		.of_match_table = of_match_ptr(mpp_av1dec_dt_match),
 +	},
 +};
+diff --git a/drivers/video/rockchip/mpp/mpp_capabilities.h b/drivers/video/rockchip/mpp/mpp_capabilities.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..3ebeecc5719d09a0ff436a9d035d6cf98dc46c68
+--- /dev/null
++++ b/drivers/video/rockchip/mpp/mpp_capabilities.h
+@@ -0,0 +1,11 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef CERALIVE_MPP_CAPABILITIES_H
++#define CERALIVE_MPP_CAPABILITIES_H
++
++static inline unsigned long
++mpp_visible_device_mask(unsigned long compiled_mask, unsigned long probed_mask)
++{
++	return compiled_mask & probed_mask;
++}
++
++#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_common.c b/drivers/video/rockchip/mpp/mpp_common.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..0caf76dd0234e27199b252ddc110d3ed0315ff2a
+index 0000000000000000000000000000000000000000..40189c6bebad96b01281c60dfc1eef7f19f63184
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_common.c
-@@ -0,0 +1,3269 @@
+@@ -0,0 +1,3294 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -3294,6 +3311,7 @@ index 0000000000000000000000000000000000000000..0caf76dd0234e27199b252ddc110d3ed
 +#include <soc/rockchip/pm_domains.h>
 +
 +#include "mpp_debug.h"
++#include "mpp_capabilities.h"
 +#include "mpp_common.h"
 +#include "mpp_iommu.h"
 +#include "mpp_request_bounds.h"
@@ -3356,6 +3374,26 @@ index 0000000000000000000000000000000000000000..0caf76dd0234e27199b252ddc110d3ed
 +
 +static void mpp_attach_workqueue(struct mpp_dev *mpp,
 +				 struct mpp_taskqueue *queue);
++
++static unsigned long mpp_compiled_client_mask(void)
++{
++	unsigned long mask = 0;
++
++	if (IS_ENABLED(CONFIG_ROCKCHIP_MPP_RKVDEC2))
++		mask |= BIT(MPP_DEVICE_RKVDEC);
++	if (IS_ENABLED(CONFIG_ROCKCHIP_MPP_JPGDEC))
++		mask |= BIT(MPP_DEVICE_RKJPEGD);
++	if (IS_ENABLED(CONFIG_ROCKCHIP_MPP_RKVENC2))
++		mask |= BIT(MPP_DEVICE_RKVENC);
++
++	return mask;
++}
++
++unsigned long mpp_service_visible_hw_support(struct mpp_service *srv)
++{
++	return mpp_visible_device_mask(mpp_compiled_client_mask(),
++				       READ_ONCE(srv->hw_support));
++}
 +
 +static int
 +mpp_taskqueue_pop_pending(struct mpp_taskqueue *queue,
@@ -4759,7 +4797,7 @@ index 0000000000000000000000000000000000000000..0caf76dd0234e27199b252ddc110d3ed
 +
 +	switch (req->cmd) {
 +	case MPP_CMD_QUERY_HW_SUPPORT: {
-+		u32 hw_support = srv->hw_support;
++		u32 hw_support = mpp_service_visible_hw_support(srv);
 +
 +		mpp_debug(DEBUG_IOCTL, "hw_support %08x\n", hw_support);
 +		if (put_user(hw_support, (u32 __user *)req->data))
@@ -6119,6 +6157,10 @@ index 0000000000000000000000000000000000000000..0caf76dd0234e27199b252ddc110d3ed
 +int mpp_dev_register_srv(struct mpp_dev *mpp, struct mpp_service *srv)
 +{
 +	enum MPP_DEVICE_TYPE device_type = mpp->var->device_type;
++	unsigned long compiled_mask = mpp_compiled_client_mask();
++
++	if (!(compiled_mask & BIT(device_type)))
++		return -EINVAL;
 +
 +	mutex_lock(&srv->session_lock);
 +	srv->sub_devices[device_type] = mpp;
@@ -6525,10 +6567,10 @@ index 0000000000000000000000000000000000000000..0caf76dd0234e27199b252ddc110d3ed
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_common.h b/drivers/video/rockchip/mpp/mpp_common.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..73b8a487246fed8e5cfc69c3f54fcbf514378b54
+index 0000000000000000000000000000000000000000..cae409e40cc98e62d4406ae471ab3df319cf06a5
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_common.h
-@@ -0,0 +1,891 @@
+@@ -0,0 +1,893 @@
 +/* SPDX-License-Identifier: (GPL-2.0+ OR MIT) */
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -7094,6 +7136,8 @@ index 0000000000000000000000000000000000000000..73b8a487246fed8e5cfc69c3f54fcbf5
 +	/* bit mask for iommu shared */
 +	u32 iommu_shared_mask;
 +};
++
++unsigned long mpp_service_visible_hw_support(struct mpp_service *srv);
 +
 +/*
 + * struct mpp_hw_ops - context specific operations for device
@@ -25618,10 +25662,10 @@ index 0000000000000000000000000000000000000000..e0fffac371c257d70bce544a3cfcce4c
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_service.c b/drivers/video/rockchip/mpp/mpp_service.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..7944c555ca712612b7c6e48fcd89ee776c5e1c29
+index 0000000000000000000000000000000000000000..05c5f51a2f56468db8fc1cedd756a45455d8456f
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_service.c
-@@ -0,0 +1,575 @@
+@@ -0,0 +1,578 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -25916,13 +25960,15 @@ index 0000000000000000000000000000000000000000..7944c555ca712612b7c6e48fcd89ee77
 +{
 +	u32 i;
 +	struct mpp_service *srv = file->private;
++	unsigned long visible_mask = mpp_service_visible_hw_support(srv);
 +
 +	seq_puts(file, "---- SUPPORT DEVICES ----\n");
++	mutex_lock(&srv->session_lock);
 +	for (i = 0; i < MPP_DEVICE_BUTT; i++) {
 +		struct mpp_dev *mpp;
 +		struct mpp_hw_info *hw_info;
 +
-+		if (test_bit(i, &srv->hw_support)) {
++		if (test_bit(i, &visible_mask)) {
 +			mpp = srv->sub_devices[array_index_nospec(i, MPP_DEVICE_BUTT)];
 +			if (!mpp)
 +				continue;
@@ -25934,6 +25980,7 @@ index 0000000000000000000000000000000000000000..7944c555ca712612b7c6e48fcd89ee77
 +			seq_puts(file, "\n");
 +		}
 +	}
++	mutex_unlock(&srv->session_lock);
 +
 +	return 0;
 +}

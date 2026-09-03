@@ -486,6 +486,7 @@ jobs:
           mkdir -p .work/linux/drivers/video/rockchip/mpp
           cp drivers/video/rockchip/mpp/mpp_request_bounds.h \
             drivers/video/rockchip/mpp/mpp_rkvenc_test.h \
+            drivers/video/rockchip/mpp/mpp_capabilities.h \
             .work/linux/drivers/video/rockchip/mpp/
           mkdir -p .work/linux/drivers/video/rockchip/rga3/include
           cp drivers/video/rockchip/rga3/include/rga_fence.h \

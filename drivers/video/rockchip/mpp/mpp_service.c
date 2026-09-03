@@ -292,13 +292,15 @@ static int mpp_show_support_device(struct seq_file *file, void *v)
 {
 	u32 i;
 	struct mpp_service *srv = file->private;
+	unsigned long visible_mask = mpp_service_visible_hw_support(srv);
 
 	seq_puts(file, "---- SUPPORT DEVICES ----\n");
+	mutex_lock(&srv->session_lock);
 	for (i = 0; i < MPP_DEVICE_BUTT; i++) {
 		struct mpp_dev *mpp;
 		struct mpp_hw_info *hw_info;
 
-		if (test_bit(i, &srv->hw_support)) {
+		if (test_bit(i, &visible_mask)) {
 			mpp = srv->sub_devices[array_index_nospec(i, MPP_DEVICE_BUTT)];
 			if (!mpp)
 				continue;
@@ -310,6 +312,7 @@ static int mpp_show_support_device(struct seq_file *file, void *v)
 			seq_puts(file, "\n");
 		}
 	}
+	mutex_unlock(&srv->session_lock);
 
 	return 0;
 }

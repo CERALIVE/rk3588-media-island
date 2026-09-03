@@ -15,6 +15,13 @@ config ROCKCHIP_MPP_FAULT_KUNIT_TEST
 	  Exercise the atomic one-shot semantics used by the opt-in RKVENC2
 	  fault-injection controls.
 
+config ROCKCHIP_MPP_CAPABILITIES_KUNIT_TEST
+	tristate "Rockchip MPP capability-reporting tests"
+	depends on KUNIT
+	default KUNIT_ALL_TESTS
+	help
+	  Prove userspace sees only clients that are both compiled and probed.
+
 config ROCKCHIP_RGA_FENCE_KUNIT_TEST
 	tristate "Rockchip RGA release-fence tests"
 	depends on KUNIT

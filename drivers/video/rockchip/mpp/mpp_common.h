@@ -564,6 +564,8 @@ struct mpp_service {
 	u32 iommu_shared_mask;
 };
 
+unsigned long mpp_service_visible_hw_support(struct mpp_service *srv);
+
 /*
  * struct mpp_hw_ops - context specific operations for device
  * @init	Do something when hardware probe.

@@ -43,6 +43,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -54,6 +55,7 @@
 #define EXIT_FAIL 1
 #define EXIT_USAGE 2
 #define EXIT_GATED 77
+#define ISLAND_HW_SUPPORT ((1u << 9) | (1u << 13) | (1u << 16))
 
 static const char *const kServiceNodes[] = {
 	"/dev/mpp_service",
@@ -197,6 +199,10 @@ static int self_test(void)
 		fprintf(stderr, "FAIL: request encoding is wrong\n");
 		return EXIT_FAIL;
 	}
+	if (ISLAND_HW_SUPPORT != 0x00012200u) {
+		fprintf(stderr, "FAIL: island capability mask is wrong\n");
+		return EXIT_FAIL;
+	}
 	printf("request_encoding=ok\n");
 	printf("VERDICT: PASS (self-test; no MPP service was contacted)\n");
 	return EXIT_PASS;
@@ -205,8 +211,9 @@ static int self_test(void)
 static void usage(const char *argv0)
 {
 	fprintf(stderr,
-		"usage: %s [--self-test]\n"
+		"usage: %s [--self-test|--expect-island]\n"
 		"  (no args)    probe /dev/mpp_service on this host\n"
+		"  --expect-island  require exactly RKVENC2+RKVDEC2+JPGDEC\n"
 		"  --self-test  verify the ABI encoding with no hardware\n",
 		argv0);
 }
@@ -217,6 +224,7 @@ int main(int argc, char **argv)
 	uint32_t hw_support = 0;
 	struct mpp_service_cmd_cap cap;
 	int failures = 0;
+	bool expect_island = false;
 	int fd;
 	size_t i;
 
@@ -227,8 +235,12 @@ int main(int argc, char **argv)
 	if (argc == 2) {
 		if (strcmp(argv[1], "--self-test") == 0)
 			return self_test();
-		usage(argv[0]);
-		return EXIT_USAGE;
+		if (strcmp(argv[1], "--expect-island") == 0)
+			expect_island = true;
+		else {
+			usage(argv[0]);
+			return EXIT_USAGE;
+		}
 	}
 
 	fd = open_service(&node);
@@ -245,6 +257,13 @@ int main(int argc, char **argv)
 	else {
 		report("probe_hw_support", -1);
 		failures++;
+	}
+	if (expect_island && hw_support != ISLAND_HW_SUPPORT) {
+		printf("island_hw_support=mismatch expected=0x%08x actual=0x%08x\n",
+		       ISLAND_HW_SUPPORT, hw_support);
+		failures++;
+	} else if (expect_island) {
+		printf("island_hw_support=exact bitmap=0x%08x\n", hw_support);
 	}
 
 	memset(&cap, 0, sizeof(cap));
