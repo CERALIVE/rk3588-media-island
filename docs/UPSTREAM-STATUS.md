@@ -1,7 +1,10 @@
 # Upstream status — what mainline is doing to the ground under this island
 
-**Status: vendor backlog current through 2026-09-02.** Mainline hand-back rows
-remain for their later measurement wave; the vendor media-path watch is live.
+**Status: vendor backlog current through 2026-09-02; the pinned Linux 7.2
+hand-back baseline was checked on 2026-09-03.** The vendor media-path watch is
+live. Hardware acceptance remains a later board-gate concern; the table below
+records the source-level migration baseline, not a claim that any island release
+has run on a board.
 
 ## What this document is for
 
@@ -43,20 +46,25 @@ same one line in reverse. See [`OWNERSHIP.md`](OWNERSHIP.md) for the mechanism.
 
 That is why the migration targets below are live options rather than aspirations.
 
-## Per-subsystem status — TO BE FILLED
+## Per-subsystem status
 
 | Subsystem | Island driver | Mainline counterpart | Mainline status | Precondition for handing it back | Last checked |
 |---|---|---|---|---|---|
-| RKVENC2 encode | `mpp` (`ROCKCHIP_MPP_RKVENC2`) | none | — | | |
-| RKVDEC2 decode | `mpp` (`ROCKCHIP_MPP_RKVDEC2`) | `rkvdec` (`CONFIG_VIDEO_ROCKCHIP_VDEC`) | | | |
-| JPEG decode | `mpp` (`ROCKCHIP_MPP_JPGDEC`) | none | — | | |
-| RGA3 #0/#1 | `multi_rga` | `rockchip-rga` (`CONFIG_VIDEO_ROCKCHIP_RGA`) | | | |
-| RGA2E | `multi_rga` | `rockchip-rga` | | | |
+| RKVENC2 encode | `mpp` (`ROCKCHIP_MPP_RKVENC2`) | none | Linux 7.2 has no in-tree RK3588 VEPU580 encoder counterpart; the existing board encoder path is the prior Rockchip-ported service, not a mainline driver. | A maintained in-tree RK3588 encoder must bind the VEPU580 nodes and pass the island's H.265-first H.264/H.265 control, recovery and board qualification matrix. | 2026-09-03 |
+| RKVDEC2 decode | `mpp` (`ROCKCHIP_MPP_RKVDEC2`) | `rkvdec` (`CONFIG_VIDEO_ROCKCHIP_VDEC`) | Linux 7.2 contains an in-tree driver matching `rockchip,rk3588-vdec`; it stays built as the migration target, but the release-1 DT hunk gives `vdec0/1` the sole island compatible. | The mainline path must meet the RKVDEC2 H.264/H.265/VP9 capability and recovery evidence, then pass the same board decode and zero-copy matrix before a compatible flip. | 2026-09-03 |
+| JPEG decode | `mpp` (`ROCKCHIP_MPP_JPGDEC`) | none | Linux 7.2 has no in-tree RK3588 `jpegd` counterpart. | A maintained mainline JPEG-decoder driver must bind `jpegd` and pass the MJPEG decode, DMA-BUF and recovery qualification rows. | 2026-09-03 |
+| RGA3 #0/#1 | `multi_rga` | `rockchip-rga` (`CONFIG_VIDEO_ROCKCHIP_RGA`) | Linux 7.2's `rockchip-rga` matches `rockchip,rk3588-rga3`; the Phase-0 board probe found core0 bound while core1 was skipped for missing multi-core support. The island's RGA handover is still pending. | Mainline must bind both RGA3 cores and demonstrate scheduling, operation coverage and the required userspace/DMA-BUF interface on the board matrix. | 2026-09-03 |
+| RGA2E | `multi_rga` | `rockchip-rga` | Linux 7.2's `rockchip-rga` owns the mainline RGA2 node today; no island RGA compatible is applied in release 1. | Mainline must meet the combined RGA2/RGA3 scheduler, fail-closed validation and `/dev/rga` userspace-interface requirements before the pending island handover could be reversed. | 2026-09-03 |
 
 The two RGA rows and the RKVDEC2 row are the ones with a real counterpart, and
 therefore the ones the watch actually has something to report on. The two rows
 with no mainline counterpart still exist, because "there is nothing upstream" is
 a finding with a date on it, and an absent row reads as an oversight.
+
+The source checks above are deliberately narrower than the later hardware gates:
+they establish that the in-tree Kconfig entries and compatible matches exist (or
+do not), while the qualification matrix decides whether a compatible flip is
+safe. No row here claims an island tag, image, or board deployment.
 
 ## Vendor objects watched
 
