@@ -16,6 +16,7 @@
 
 #include "rga.h"
 #include "rga_job.h"
+#include "rga_dma_policy.h"
 #include "rga_mm.h"
 #include "rga_dma_buf.h"
 #include "rga_common.h"
@@ -522,10 +523,7 @@ static unsigned int rga_dma_max_segment_size(struct device *dev)
 {
 	size_t max_segment = dma_max_mapping_size(dev);
 
-	if (!max_segment || max_segment > UINT_MAX)
-		return UINT_MAX;
-
-	return max_segment;
+	return rga_staging_segment_limit(max_segment);
 }
 
 static struct sg_table *rga_alloc_sgt_segment(struct page **pages,
@@ -2165,9 +2163,9 @@ rga2_stage_get(struct rga_job *job, struct rga_internal_buffer *buffer)
 		goto err_free;
 	}
 
-	/* One-page source entries make the staging map independent of SWIOTLB. */
 	stage->sgt = rga_alloc_sgt_segment(stage->pages, stage->page_count, 0,
-					   stage->size, PAGE_SIZE,
+					   stage->size,
+					   rga_dma_max_segment_size(job->scheduler->dev),
 					   GFP_KERNEL);
 	if (IS_ERR(stage->sgt)) {
 		ret = PTR_ERR(stage->sgt);

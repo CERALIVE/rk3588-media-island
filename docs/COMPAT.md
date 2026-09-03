@@ -134,6 +134,32 @@ rebase remains todo 8.
 | `rga_dma_fence_signal` | `rga3/rga_job.c:1103,1413,1885@e7ff978398825b63ddcb13e0572d77564034c1e2` | Sets error then signals release fence on success/failure/cancel (`rga3/include/rga_fence.h:42-48@e7ff978398825b63ddcb13e0572d77564034c1e2`). | REAL-DEPENDENCY | `dma_fence_set_error` + `dma_fence_signal`; `include/linux/dma-fence.h:438,686@8d3ae59288f1e7d58d76558a6ee96d533bc5019f`. | Completion only. | QUICK-WIN (≤1 day drop-in) | Per async job terminal path. | Consumers never wedge on an unsignalled release fence. | 54 matrix; 26 board proof if ON. |
 | `rga_dma_fence_get_status` | `rga3/rga_job.c:692,1102,1884@e7ff978398825b63ddcb13e0572d77564034c1e2` | Reads completion/error state. | REAL-DEPENDENCY | `dma_fence_get_status`; `include/linux/dma-fence.h:667@8d3ae59288f1e7d58d76558a6ee96d533bc5019f`. | None. | QUICK-WIN (≤1 day drop-in) | Per async job/callback. | Truthful completion/error propagation. | 54/26 if ON. |
 
+## Todo-54 DMA capability table
+
+The programmed address fields, not the CPU physical-address width, decide each
+mask. Every MPP address register audited below is one 32-bit word. Consequently
+MPP uses `dma_set_mask_and_coherent(DMA_BIT_MASK(32))`; applying the originally
+proposed universal 40-bit mask would permit an address that the hardware cannot
+represent and would turn a clean allocation failure into silent truncation.
+
+| block | streaming DMA | coherent DMA | descriptor/link/RCB evidence |
+|---|---:|---:|---|
+| `rkvenc0` | 32 | 32 | Imported IOVAs are written into `u32` task registers (`mpp_rkvenc2.c:256-261,1268-1285`); RCB is one register word and rejects spans above `U32_MAX` (`:1113-1116,3385-3401`). |
+| `rkvenc1` | 32 | 32 | Shares the same task-register and RCB implementation; core selection changes scheduling, not address layout (`mpp_rkvenc2.c:1131-1150,1590-1613`). |
+| `vdec0` | 32 | 32 | Task registers are `u32`, including translated stream and RCB addresses (`mpp_rkvdec2.h:119-147`; `mpp_rkvdec2.c:331-365,390-407,501-521,1850-1867`). |
+| `vdec1` | 32 | 32 | Shares vdec0's register layout; link-table IOVA, next-node, readback and segment pointers are single `u32` entries (`mpp_rkvdec2_link.c:488-507,589-621,742-775`). |
+| `jpegd` | 32 | 32 | Registers 9-13 contain the translated addresses as `u32`; there is no separate link/RCB allocator (`mpp_jpgdec.c:71-73,81-94,116-128,224-230`). |
+| RGA3 | 40 | 32 | Streaming IOMMU addresses are 40-bit, but coherent command-buffer registers are 32-bit (`rga_drv.c`, `rga3_dma_capability`). |
+| RGA2 | 32 | 32 | RGA2 address words and its fail-closed memory-limit path remain 32-bit. |
+
+MPP imports still require one mapped DMA segment and a complete 32-bit IOVA
+span (`mpp_iommu.c:122-158`); todo 9's offset guardrail remains unchanged. The
+probe now caps `dma_set_max_seg_size()` by `dma_max_mapping_size()`, with
+`U32_MAX` as the API's zero/unbounded normalization. RGA's USERPTR and RGA2
+staging paths both pass the scheduler device's normalized maximum to
+`sg_alloc_table_from_pages_segment()`, so neither silently falls back to a
+page-sized or universal segment policy. KUnit's 1 GiB case locks that limit.
+
 ## A14 licence inventory
 
 The repository policy says Yi Ding's kernel-source additions are

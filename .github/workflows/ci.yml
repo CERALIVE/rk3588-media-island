@@ -487,9 +487,11 @@ jobs:
           cp drivers/video/rockchip/mpp/mpp_request_bounds.h \
             drivers/video/rockchip/mpp/mpp_rkvenc_test.h \
             drivers/video/rockchip/mpp/mpp_capabilities.h \
+            drivers/video/rockchip/mpp/mpp_dma_policy.h \
             .work/linux/drivers/video/rockchip/mpp/
           mkdir -p .work/linux/drivers/video/rockchip/rga3/include
           cp drivers/video/rockchip/rga3/include/rga_fence.h \
+            drivers/video/rockchip/rga3/include/rga_dma_policy.h \
             .work/linux/drivers/video/rockchip/rga3/include/
           cp -a tests/kunit ".work/linux/drivers/video/rockchip/"
           printf '\nsource "drivers/video/rockchip/kunit/Kconfig"\n' \

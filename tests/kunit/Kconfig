@@ -30,3 +30,10 @@ config ROCKCHIP_RGA_FENCE_KUNIT_TEST
 	help
 	  Exercise the production release-fence terminal helper for every RGA
 	  request exit class that must wake an asynchronous consumer.
+
+config ROCKCHIP_MEDIA_DMA_POLICY_KUNIT_TEST
+	tristate "Rockchip media DMA policy tests"
+	depends on KUNIT
+	default KUNIT_ALL_TESTS
+	help
+	  Exercise per-block address widths and DMA mapping-size limits.

@@ -40,6 +40,7 @@
 #include "mpp_debug.h"
 #include "mpp_capabilities.h"
 #include "mpp_common.h"
+#include "mpp_dma_policy.h"
 #include "mpp_iommu.h"
 #include "mpp_request_bounds.h"
 
@@ -2726,6 +2727,8 @@ int mpp_dev_probe(struct mpp_dev *mpp,
 	struct device *dev = &pdev->dev;
 	struct device_node *np = dev->of_node;
 	struct mpp_hw_info *hw_info = mpp->var->hw_info;
+	struct mpp_dma_capability dma_caps = mpp_dma_capability_island();
+	unsigned int max_segment;
 
 	/* Get disable auto frequent flag from dtsi */
 	mpp->auto_freq_en = !device_property_read_bool(dev, "rockchip,disable-auto-freq");
@@ -2741,9 +2744,18 @@ int mpp_dev_probe(struct mpp_dev *mpp,
 	mpp->dev = dev;
 	mpp->hw_ops = mpp->var->hw_ops;
 	mpp->dev_ops = mpp->var->dev_ops;
-	dma_set_max_seg_size(dev, DMA_BIT_MASK(32));
-	if (dma_get_max_seg_size(dev) != DMA_BIT_MASK(32)) {
-		dev_err(dev, "failed to set 32-bit DMA max segment size\n");
+	ret = dma_set_mask_and_coherent(dev,
+					DMA_BIT_MASK(dma_caps.streaming_bits));
+	if (ret) {
+		dev_err(dev, "failed to set %u-bit DMA mask: %d\n",
+			dma_caps.streaming_bits, ret);
+		return ret;
+	}
+	max_segment = mpp_dma_segment_limit(dma_max_mapping_size(dev));
+	dma_set_max_seg_size(dev, max_segment);
+	if (dma_get_max_seg_size(dev) != max_segment) {
+		dev_err(dev, "failed to set DMA max segment size to %u\n",
+			max_segment);
 		return -EINVAL;
 	}
 

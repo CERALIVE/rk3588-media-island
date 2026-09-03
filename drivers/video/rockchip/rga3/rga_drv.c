@@ -8,6 +8,7 @@
 #include "rga2_reg_info.h"
 #include "rga3_reg_info.h"
 #include "rga_dma_buf.h"
+#include "rga_dma_policy.h"
 #include "rga_mm.h"
 
 #include "rga_job.h"
@@ -1522,6 +1523,7 @@ static int rga_drv_probe(struct platform_device *pdev)
 	struct rga_scheduler_t *scheduler;
 	struct device *dev = &pdev->dev;
 	struct rga_drvdata_t *data = rga_drvdata;
+	struct rga_dma_capability dma_caps;
 
 	if (!dev->of_node)
 		return -EINVAL;
@@ -1549,6 +1551,17 @@ static int rga_drv_probe(struct platform_device *pdev)
 		dev_err(dev, "init scheduler failed!\n");
 		return ret;
 	}
+	if (match_data->device_type == RGA_DEVICE_RGA3)
+		dma_caps = rga3_dma_capability();
+	else
+		dma_caps = rga2_dma_capability();
+
+	ret = dma_set_mask(dev, DMA_BIT_MASK(dma_caps.streaming_bits));
+	if (ret)
+		return ret;
+	ret = dma_set_coherent_mask(dev, DMA_BIT_MASK(dma_caps.coherent_bits));
+	if (ret)
+		return ret;
 
 	/* map the registers */
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
@@ -1668,13 +1681,8 @@ static int rga_drv_probe(struct platform_device *pdev)
 			scheduler->iommu_info = NULL;
 		}
 
-		dma_set_mask(dev, DMA_BIT_MASK(40));
-		dma_set_coherent_mask(dev, DMA_BIT_MASK(32));
 		rga_set_iommu_dma_limit(dev);
 	} else {
-		dma_set_mask(dev, DMA_BIT_MASK(32));
-		dma_set_coherent_mask(dev, DMA_BIT_MASK(32));
-
 		if (scheduler->data->mmu == RGA_MMU)
 			/*
 			 * The RGA2 MMU consumes page-granular entries, so a

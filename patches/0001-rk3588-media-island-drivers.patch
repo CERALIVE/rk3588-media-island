@@ -5,7 +5,7 @@ Subject: [PATCH 1/7] video: rockchip: add the CeraLive RK3588 media island
 
 The Rockchip MPP service with its three compiled clients (RKVENC2, RKVDEC2, JPGDEC), the multi_rga 2D engine driver, and the UAPI headers they publish.
 
-70 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
+72 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
 
 GENERATED from the rk3588-media-island source tree by scripts/build-series.py. The source is the truth and this series is its output; per-file provenance is docs/PROVENANCE.md and the originating commits' Origin: trailers, never this mailbox header.
 
@@ -3267,10 +3267,10 @@ index 0000000000000000000000000000000000000000..3ebeecc5719d09a0ff436a9d035d6cf9
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_common.c b/drivers/video/rockchip/mpp/mpp_common.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..40189c6bebad96b01281c60dfc1eef7f19f63184
+index 0000000000000000000000000000000000000000..992c6762346478ba0bc40a94467ae3ae7206bbd7
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_common.c
-@@ -0,0 +1,3294 @@
+@@ -0,0 +1,3306 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -3313,6 +3313,7 @@ index 0000000000000000000000000000000000000000..40189c6bebad96b01281c60dfc1eef7f
 +#include "mpp_debug.h"
 +#include "mpp_capabilities.h"
 +#include "mpp_common.h"
++#include "mpp_dma_policy.h"
 +#include "mpp_iommu.h"
 +#include "mpp_request_bounds.h"
 +
@@ -5999,6 +6000,8 @@ index 0000000000000000000000000000000000000000..40189c6bebad96b01281c60dfc1eef7f
 +	struct device *dev = &pdev->dev;
 +	struct device_node *np = dev->of_node;
 +	struct mpp_hw_info *hw_info = mpp->var->hw_info;
++	struct mpp_dma_capability dma_caps = mpp_dma_capability_island();
++	unsigned int max_segment;
 +
 +	/* Get disable auto frequent flag from dtsi */
 +	mpp->auto_freq_en = !device_property_read_bool(dev, "rockchip,disable-auto-freq");
@@ -6014,9 +6017,18 @@ index 0000000000000000000000000000000000000000..40189c6bebad96b01281c60dfc1eef7f
 +	mpp->dev = dev;
 +	mpp->hw_ops = mpp->var->hw_ops;
 +	mpp->dev_ops = mpp->var->dev_ops;
-+	dma_set_max_seg_size(dev, DMA_BIT_MASK(32));
-+	if (dma_get_max_seg_size(dev) != DMA_BIT_MASK(32)) {
-+		dev_err(dev, "failed to set 32-bit DMA max segment size\n");
++	ret = dma_set_mask_and_coherent(dev,
++					DMA_BIT_MASK(dma_caps.streaming_bits));
++	if (ret) {
++		dev_err(dev, "failed to set %u-bit DMA mask: %d\n",
++			dma_caps.streaming_bits, ret);
++		return ret;
++	}
++	max_segment = mpp_dma_segment_limit(dma_max_mapping_size(dev));
++	dma_set_max_seg_size(dev, max_segment);
++	if (dma_get_max_seg_size(dev) != max_segment) {
++		dev_err(dev, "failed to set DMA max segment size to %u\n",
++			max_segment);
 +		return -EINVAL;
 +	}
 +
@@ -7606,6 +7618,40 @@ index 0000000000000000000000000000000000000000..4108c69da894aa3647a4f74541c6984b
 +			pr_info(fmt, ##args);			\
 +		}						\
 +	} while (0)
++
++#endif
+diff --git a/drivers/video/rockchip/mpp/mpp_dma_policy.h b/drivers/video/rockchip/mpp/mpp_dma_policy.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..cf2f300c8da14121e0b72f978a60dec60e21e5a3
+--- /dev/null
++++ b/drivers/video/rockchip/mpp/mpp_dma_policy.h
+@@ -0,0 +1,28 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef CERALIVE_MPP_DMA_POLICY_H
++#define CERALIVE_MPP_DMA_POLICY_H
++
++#include <linux/types.h>
++
++struct mpp_dma_capability {
++	u8 streaming_bits;
++	u8 coherent_bits;
++};
++
++static inline struct mpp_dma_capability mpp_dma_capability_island(void)
++{
++	return (struct mpp_dma_capability) {
++		.streaming_bits = 32,
++		.coherent_bits = 32,
++	};
++}
++
++static inline unsigned int mpp_dma_segment_limit(size_t max_mapping_size)
++{
++	if (!max_mapping_size || max_mapping_size > U32_MAX)
++		return U32_MAX;
++
++	return (unsigned int)max_mapping_size;
++}
 +
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_iep2.c b/drivers/video/rockchip/mpp/mpp_iep2.c
@@ -33723,6 +33769,48 @@ index 0000000000000000000000000000000000000000..da55b823b0787058ffdbee6bf66c720a
 +
 +#endif /* #ifndef __RGA3_DMA_BUF_H__ */
 +
+diff --git a/drivers/video/rockchip/rga3/include/rga_dma_policy.h b/drivers/video/rockchip/rga3/include/rga_dma_policy.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..b9fcfa507997d60325220f6edb59a73d0e1280f6
+--- /dev/null
++++ b/drivers/video/rockchip/rga3/include/rga_dma_policy.h
+@@ -0,0 +1,36 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef CERALIVE_RGA_DMA_POLICY_H
++#define CERALIVE_RGA_DMA_POLICY_H
++
++#include <linux/types.h>
++
++struct rga_dma_capability {
++	u8 streaming_bits;
++	u8 coherent_bits;
++};
++
++static inline struct rga_dma_capability rga3_dma_capability(void)
++{
++	return (struct rga_dma_capability) {
++		.streaming_bits = 40,
++		.coherent_bits = 32,
++	};
++}
++
++static inline struct rga_dma_capability rga2_dma_capability(void)
++{
++	return (struct rga_dma_capability) {
++		.streaming_bits = 32,
++		.coherent_bits = 32,
++	};
++}
++
++static inline unsigned int rga_staging_segment_limit(size_t max_mapping_size)
++{
++	if (!max_mapping_size || max_mapping_size > UINT_MAX)
++		return UINT_MAX;
++
++	return (unsigned int)max_mapping_size;
++}
++
++#endif
 diff --git a/drivers/video/rockchip/rga3/include/rga_drv.h b/drivers/video/rockchip/rga3/include/rga_drv.h
 new file mode 100644
 index 0000000000000000000000000000000000000000..8e8dc5adab172564ce32bdd59efa25957f4be684
@@ -43627,10 +43715,10 @@ index 0000000000000000000000000000000000000000..a0f6d1e2269db091fca81cc75089379c
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_drv.c b/drivers/video/rockchip/rga3/rga_drv.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..5024f2de160050ea0cd561a4758d80f8f0ec9d1c
+index 0000000000000000000000000000000000000000..039b42ad95118eb84918e196b448da72aebf3f62
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_drv.c
-@@ -0,0 +1,1924 @@
+@@ -0,0 +1,1932 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -43641,6 +43729,7 @@ index 0000000000000000000000000000000000000000..5024f2de160050ea0cd561a4758d80f8
 +#include "rga2_reg_info.h"
 +#include "rga3_reg_info.h"
 +#include "rga_dma_buf.h"
++#include "rga_dma_policy.h"
 +#include "rga_mm.h"
 +
 +#include "rga_job.h"
@@ -45155,6 +45244,7 @@ index 0000000000000000000000000000000000000000..5024f2de160050ea0cd561a4758d80f8
 +	struct rga_scheduler_t *scheduler;
 +	struct device *dev = &pdev->dev;
 +	struct rga_drvdata_t *data = rga_drvdata;
++	struct rga_dma_capability dma_caps;
 +
 +	if (!dev->of_node)
 +		return -EINVAL;
@@ -45182,6 +45272,17 @@ index 0000000000000000000000000000000000000000..5024f2de160050ea0cd561a4758d80f8
 +		dev_err(dev, "init scheduler failed!\n");
 +		return ret;
 +	}
++	if (match_data->device_type == RGA_DEVICE_RGA3)
++		dma_caps = rga3_dma_capability();
++	else
++		dma_caps = rga2_dma_capability();
++
++	ret = dma_set_mask(dev, DMA_BIT_MASK(dma_caps.streaming_bits));
++	if (ret)
++		return ret;
++	ret = dma_set_coherent_mask(dev, DMA_BIT_MASK(dma_caps.coherent_bits));
++	if (ret)
++		return ret;
 +
 +	/* map the registers */
 +	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
@@ -45301,13 +45402,8 @@ index 0000000000000000000000000000000000000000..5024f2de160050ea0cd561a4758d80f8
 +			scheduler->iommu_info = NULL;
 +		}
 +
-+		dma_set_mask(dev, DMA_BIT_MASK(40));
-+		dma_set_coherent_mask(dev, DMA_BIT_MASK(32));
 +		rga_set_iommu_dma_limit(dev);
 +	} else {
-+		dma_set_mask(dev, DMA_BIT_MASK(32));
-+		dma_set_coherent_mask(dev, DMA_BIT_MASK(32));
-+
 +		if (scheduler->data->mmu == RGA_MMU)
 +			/*
 +			 * The RGA2 MMU consumes page-granular entries, so a
@@ -49108,10 +49204,10 @@ index 0000000000000000000000000000000000000000..969a3bd4bd28ab54a512c45153c7cdf5
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_mm.c b/drivers/video/rockchip/rga3/rga_mm.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..4cdf96bb3c0f1acbda10f1afdbf029d33eab0ab3
+index 0000000000000000000000000000000000000000..04dd974013c068a1658d29e78c5052e0efa889e4
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_mm.c
-@@ -0,0 +1,4043 @@
+@@ -0,0 +1,4041 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -49130,6 +49226,7 @@ index 0000000000000000000000000000000000000000..4cdf96bb3c0f1acbda10f1afdbf029d3
 +
 +#include "rga.h"
 +#include "rga_job.h"
++#include "rga_dma_policy.h"
 +#include "rga_mm.h"
 +#include "rga_dma_buf.h"
 +#include "rga_common.h"
@@ -49636,10 +49733,7 @@ index 0000000000000000000000000000000000000000..4cdf96bb3c0f1acbda10f1afdbf029d3
 +{
 +	size_t max_segment = dma_max_mapping_size(dev);
 +
-+	if (!max_segment || max_segment > UINT_MAX)
-+		return UINT_MAX;
-+
-+	return max_segment;
++	return rga_staging_segment_limit(max_segment);
 +}
 +
 +static struct sg_table *rga_alloc_sgt_segment(struct page **pages,
@@ -51279,9 +51373,9 @@ index 0000000000000000000000000000000000000000..4cdf96bb3c0f1acbda10f1afdbf029d3
 +		goto err_free;
 +	}
 +
-+	/* One-page source entries make the staging map independent of SWIOTLB. */
 +	stage->sgt = rga_alloc_sgt_segment(stage->pages, stage->page_count, 0,
-+					   stage->size, PAGE_SIZE,
++					   stage->size,
++					   rga_dma_max_segment_size(job->scheduler->dev),
 +					   GFP_KERNEL);
 +	if (IS_ERR(stage->sgt)) {
 +		ret = PTR_ERR(stage->sgt);
