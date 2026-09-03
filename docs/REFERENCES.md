@@ -15,6 +15,19 @@ target, and a moving target makes every claim in this repository unfalsifiable.
 | Historical comparison only — NOT an import source | `armbian/linux-rockchip` (`rk-6.1-rkr5.1`) | `fd9f82366e235b8afbdf516765210e97d24dce93` |
 | Mainline replacement baseline | Linux `v7.2` | `8d3ae59288f1e7d58d76558a6ee96d533bc5019f` |
 
+## Vendor media-watch baselines
+
+These are review cursors, not source pins. The weekly issue-only watch compares
+each branch after this object and reports only commits touching the three media
+paths recorded in [`VENDOR-BACKLOG.md`](VENDOR-BACKLOG.md). A branch moving
+elsewhere is deliberately silent.
+
+| Role | Repository | Pinned object |
+|---|---|---|
+| Vendor backlog review baseline | `rockchip-linux/kernel` (`develop-6.1`) | `77168c8d5ab82399f65a80e9f807b50ba37cf483` |
+| Armbian rkr6.1 media-watch baseline — comparison only | `armbian/linux-rockchip` (`rk-6.1-rkr6.1`) | `82c6b3ef1c935064d4aa87f698412fdc37a4435f` |
+| Armbian rkr7.2 media-watch baseline — comparison only | `armbian/linux-rockchip` (`rk-6.1-rkr7.2`) | `057c0edb6f11e42690f5af80e4f10e674c621b2e` |
+
 ## CI tool objects
 
 Linux 7.2 uses syntax that the Ubuntu runner's packaged sparse cannot parse, so

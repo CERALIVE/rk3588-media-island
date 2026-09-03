@@ -1,7 +1,5 @@
 name: upstream-watch
 
-# Weekly check: has an upstream the island is pinned to moved since we pinned it?
-#
 # ISSUE-ONLY, BY DESIGN. This workflow opens or updates ONE labelled issue and
 # does nothing else. It never edits docs/REFERENCES.md, never opens a pull
 # request, and never dispatches a build. Moving a pin means re-reading the
@@ -33,7 +31,7 @@ permissions:
 
 jobs:
   watch:
-    name: Compare docs/REFERENCES.md against the watched upstream tips
+    name: Compare the exact MPP, RGA3 and rk-mpp UAPI paths
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -42,14 +40,14 @@ jobs:
       issues: write
     env:
       ISSUE_LABEL: upstream-freshness
-      ISSUE_TITLE: "Upstream freshness: a pinned island upstream has moved"
+      ISSUE_TITLE: "Vendor media backlog: new path-scoped commits"
     steps:
       - uses: actions/checkout@v7
 
       # `runner.temp` is unavailable in a job-level `env:` block, so the body
       # path is declared per step. It stays out of the checkout so the workspace
       # is never dirtied by a watch that is supposed to change nothing.
-      - name: Resolve every watched upstream and compare against the pins
+      - name: Resolve path commits after each reviewed vendor cursor
         id: check
         env:
           ISSUE_BODY_FILE: ${{ runner.temp }}/upstream-freshness-issue.md

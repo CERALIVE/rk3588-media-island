@@ -1,30 +1,5 @@
 #!/usr/bin/env python3
-"""Has an upstream the island is pinned to moved? Report only -- never act.
-
-`docs/REFERENCES.md` anchors the island to immutable objects. Upstream keeps
-moving anyway, and the risk is not that a pin goes stale -- it is that nobody
-notices for six months and the next rebase is a cliff instead of a step.
-
-ISSUE-ONLY, BY DESIGN. This script and the workflow that runs it never edit
-`docs/REFERENCES.md`, never open a pull request, and never dispatch a build.
-Bumping a pin means re-reading the series, re-running the shim census and
-re-verifying the licence inventory; a robot that moved a SHA would be asserting
-it had done all three. A human decides every bump, exactly as the sibling
-modem-stack watch decides every ModemManager bump.
-
-EXIT CODES
-----------
-    0   every watched upstream is still at its pinned object
-    10  at least one has moved -- the workflow opens or updates ONE issue
-    >0  the check could not complete; the workflow fails loudly rather than
-        reporting "current", because a silent watch reads exactly like an
-        up-to-date one
-
-Usage
------
-    scripts/check-upstream-freshness.py [--issue-body PATH]
-    scripts/check-upstream-freshness.py --self-test
-"""
+"""Report new path-scoped Rockchip media commits without changing a pin."""
 
 from __future__ import annotations
 
@@ -32,164 +7,204 @@ import argparse
 import re
 import subprocess
 import sys
+import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Final
 
-ROOT = Path(__file__).resolve().parent.parent
-REFERENCES = ROOT / "docs" / "REFERENCES.md"
+ROOT: Final = Path(__file__).resolve().parent.parent
+REFERENCES: Final = ROOT / "docs" / "REFERENCES.md"
+EXIT_CURRENT: Final = 0
+EXIT_BEHIND: Final = 10
+EXIT_ERROR: Final = 2
+SHA: Final = re.compile(r"\b([0-9a-f]{40})\b")
+WATCH_PATHS: Final = (
+    "drivers/video/rockchip/mpp",
+    "drivers/video/rockchip/rga3",
+    "include/uapi/linux/rk-mpp.h",
+)
 
-EXIT_CURRENT = 0
-EXIT_BEHIND = 10
-EXIT_ERROR = 2
 
-SHA = re.compile(r"\b([0-9a-f]{40})\b")
-
-
-@dataclass(frozen=True)
-class Watched:
-    """One upstream, its pinned object, and what a move would mean here."""
-
+@dataclass(frozen=True, slots=True)
+class Target:
     label: str
     url: str
     ref: str
     reference_row: str
-    consequence: str
+    paths: tuple[str, ...] = WATCH_PATHS
 
 
-# The paths the later cherry-pick step draws from are what make these two the
-# ones worth watching: `rock-5b-ysp` carries the forward-port patch record and
-# `linux-rock5b` carries the tree it exports. A move in either is a candidate
-# for the island's own series; a move anywhere else in those repositories is not.
-WATCHED = (
-    Watched(
-        label="yisding/rock-5b-ysp (forward-port patch record)",
-        url="https://github.com/yisding/rock-5b-ysp.git",
-        ref="refs/heads/main",
-        reference_row="Forward-port patch record",
-        consequence=(
-            "new or revised members under "
-            "`kernel-drivers/patches/forward-port-rk3588/` are the input the "
-            "island's later cherry-pick step reads. Review the diff before "
-            "moving the pin; a new member may be a fix the island already "
-            "carries, or one it must adopt."
-        ),
+@dataclass(frozen=True, slots=True)
+class Commit:
+    sha: str
+    date: str
+    subject: str
+
+
+@dataclass(frozen=True, slots=True)
+class Movement:
+    target: Target
+    pinned: str
+    head: str
+    commits: tuple[Commit, ...]
+
+
+WATCHED: Final = (
+    Target(
+        "rockchip-linux/kernel develop-6.1",
+        "https://github.com/rockchip-linux/kernel.git",
+        "refs/heads/develop-6.1",
+        "Vendor backlog review baseline",
     ),
-    Watched(
-        label="yisding/linux-rock5b (realized maintained series)",
-        url="https://github.com/yisding/linux-rock5b.git",
-        ref="refs/heads/rk3588-video-6.18",
-        reference_row="Realized maintained series",
-        consequence=(
-            "the branch tip the patch record exports from. It moving without "
-            "the patch record moving means the export is stale upstream, which "
-            "is worth knowing before trusting either."
-        ),
+    Target(
+        "armbian/linux-rockchip rk-6.1-rkr6.1 mirror",
+        "https://github.com/armbian/linux-rockchip.git",
+        "refs/heads/rk-6.1-rkr6.1",
+        "Armbian rkr6.1 media-watch baseline",
+    ),
+    Target(
+        "armbian/linux-rockchip rk-6.1-rkr7.2 mirror",
+        "https://github.com/armbian/linux-rockchip.git",
+        "refs/heads/rk-6.1-rkr7.2",
+        "Armbian rkr7.2 media-watch baseline",
     ),
 )
 
 
+@dataclass(frozen=True, slots=True)
 class FreshnessError(RuntimeError):
-    """The check could not be completed, so it reports nothing."""
+    detail: str
+
+    def __str__(self) -> str:
+        return self.detail
 
 
 def pinned_shas(doc: Path) -> dict[str, str]:
-    """`REFERENCES.md` row label -> the 40-hex object it pins."""
     if not doc.is_file():
-        raise FreshnessError(f"{doc} is missing -- there are no pins to compare")
+        raise FreshnessError(f"{doc} is missing")
     found: dict[str, str] = {}
-    for raw in doc.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
+    for line in doc.read_text(encoding="utf-8").splitlines():
         if not line.startswith("|"):
             continue
         cells = [cell.strip() for cell in line.strip("|").split("|")]
-        if len(cells) < 2:
-            continue
         match = SHA.search(cells[-1])
         if match:
             found[cells[0]] = match.group(1)
-    if not found:
-        raise FreshnessError(f"{doc} pins no 40-character object at all")
     return found
 
 
-def resolve(url: str, ref: str) -> str:
+def run(command: list[str], cwd: Path | None = None) -> str:
     try:
         result = subprocess.run(
-            ["git", "ls-remote", url, ref],
+            command,
+            cwd=cwd,
             capture_output=True,
             text=True,
             check=True,
-            timeout=120,
+            timeout=600,
         )
     except (OSError, subprocess.SubprocessError) as error:
-        raise FreshnessError(f"could not resolve {ref} in {url}: {error}") from error
-    line = result.stdout.strip().split("\n")[0]
-    if not line:
-        raise FreshnessError(f"{url} has no {ref}")
-    return line.split()[0]
+        raise FreshnessError(f"command failed: {' '.join(command)}: {error}") from error
+    return result.stdout
 
 
-def compare(
-    doc: Path, resolver=resolve
-) -> tuple[list[tuple[Watched, str, str]], list[Watched]]:
+def resolve(target: Target, pinned: str) -> Movement:
+    remote = run(["git", "ls-remote", target.url, target.ref]).strip().split()
+    if not remote:
+        raise FreshnessError(f"{target.url} has no {target.ref}")
+    head = remote[0]
+    if head == pinned:
+        return Movement(target, pinned, head, ())
+
+    with tempfile.TemporaryDirectory(prefix="island-upstream-watch-") as directory:
+        checkout = Path(directory) / "kernel"
+        run(
+            [
+                "git",
+                "clone",
+                "--filter=blob:none",
+                "--no-checkout",
+                "--single-branch",
+                "--shallow-since=2025-12-25",
+                "--branch",
+                target.ref.removeprefix("refs/heads/"),
+                target.url,
+                str(checkout),
+            ]
+        )
+        try:
+            run(["git", "cat-file", "-e", f"{pinned}^{{commit}}"], checkout)
+        except FreshnessError:
+            run(["git", "fetch", "--depth=1", "origin", pinned], checkout)
+        output = run(
+            [
+                "git",
+                "log",
+                "--reverse",
+                "--format=%H|%as|%s",
+                f"{pinned}..{head}",
+                "--",
+                *target.paths,
+            ],
+            checkout,
+        )
+    commits = tuple(
+        Commit(*line.split("|", 2)) for line in output.splitlines() if line
+    )
+    return Movement(target, pinned, head, commits)
+
+
+Resolver = Callable[[Target, str], Movement]
+
+
+def compare(doc: Path, resolver: Resolver = resolve) -> tuple[Movement, ...]:
     pins = pinned_shas(doc)
-    moved: list[tuple[Watched, str, str]] = []
-    current: list[Watched] = []
-
-    for entry in WATCHED:
+    movements: list[Movement] = []
+    for target in WATCHED:
         pinned = next(
-            (sha for label, sha in pins.items() if label.startswith(entry.reference_row)),
+            (sha for label, sha in pins.items() if label.startswith(target.reference_row)),
             None,
         )
         if pinned is None:
-            raise FreshnessError(
-                f"{doc} has no row starting '{entry.reference_row}' -- the watch "
-                "cannot compare a pin it cannot find"
-            )
-        head = resolver(entry.url, entry.ref)
-        if head != pinned:
-            moved.append((entry, pinned, head))
-        else:
-            current.append(entry)
-    return moved, current
+            raise FreshnessError(f"{doc} has no row starting {target.reference_row!r}")
+        movement = resolver(target, pinned)
+        if movement.commits:
+            movements.append(movement)
+    return tuple(movements)
 
 
-def issue_body(moved: list[tuple[Watched, str, str]]) -> str:
+def issue_body(movements: tuple[Movement, ...]) -> str:
     lines = [
-        "The scheduled upstream watch found at least one pinned object behind its",
-        "upstream branch tip.",
+        "The weekly media-path watch found new vendor or mirror commits.",
         "",
-        "**This issue is a report. Nothing was changed.** `docs/REFERENCES.md` is",
-        "untouched, no build was dispatched, and no pull request was opened —",
-        "moving a pin means re-reading the series, re-running the shim census and",
-        "re-verifying the licence inventory, and a robot cannot assert it did any",
-        "of those. A human decides every bump.",
+        "**Issue only:** no pin, source file, build, or pull request was changed.",
+        "",
+        "Watched paths are exactly:",
+        *[f"- `{path}`" for path in WATCH_PATHS],
         "",
     ]
-    for entry, pinned, head in moved:
-        lines += [
-            f"### {entry.label}",
-            "",
-            f"- watched ref: `{entry.ref}`",
-            f"- pinned in `docs/REFERENCES.md`: `{pinned}`",
-            f"- upstream tip: `{head}`",
-            f"- compare: {entry.url[:-4]}/compare/{pinned}...{head}",
-            "",
-            f"Why it matters: {entry.consequence}",
-            "",
-        ]
-    lines += [
-        "---",
-        "",
-        "This issue is opened once and UPDATED on every later run, and closed",
-        "automatically once every watched pin is current again. A second issue",
-        "would train everyone to ignore both.",
-    ]
+    for movement in movements:
+        lines.extend(
+            [
+                f"## {movement.target.label}",
+                "",
+                f"`{movement.pinned}` → `{movement.head}`",
+                "",
+                "| Commit | Date | Subject |",
+                "|---|---|---|",
+                *[
+                    f"| `{commit.sha}` | {commit.date} | {commit.subject} |"
+                    for commit in movement.commits
+                ],
+                "",
+            ]
+        )
+    lines.append("A human must classify every row in `docs/VENDOR-BACKLOG.md`.")
     return "\n".join(lines) + "\n"
 
 
-def _self_test() -> int:
-    """Offline, through the resolver seam -- the watch must not need network."""
+def self_test() -> int:
     failures: list[str] = []
 
     def check(name: str, condition: bool) -> None:
@@ -197,58 +212,30 @@ def _self_test() -> int:
         if not condition:
             failures.append(name)
 
-    print("self_test=check-upstream-freshness")
-
-    pins = pinned_shas(REFERENCES)
-    check("docs/REFERENCES.md pins objects", len(pins) >= 4)
-    for entry in WATCHED:
-        check(
-            f"a pinned row exists for {entry.reference_row}",
-            any(label.startswith(entry.reference_row) for label in pins),
-        )
-
-    pinned_values = {
-        entry.reference_row: next(
-            sha for label, sha in pins.items() if label.startswith(entry.reference_row)
-        )
-        for entry in WATCHED
-    }
-
-    def unchanged(url: str, ref: str) -> str:
-        del ref
-        entry = next(candidate for candidate in WATCHED if candidate.url == url)
-        return pinned_values[entry.reference_row]
-
-    moved, current = compare(REFERENCES, resolver=unchanged)
-    check("an unmoved upstream reports current", not moved and len(current) == len(WATCHED))
-
-    def one_moved(url: str, ref: str) -> str:
-        if url == WATCHED[0].url:
-            return "f" * 40
-        return unchanged(url, ref)
-
-    moved, current = compare(REFERENCES, resolver=one_moved)
-    check("a moved upstream is reported", len(moved) == 1 and len(current) == 1)
-
-    body = issue_body(moved)
-    check("the issue body names the moved upstream", WATCHED[0].label in body)
-    check("the issue body carries both objects", "f" * 40 in body)
     check(
-        "the issue body states that nothing was changed",
-        "Nothing was changed" in body and "no build was dispatched" in body,
+        "three vendor branches share the exact media path scope",
+        len(WATCHED) == 3 and all(target.paths == WATCH_PATHS for target in WATCHED),
     )
 
-    def exploding(url: str, ref: str) -> str:
-        del url, ref
-        raise FreshnessError("network is down")
+    def current(target: Target, pinned: str) -> Movement:
+        return Movement(target, pinned, pinned, ())
 
-    try:
-        compare(REFERENCES, resolver=exploding)
-    except FreshnessError:
-        check("an unresolvable upstream raises rather than reporting current", True)
-    else:
-        check("an unresolvable upstream raises rather than reporting current", False)
+    check("no path commits reports current", not compare(REFERENCES, current))
 
+    def one_moved(target: Target, pinned: str) -> Movement:
+        commits = (
+            (Commit("f" * 40, "2026-09-03", "fixture media fix"),)
+            if target == WATCHED[0]
+            else ()
+        )
+        return Movement(target, pinned, "e" * 40, commits)
+
+    moved = compare(REFERENCES, one_moved)
+    body = issue_body(moved)
+    check("one path movement produces one report", len(moved) == 1)
+    check("fixture commit is rendered", "fixture media fix" in body)
+    check("all exact watched paths are rendered", all(path in body for path in WATCH_PATHS))
+    check("report remains issue-only", "Issue only" in body and "pull request" in body)
     if failures:
         print(f"FAIL: {len(failures)} self-test case(s) failed")
         return 1
@@ -261,26 +248,18 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--issue-body", type=Path)
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv[1:])
-
     if args.self_test:
-        return _self_test()
-
+        return self_test()
     try:
-        moved, current = compare(REFERENCES)
+        movements = compare(REFERENCES)
     except FreshnessError as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return EXIT_ERROR
-
-    for entry in current:
-        print(f"current: {entry.label} is still at its pinned object")
-    for entry, pinned, head in moved:
-        print(f"behind:  {entry.label} pinned {pinned[:12]}, upstream {head[:12]}")
-
-    if not moved:
+    if not movements:
+        print("current: no new commits touch the watched media paths")
         return EXIT_CURRENT
-
     if args.issue_body:
-        args.issue_body.write_text(issue_body(moved), encoding="utf-8")
+        args.issue_body.write_text(issue_body(movements), encoding="utf-8")
     return EXIT_BEHIND
 
 

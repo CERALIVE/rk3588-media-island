@@ -83,6 +83,8 @@ jobs:
           done
           printf '=== scripts/check-action-pins.sh --self-test ===\n'
           bash scripts/check-action-pins.sh --self-test || rc=1
+          printf '=== scripts/vendor-backlog.sh --self-test ===\n'
+          bash scripts/vendor-backlog.sh --self-test || rc=1
           exit "$rc"
 
   series-integrity:
