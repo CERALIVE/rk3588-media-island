@@ -1004,14 +1004,20 @@ static int rga_validate_task(struct rga_job *job, const struct rga_req *task)
 {
 	switch (task->render_mode) {
 	case BITBLT_MODE:
-	case COLOR_PALETTE_MODE:
+	case COLOR_PALETTE_MODE: {
+		struct rga_img_info_t dst = task->dst;
+
+		if (rga_request_rotation_swaps_axes(task->rotate_mode,
+						    task->sina, task->cosa))
+			swap(dst.act_w, dst.act_h);
 		if (rga_validate_image(job, &task->src, 0) ||
-		    rga_validate_image(job, &task->dst, 2))
+		    rga_validate_image(job, &dst, 2))
 			return -EINVAL;
 		if (task->bsfilter_flag &&
 		    rga_validate_image(job, &task->pat, 1))
 			return -EINVAL;
 		return 0;
+	}
 	case COLOR_FILL_MODE:
 		return rga_validate_image(job, &task->dst, 2);
 	case UPDATE_PALETTE_TABLE_MODE:
