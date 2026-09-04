@@ -125,7 +125,7 @@ self_test() {
 		fail "IRQF_ONESHOT mutation passed"
 	fi
 
-	touch "$tmp/rk_vcodec.ko" "$tmp/rga3.ko"
+  touch "$tmp/rk_vcodec.ko" "$tmp/rga_multicore.ko"
 	cat >"$fake_bin/modinfo" <<'EOF'
 #!/usr/bin/env bash
 case "${*: -1}" in
@@ -142,7 +142,7 @@ case "${*: -1}" in
 esac
 EOF
 	chmod +x "$fake_bin/modinfo"
-	PATH="$fake_bin:$PATH" check_modules "$tmp/rk_vcodec.ko" "$tmp/rga3.ko" >/dev/null
+  PATH="$fake_bin:$PATH" check_modules "$tmp/rk_vcodec.ko" "$tmp/rga_multicore.ko" >/dev/null
 
 	printf 'module-contract self-test: pass:3 fail:0 total:3\n'
 }
@@ -152,13 +152,13 @@ case "${1:-}" in
 	self_test
 	;;
 --modules)
-	[[ $# -eq 3 ]] || fail "usage: $0 --modules <rk_vcodec.ko> <rga3.ko>"
+    [[ $# -eq 3 ]] || fail "usage: $0 --modules <rk_vcodec.ko> <rga_multicore.ko>"
 	check_modules "$2" "$3"
 	;;
 "")
 	check_sources "$ROOT"
 	;;
 *)
-	fail "usage: $0 [--self-test | --modules <rk_vcodec.ko> <rga3.ko>]"
+    fail "usage: $0 [--self-test | --modules <rk_vcodec.ko> <rga_multicore.ko>]"
 	;;
 esac

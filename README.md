@@ -12,7 +12,7 @@ released as a `git am` mailbox series.
 | **Boards** | Radxa Rock 5B+, Orange Pi 5+ |
 | **Release artifact** | a generated `git am` series, plus its `.sha256` — no `.deb`, no kernel, no image |
 | **Versioning** | CalVer, `YYYY.MINOR.PATCH` |
-| **Status** | **MPP OWNERSHIP INTEGRATED.** The complete donor/97-member replay, audited 44-commit vendor backlog, CeraLive Linux 7.2 delta and seven-patch generated series are present and CI-gated. Encoder, decoder and JPEG nodes are in the applied lane; RGA ownership remains pending. Release `v2026.9.0` is published with its generated mailbox asset. No image or board carries the island yet. |
+| **Status** | **MPP + RGA OWNERSHIP INTEGRATED IN SOURCE.** The complete donor/97-member replay, audited vendor backlog, mainline API port, three-core RGA ownership flip, generated series, and fail-closed RGA validation are present and CI-gated. Release `v2026.9.1` remains the latest published tag; no image or board carries the new RGA flip yet. |
 
 ## Why this is a source repository and not a patch repository
 
@@ -136,8 +136,8 @@ make -C .work/linux ARCH="$ISLAND_ARCH" CROSS_COMPILE="$ISLAND_CROSS_COMPILE" \
      M=drivers/video/rockchip/rga3 modules
 ```
 
-The asserted outputs are the inherited vendor filenames `rk_vcodec.ko` and
-`rga3.ko`. CI also inspects both outputs with `modinfo`: every maintained MPP and
+The asserted outputs are `rk_vcodec.ko` and `rga_multicore.ko`. CI also inspects
+both outputs with `modinfo`: every maintained MPP and
 RGA device-tree match table must produce an OF alias, so the kernel can autoload
 the module from a device-tree modalias rather than requiring a manual `modprobe`.
 See [`docs/PROVENANCE.md`](docs/PROVENANCE.md) for their measured version and

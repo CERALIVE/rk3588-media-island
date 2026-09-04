@@ -45,7 +45,7 @@ returned fd is a visible `sync_file` and every async row is clean.
 ## Kernel proof
 
 The disabled inline substitutes are deleted. `rga_fence.c` is always linked
-into `rga3.ko` and uses mainline `dma_fence_context_alloc`, `dma_fence_init`,
+into `rga_multicore.ko` and uses mainline `dma_fence_context_alloc`, `dma_fence_init`,
 `sync_file_create`, `sync_file_get_fence`, callback, wait, status, error,
 signal, and put APIs. The `rockchip-rga-fence` KUnit matrix starts each fence
 unsignalled, then proves completion, timeout, IRQ error, explicit cancel,
