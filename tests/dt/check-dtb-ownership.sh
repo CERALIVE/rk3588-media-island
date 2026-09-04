@@ -13,10 +13,10 @@ readonly EXPECTED_NODES=(
   '/jpegd@fdb90000|rockchip,rkv-jpeg-decoder-v1|client'
 )
 
-readonly MAINLINE_RGA_NODES=(
-  '/rga@fdb60000|rockchip,rk3588-rga3'
-  '/rga@fdb70000|rockchip,rk3588-rga3'
-  '/rga@fdb80000|rockchip,rk3588-rga rockchip,rk3288-rga'
+readonly ISLAND_RGA_NODES=(
+  '/rga@fdb60000|rockchip,rga3_core0'
+  '/rga@fdb70000|rockchip,rga3_core1'
+  '/rga@fdb80000|rockchip,rga2_core0'
 )
 
 check_dtb() {
@@ -44,16 +44,16 @@ check_dtb() {
     fi
   done
 
-  for entry in "${MAINLINE_RGA_NODES[@]}"; do
+  for entry in "${ISLAND_RGA_NODES[@]}"; do
     IFS='|' read -r path compatible <<<"$entry"
     if ! actual=$(fdtget -t s "$dtb" "$path" compatible 2>/dev/null); then
-      printf 'FAIL: %s: missing pending-RGA node %s\n' "$dtb" "$path" >&2
+      printf 'FAIL: %s: missing island-RGA node %s\n' "$dtb" "$path" >&2
       failures=$((failures + 1))
       continue
     fi
     if [[ $actual != "$compatible" ]]; then
-      printf 'FAIL: %s: pending RGA patch leaked into live tree at %s: [%s]\n' \
-        "$dtb" "$path" "$actual" >&2
+      printf 'FAIL: %s: %s compatible is [%s], expected sole [%s]\n' \
+        "$dtb" "$path" "$actual" "$compatible" >&2
       failures=$((failures + 1))
     fi
   done
@@ -78,7 +78,7 @@ self_test() {
       [[ $kind != client ]] || printf ' rockchip,skip-pmu-idle-request;'
       printf ' };\n'
     done
-    for entry in "${MAINLINE_RGA_NODES[@]}"; do
+    for entry in "${ISLAND_RGA_NODES[@]}"; do
       IFS='|' read -r path compatible <<<"$entry"
       printf '  %s { compatible = ' "${path#/}"
       if [[ $compatible == *' '* ]]; then
@@ -132,6 +132,6 @@ case ${1:-} in
     }
     check_dtb "$1"
     check_dtb "$2"
-    printf 'PASS: both RK3588 board DTBs satisfy MPP ownership; RGA remains pending\n'
+    printf 'PASS: both RK3588 board DTBs satisfy MPP and RGA island ownership\n'
     ;;
 esac

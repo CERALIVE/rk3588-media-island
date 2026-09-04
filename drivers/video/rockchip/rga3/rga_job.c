@@ -566,6 +566,11 @@ int rga_job_commit(struct rga_req *task_list, size_t task_count,
 		ret = PTR_ERR(scheduler);
 		goto err_free_job;
 	}
+	ret = rga_job_validate(job);
+	if (ret) {
+		rga_job_err(job, "request validation failed before mapping\n");
+		goto err_free_job;
+	}
 
 	/* Memory mapping needs to keep pd enabled. */
 	ret = rga_power_enable(scheduler);
@@ -854,68 +859,6 @@ int rga_request_check(struct rga_user_request *req)
 	}
 
 	return ret;
-}
-
-static int rga_request_channel_validate(const struct rga_img_info_t *img)
-{
-	const struct rga_plane_request plane = {
-		.address = img->yrgb_addr ? img->yrgb_addr : img->uv_addr,
-		.active_width = img->act_w,
-		.active_height = img->act_h,
-		.x_offset = img->x_offset,
-		.y_offset = img->y_offset,
-		.width_stride = img->vir_w,
-		.height_stride = img->vir_h,
-		.format = img->format,
-	};
-
-	return rga_plane_request_validate(&plane);
-}
-
-static int rga_request_task_check(const struct rga_req *task)
-{
-	switch (task->render_mode) {
-	case BITBLT_MODE:
-	case COLOR_PALETTE_MODE:
-		if (rga_request_channel_validate(&task->src) ||
-		    rga_request_channel_validate(&task->dst))
-			return -EINVAL;
-
-		if (task->bsfilter_flag && rga_request_channel_validate(&task->pat))
-			return -EINVAL;
-
-		break;
-	case COLOR_FILL_MODE:
-		if (rga_request_channel_validate(&task->dst))
-			return -EINVAL;
-
-		break;
-	case UPDATE_PALETTE_TABLE_MODE:
-	case UPDATE_PATTEN_BUF_MODE:
-		if (rga_request_channel_validate(&task->pat))
-			return -EINVAL;
-
-		break;
-	default:
-		return -EINVAL;
-	}
-
-	return 0;
-}
-
-static int rga_request_task_list_check(const struct rga_req *task_list,
-				       size_t task_count)
-{
-	size_t i;
-	int ret;
-
-	for (i = 0; i < task_count; i++) {
-		ret = rga_request_task_check(&task_list[i]);
-		if (ret)
-			return ret;
-	}
-
-	return 0;
 }
 
 struct rga_request *rga_request_lookup(struct rga_pending_request_manager *manager, uint32_t id)
@@ -1573,12 +1516,6 @@ rga_request_config_locked(struct rga_user_request *user_request,
 				    sizeof(struct rga_req) * user_request->task_num))) {
 		rga_req_err(request, "rga_user_request task list copy_from_user failed\n");
 		ret = -EFAULT;
-		goto err_free_task_list;
-	}
-
-	ret = rga_request_task_list_check(task_list, user_request->task_num);
-	if (ret) {
-		rga_req_err(request, "invalid task list\n");
 		goto err_free_task_list;
 	}
 

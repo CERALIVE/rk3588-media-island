@@ -440,14 +440,14 @@ jobs:
             echo "::error::expected 2 module directories, built $built"
             exit 1
           }
-          expected=(rga3.ko rk_vcodec.ko)
+          expected=(rga_multicore.ko rk_vcodec.ko)
           [ "${modules[*]}" = "${expected[*]}" ] || {
             echo "::error::expected ${expected[*]}, got ${modules[*]}"
             exit 1
           }
           scripts/check-module-contract.sh --modules \
             .work/linux/drivers/video/rockchip/mpp/rk_vcodec.ko \
-            .work/linux/drivers/video/rockchip/rga3/rga3.ko
+            .work/linux/drivers/video/rockchip/rga3/rga_multicore.ko
 
       - name: Build both board DTBs and prove device ownership
         env:
@@ -539,8 +539,8 @@ jobs:
           grep -Fq 'mpp_telemetry_session_stats_test' .work/kunit.log
           grep -Fq 'rockchip-mpp-recovery-state' .work/kunit.log
           grep -Fq 'mpp_task_rejects_claim_before_running_test' .work/kunit.log
-          grep -Fq 'rockchip-rga-request-validation' .work/kunit.log
-          grep -Fq 'rga_user_request_shape_validation_test' .work/kunit.log
+          grep -Fq 'rga-validate (18 subtests)' .work/kunit.log
+          grep -Fq 'rga_plane_rejects_plane_past_buffer_test' .work/kunit.log
 
   static-analysis:
     name: static analysis
@@ -601,7 +601,7 @@ jobs:
           for dir in ${{ needs.pin.outputs.module_dirs }}; do
             case "$dir" in
               drivers/video/rockchip/mpp) target=rk_vcodec.o ;;
-              drivers/video/rockchip/rga3) target=rga3.o ;;
+              drivers/video/rockchip/rga3) target=rga_multicore.o ;;
               *)
                 echo "::error::no static-analysis object target registered for $dir"
                 exit 1

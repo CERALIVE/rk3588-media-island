@@ -249,7 +249,7 @@ the provider symbol table, both selected directories built with
 
 ```text
 drivers/video/rockchip/mpp/rk_vcodec.ko
-drivers/video/rockchip/rga3/rga3.ko
+drivers/video/rockchip/rga3/rga_multicore.ko
 ```
 
 The module filenames are inherited vendor names, rather than the planning
@@ -257,7 +257,7 @@ examples. Their embedded licence fields are likewise inherited and unchanged:
 
 ```text
 rk_vcodec.ko: Dual MIT/GPL
-rga3.ko:      GPL
+rga_multicore.ko: GPL
 ```
 
 ## What this document does NOT claim

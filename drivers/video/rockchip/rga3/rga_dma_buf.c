@@ -475,18 +475,17 @@ static int rga_dma_do_map_sgt(struct sg_table *sgt, struct rga_dma_buffer *buffe
 {
 	int ret = 0;
 
-	ret = dma_map_sg(map_dev, sgt->sgl, sgt->orig_nents, dir);
-	if (ret <= 0) {
-		rga_err("dma_map_sg failed! ret = %d\n", ret);
-		return ret < 0 ? ret : -EINVAL;
+	ret = dma_map_sgtable(map_dev, sgt, dir, 0);
+	if (ret) {
+		rga_err("dma_map_sgtable failed! ret = %d\n", ret);
+		return ret;
 	}
-	sgt->nents = ret;
 
 	if (page_granular) {
 		ret = rga_dma_set_buffer_mapping(sgt, buffer, dir, map_dev,
 						 "sg_table", true);
 		if (ret) {
-			dma_unmap_sg(map_dev, sgt->sgl, sgt->orig_nents, dir);
+			dma_unmap_sgtable(map_dev, sgt, dir, 0);
 			rga_dma_reset_sgt_dma_state(sgt);
 			return ret;
 		}
@@ -496,7 +495,7 @@ static int rga_dma_do_map_sgt(struct sg_table *sgt, struct rga_dma_buffer *buffe
 
 	ret = rga_dma_check_iova_contract(sgt, "sg_table", false);
 	if (ret) {
-		dma_unmap_sg(map_dev, sgt->sgl, sgt->orig_nents, dir);
+		dma_unmap_sgtable(map_dev, sgt, dir, 0);
 		rga_dma_reset_sgt_dma_state(sgt);
 
 		if (ret == -EOPNOTSUPP || ret == -EOVERFLOW) {
@@ -512,7 +511,7 @@ static int rga_dma_do_map_sgt(struct sg_table *sgt, struct rga_dma_buffer *buffe
 	ret = rga_dma_set_buffer_mapping(sgt, buffer, dir, map_dev,
 					 "sg_table", false);
 	if (ret) {
-		dma_unmap_sg(map_dev, sgt->sgl, sgt->orig_nents, dir);
+		dma_unmap_sgtable(map_dev, sgt, dir, 0);
 		return ret;
 	}
 
@@ -541,10 +540,7 @@ void rga_dma_unmap_sgt(struct rga_dma_buffer *buffer)
 		return;
 	}
 
-	dma_unmap_sg(buffer->map_dev,
-		     buffer->sgt->sgl,
-		     buffer->sgt->orig_nents,
-		     buffer->dir);
+	dma_unmap_sgtable(buffer->map_dev, buffer->sgt, buffer->dir, 0);
 }
 
 static int rga_dma_do_map_buf(struct dma_buf *dma_buf,
@@ -564,6 +560,7 @@ static int rga_dma_do_map_buf(struct dma_buf *dma_buf,
 		return ret;
 	}
 
+	/* The exporter maps this attachment with dma_map_sgtable(attach->dev, ...). */
 	sgt = dma_buf_map_attachment_unlocked(attach, dir);
 	if (IS_ERR(sgt)) {
 		ret = PTR_ERR(sgt);

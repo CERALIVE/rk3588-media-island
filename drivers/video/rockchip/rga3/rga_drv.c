@@ -1452,11 +1452,31 @@ static struct miscdevice rga_dev = {
 
 static const struct rga_match_data_t rga2_match_data = {
 	.device_type = RGA_DEVICE_RGA2,
+	.core = RGA_NONE_CORE,
+	.ops = &rga2_ops,
+};
+
+static const struct rga_match_data_t rga2_core0_match_data = {
+	.device_type = RGA_DEVICE_RGA2,
+	.core = RGA2_SCHEDULER_CORE0,
 	.ops = &rga2_ops,
 };
 
 static const struct rga_match_data_t rga3_match_data = {
 	.device_type = RGA_DEVICE_RGA3,
+	.core = RGA_NONE_CORE,
+	.ops = &rga3_ops,
+};
+
+static const struct rga_match_data_t rga3_core0_match_data = {
+	.device_type = RGA_DEVICE_RGA3,
+	.core = RGA3_SCHEDULER_CORE0,
+	.ops = &rga3_ops,
+};
+
+static const struct rga_match_data_t rga3_core1_match_data = {
+	.device_type = RGA_DEVICE_RGA3,
+	.core = RGA3_SCHEDULER_CORE1,
 	.ops = &rga3_ops,
 };
 
@@ -1468,11 +1488,11 @@ static const struct of_device_id rga3_dt_ids[] = {
 	/* legacy */
 	{
 	 .compatible = "rockchip,rga3_core0",
-	 .data = &rga3_match_data,
+	 .data = &rga3_core0_match_data,
 	},
 	{
 	 .compatible = "rockchip,rga3_core1",
-	 .data = &rga3_match_data,
+	 .data = &rga3_core1_match_data,
 	},
 	{},
 };
@@ -1486,7 +1506,7 @@ static const struct of_device_id rga2_dt_ids[] = {
 	/* legacy */
 	{
 	 .compatible = "rockchip,rga2_core0",
-	 .data = &rga2_match_data,
+	 .data = &rga2_core0_match_data,
 	},
 	{},
 };
@@ -1497,6 +1517,11 @@ static int init_scheduler(struct rga_scheduler_t *scheduler,
 			  const struct rga_match_data_t *match_data,
 			  struct rga_drvdata_t *drv_data)
 {
+	if (match_data->core != RGA_NONE_CORE) {
+		scheduler->core = match_data->core;
+		goto scheduler_ready;
+	}
+
 	switch (match_data->device_type) {
 	case RGA_DEVICE_RGA2:
 		switch (drv_data->device_count[match_data->device_type]) {
@@ -1527,10 +1552,10 @@ static int init_scheduler(struct rga_scheduler_t *scheduler,
 
 		break;
 	default:
-
 		return -EINVAL;
 	}
 
+scheduler_ready:
 	scheduler->ops = match_data->ops;
 	scheduler->dev = dev;
 
@@ -1690,10 +1715,6 @@ static int rga_drv_probe(struct platform_device *pdev)
 		}
 	}
 
-	data->scheduler[data->num_of_scheduler] = scheduler;
-	data->num_of_scheduler++;
-	data->device_count[match_data->device_type]++;
-
 #ifndef RGA_DISABLE_PM
 	clk_bulk_disable_unprepare(scheduler->num_clks, scheduler->clks);
 
@@ -1711,8 +1732,10 @@ static int rga_drv_probe(struct platform_device *pdev)
 	if (scheduler->data->mmu == RGA_IOMMU) {
 		scheduler->iommu_info = rga_iommu_probe(dev);
 		if (IS_ERR(scheduler->iommu_info)) {
-			dev_err(dev, "failed to attach iommu\n");
+			ret = PTR_ERR(scheduler->iommu_info);
+			dev_err(dev, "failed to attach iommu: %d\n", ret);
 			scheduler->iommu_info = NULL;
+			goto err_disable_pm;
 		}
 
 		rga_set_iommu_dma_limit(dev);
@@ -1726,12 +1749,23 @@ static int rga_drv_probe(struct platform_device *pdev)
 			dma_set_min_align_mask(dev, PAGE_SIZE - 1);
 	}
 
+	data->scheduler[data->num_of_scheduler] = scheduler;
+	data->num_of_scheduler++;
+	data->device_count[match_data->device_type]++;
+
 	platform_set_drvdata(pdev, scheduler);
 
 	dev_info(dev, "probe successfully, irq = %d, hw_version:%s\n",
 		 scheduler->irq, scheduler->version.str);
 
 	return 0;
+
+err_disable_pm:
+#ifndef RGA_DISABLE_PM
+	device_init_wakeup(dev, false);
+	pm_runtime_disable(dev);
+#endif
+	return ret;
 
 #ifndef RGA_DISABLE_PM
 pm_put:

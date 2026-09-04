@@ -60,8 +60,8 @@ GENERATED_SOURCE_SUFFIXES = (".mod.c",)
 NOT_SOURCE = (".gitkeep",)
 
 REPOSITORY_SOURCE_COUNT: Final = 78
-REPOSITORY_INTEGRATION_COUNT: Final = 6
-REPOSITORY_SERIES_COUNT: Final = 7
+REPOSITORY_INTEGRATION_COUNT: Final = 8
+REPOSITORY_SERIES_COUNT: Final = 9
 
 MBOX_DELIMITER = re.compile(r"^From [0-9a-f]{40} Mon Sep 17 00:00:00 2001$")
 SUBJECT = re.compile(r"^Subject: \[PATCH (\d+)/(\d+)\] (.+)$")

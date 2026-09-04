@@ -113,8 +113,8 @@ static bool rga_check_resolution(const struct rga_rect_range *range, int width, 
 	return true;
 }
 
-static bool rga_check_format(const struct rga_hw_data *data,
-		int rd_mode, int format, int win_num)
+bool rga_check_format(const struct rga_hw_data *data, int rd_mode, int format,
+		      int win_num)
 {
 	int i;
 	const uint32_t *formats;

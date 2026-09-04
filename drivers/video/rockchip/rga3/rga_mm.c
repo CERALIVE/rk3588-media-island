@@ -1554,6 +1554,31 @@ static bool rga_mm_handle_authorized(struct rga_internal_buffer *buffer,
 	return session && rga_mm_lookup_import(buffer, session);
 }
 
+int rga_mm_get_handle_size(uint64_t handle, struct rga_session *session,
+			   u64 *size)
+{
+	struct rga_internal_buffer *buffer;
+	struct rga_mm *mm = rga_drvdata->mm;
+	int ret = 0;
+
+	if (!mm || !handle || handle > U32_MAX || !size)
+		return -EINVAL;
+
+	mutex_lock(&mm->lock);
+	buffer = rga_mm_lookup_handle(mm, handle);
+	if (!buffer)
+		ret = -EINVAL;
+	else if (!rga_mm_handle_authorized(buffer, session))
+		ret = -EPERM;
+	else if (!buffer->size)
+		ret = -EINVAL;
+	else
+		*size = buffer->size;
+	mutex_unlock(&mm->lock);
+
+	return ret;
+}
+
 static int rga_mm_record_import(struct rga_internal_buffer *buffer,
 				struct rga_session *session, bool take_ref)
 {
@@ -2642,7 +2667,207 @@ err_free_page_table:
 	return ret;
 }
 
+static struct rga_dma_buffer *
+rga_mm_find_job_iommu_mapping(struct rga_job_buffer *job_buf,
+			      struct rga_internal_buffer *origin)
+{
+	int i;
+
+	for (i = 0; i < job_buf->iommu_mapping_count; i++)
+		if (job_buf->iommu_mapping[i].origin == origin)
+			return job_buf->iommu_mapping[i].mapping;
+
+	return NULL;
+}
+
+static void rga_mm_unmap_job_iommu_mapping(struct rga_job_buffer *job_buf,
+					   int index)
+{
+	struct rga_dma_buffer *mapping = job_buf->iommu_mapping[index].mapping;
+	struct sg_table *owned_sgt = job_buf->iommu_mapping[index].owned_sgt;
+	int last = --job_buf->iommu_mapping_count;
+
+	if (mapping->attach)
+		rga_dma_unmap_buf(mapping);
+	else
+		rga_dma_unmap_sgt(mapping);
+	if (owned_sgt)
+		rga_free_sgt(&owned_sgt);
+	kfree(mapping);
+
+	if (index != last)
+		job_buf->iommu_mapping[index] = job_buf->iommu_mapping[last];
+	memset(&job_buf->iommu_mapping[last], 0,
+	       sizeof(job_buf->iommu_mapping[last]));
+}
+
+static void rga_mm_release_job_iommu_mappings(struct rga_job_buffer *job_buf)
+{
+	while (job_buf->iommu_mapping_count)
+		rga_mm_unmap_job_iommu_mapping(job_buf,
+					       job_buf->iommu_mapping_count - 1);
+}
+
+static struct rga_dma_buffer *
+rga_mm_job_dma_buffer(struct rga_job_buffer *job_buf,
+		      struct rga_internal_buffer *origin)
+{
+	struct rga_dma_buffer *mapping;
+
+	mapping = rga_mm_find_job_iommu_mapping(job_buf, origin);
+	return mapping ? mapping : origin->dma_buffer;
+}
+
+static struct sg_table *
+rga_mm_alloc_job_virt_sgt(struct rga_internal_buffer *origin,
+			  size_t *real_offset)
+{
+	struct rga_virt_addr *virt_addr = origin->virt_addr;
+	size_t map_offset;
+	size_t map_size;
+
+	if (!virt_addr || !virt_addr->pages || virt_addr->page_count <= 0)
+		return ERR_PTR(-EINVAL);
+
+	if (rga_shadow_active(virt_addr)) {
+		if (virt_addr->shadow_head) {
+			*real_offset = virt_addr->offset;
+			map_offset = 0;
+			map_size = (size_t)virt_addr->page_count << PAGE_SHIFT;
+		} else {
+			*real_offset = 0;
+			map_offset = virt_addr->offset;
+			map_size = ((size_t)virt_addr->page_count << PAGE_SHIFT) -
+				   virt_addr->offset;
+		}
+	} else {
+		*real_offset = 0;
+		map_offset = virt_addr->offset;
+		map_size = virt_addr->size;
+	}
+
+	return rga_alloc_sgt(virt_addr->pages, virt_addr->page_count,
+			     map_offset, map_size, GFP_KERNEL);
+}
+
+static struct sg_table *
+rga_mm_alloc_job_phys_sgt(struct rga_internal_buffer *origin)
+{
+	phys_addr_t aligned = ALIGN_DOWN(origin->phys_addr, PAGE_SIZE);
+	size_t offset = offset_in_page(origin->phys_addr);
+	struct page **pages;
+	struct sg_table *sgt;
+	size_t span;
+	u32 page_count;
+	int ret;
+
+	if (!origin->size || check_add_overflow(offset, origin->size, &span))
+		return ERR_PTR(-EINVAL);
+	page_count = DIV_ROUND_UP(span, PAGE_SIZE);
+	if (!page_count)
+		return ERR_PTR(-EINVAL);
+
+	pages = kvcalloc(page_count, sizeof(*pages), GFP_KERNEL);
+	if (!pages)
+		return ERR_PTR(-ENOMEM);
+
+	ret = rga_get_phys_addr_pages(pages, aligned, page_count);
+	if (ret) {
+		sgt = ERR_PTR(ret);
+		goto out_free_pages;
+	}
+
+	sgt = rga_alloc_sgt(pages, page_count, offset, origin->size, GFP_KERNEL);
+
+out_free_pages:
+	kvfree(pages);
+	return sgt;
+}
+
+static struct rga_dma_buffer *
+rga_mm_map_job_iommu_buffer(struct rga_job *job,
+			    struct rga_job_buffer *job_buf,
+			    struct rga_internal_buffer *origin)
+{
+	struct rga_dma_buffer *mapping;
+	struct sg_table *owned_sgt = NULL;
+	size_t real_offset = 0;
+	int ret;
+	int slot;
+
+	if (job->scheduler->data->mmu != RGA_IOMMU)
+		return origin->dma_buffer;
+	if (rga_mm_is_invalid_dma_buffer(origin->dma_buffer))
+		return ERR_PTR(-EINVAL);
+	if (origin->dma_buffer->map_dev == job->scheduler->dev)
+		return origin->dma_buffer;
+
+	mapping = rga_mm_find_job_iommu_mapping(job_buf, origin);
+	if (mapping)
+		return mapping;
+	if (job_buf->iommu_mapping_count >= ARRAY_SIZE(job_buf->iommu_mapping))
+		return ERR_PTR(-E2BIG);
+
+	mapping = kzalloc(sizeof(*mapping), GFP_KERNEL);
+	if (!mapping)
+		return ERR_PTR(-ENOMEM);
+
+	switch (origin->type) {
+	case RGA_DMA_BUFFER:
+	case RGA_DMA_BUFFER_PTR:
+		if (!origin->dma_buffer->dma_buf) {
+			ret = -EINVAL;
+			break;
+		}
+		ret = rga_dma_map_buf(origin->dma_buffer->dma_buf, mapping,
+				      DMA_BIDIRECTIONAL, job->scheduler->dev);
+		break;
+	case RGA_VIRTUAL_ADDRESS:
+		owned_sgt = rga_mm_alloc_job_virt_sgt(origin, &real_offset);
+		if (IS_ERR(owned_sgt)) {
+			ret = PTR_ERR(owned_sgt);
+			owned_sgt = NULL;
+			break;
+		}
+		ret = rga_dma_map_sgt(owned_sgt, mapping, DMA_BIDIRECTIONAL,
+				      job->scheduler->dev);
+		if (!ret)
+			mapping->offset = real_offset;
+		break;
+	case RGA_PHYSICAL_ADDRESS:
+		owned_sgt = rga_mm_alloc_job_phys_sgt(origin);
+		if (IS_ERR(owned_sgt)) {
+			ret = PTR_ERR(owned_sgt);
+			owned_sgt = NULL;
+			break;
+		}
+		ret = rga_dma_map_sgt(owned_sgt, mapping, DMA_BIDIRECTIONAL,
+				      job->scheduler->dev);
+		break;
+	default:
+		ret = -EINVAL;
+		break;
+	}
+	if (ret)
+		goto err_free_mapping;
+
+	mapping->iova = mapping->dma_addr;
+	slot = job_buf->iommu_mapping_count++;
+	job_buf->iommu_mapping[slot].origin = origin;
+	job_buf->iommu_mapping[slot].mapping = mapping;
+	job_buf->iommu_mapping[slot].owned_sgt = owned_sgt;
+
+	return mapping;
+
+err_free_mapping:
+	if (owned_sgt)
+		rga_free_sgt(&owned_sgt);
+	kfree(mapping);
+	return ERR_PTR(ret);
+}
+
 static int rga_mm_sync_dma_sg_for_device(struct rga_internal_buffer *buffer,
+					 struct rga_dma_buffer *dma_buffer,
 					 struct rga_job *job,
 					 enum dma_data_direction dir)
 {
@@ -2651,7 +2876,10 @@ static int rga_mm_sync_dma_sg_for_device(struct rga_internal_buffer *buffer,
 	ktime_t timestamp = ktime_get();
 	bool has_shadow = rga_shadow_active(buffer->virt_addr);
 
-	scheduler = buffer->scheduler;
+	if (!dma_buffer)
+		dma_buffer = buffer->dma_buffer;
+	scheduler = dma_buffer == buffer->dma_buffer ? buffer->scheduler :
+		    job->scheduler;
 	if (scheduler == NULL) {
 		rga_job_err(job, "%s(%d), failed to get scheduler, core = 0x%x\n",
 			__func__, __LINE__, job->core);
@@ -2663,33 +2891,33 @@ static int rga_mm_sync_dma_sg_for_device(struct rga_internal_buffer *buffer,
 
 	if (buffer->mm_flag & RGA_MEM_PHYSICAL_CONTIGUOUS) {
 		if (scheduler->data->mmu == RGA_IOMMU) {
-			dma_addr_t iova = rga_mm_lookup_iova(buffer);
+			dma_addr_t iova = dma_buffer->iova + dma_buffer->offset;
 
-			if (dma_mapping_error(buffer->dma_buffer->map_dev, iova)) {
+			if (dma_mapping_error(dma_buffer->map_dev, iova)) {
 				rga_job_err(job, "invalid iova for dma-buffer with IOMMU device!\n");
 				return -EFAULT;
 			}
 
-			dma_sync_single_for_device(buffer->dma_buffer->map_dev,
+			dma_sync_single_for_device(dma_buffer->map_dev,
 				iova, buffer->size, dir);
 		} else {
 			dma_sync_single_for_device(scheduler->dev,
 				buffer->phys_addr, buffer->size, dir);
 		}
 	} else {
-		sgt = rga_mm_lookup_sgt(buffer);
+		sgt = dma_buffer->sgt;
 		if (sgt == NULL) {
 			rga_job_err(job, "%s(%d), failed to get sgt, core = 0x%x\n",
 				__func__, __LINE__, job->core);
 			return -EINVAL;
 		}
 
-		if (rga_mm_is_invalid_dma_buffer(buffer->dma_buffer)) {
+		if (!dma_buffer->map_dev) {
 			rga_job_err(job, "invalid dma-buffer with IOMMU device!\n");
 			return -EFAULT;
 		}
 
-		dma_sync_sg_for_device(buffer->dma_buffer->map_dev, sgt->sgl,
+		dma_sync_sg_for_device(dma_buffer->map_dev, sgt->sgl,
 				       sgt->orig_nents, dir);
 	}
 
@@ -2702,6 +2930,7 @@ static int rga_mm_sync_dma_sg_for_device(struct rga_internal_buffer *buffer,
 }
 
 static int rga_mm_sync_dma_sg_for_cpu(struct rga_internal_buffer *buffer,
+				      struct rga_dma_buffer *dma_buffer,
 				      struct rga_job *job,
 				      enum dma_data_direction dir)
 {
@@ -2710,7 +2939,10 @@ static int rga_mm_sync_dma_sg_for_cpu(struct rga_internal_buffer *buffer,
 	ktime_t timestamp = ktime_get();
 	bool has_shadow = rga_shadow_active(buffer->virt_addr);
 
-	scheduler = buffer->scheduler;
+	if (!dma_buffer)
+		dma_buffer = buffer->dma_buffer;
+	scheduler = dma_buffer == buffer->dma_buffer ? buffer->scheduler :
+		    job->scheduler;
 	if (scheduler == NULL) {
 		rga_job_err(job, "%s(%d), failed to get scheduler, core = 0x%x\n",
 			__func__, __LINE__, job->core);
@@ -2719,33 +2951,33 @@ static int rga_mm_sync_dma_sg_for_cpu(struct rga_internal_buffer *buffer,
 
 	if (buffer->mm_flag & RGA_MEM_PHYSICAL_CONTIGUOUS) {
 		if (scheduler->data->mmu == RGA_IOMMU) {
-			dma_addr_t iova = rga_mm_lookup_iova(buffer);
+			dma_addr_t iova = dma_buffer->iova + dma_buffer->offset;
 
-			if (dma_mapping_error(buffer->dma_buffer->map_dev, iova)) {
+			if (dma_mapping_error(dma_buffer->map_dev, iova)) {
 				rga_job_err(job, "invalid iova for dma-buffer with IOMMU device!\n");
 				return -EFAULT;
 			}
 
-			dma_sync_single_for_cpu(buffer->dma_buffer->map_dev,
+			dma_sync_single_for_cpu(dma_buffer->map_dev,
 				iova, buffer->size, dir);
 		} else {
 			dma_sync_single_for_cpu(scheduler->dev,
 				buffer->phys_addr, buffer->size, dir);
 		}
 	} else {
-		sgt = rga_mm_lookup_sgt(buffer);
+		sgt = dma_buffer->sgt;
 		if (sgt == NULL) {
 			rga_job_err(job, "%s(%d), failed to get sgt, core = 0x%x\n",
 				__func__, __LINE__, job->core);
 			return -EINVAL;
 		}
 
-		if (rga_mm_is_invalid_dma_buffer(buffer->dma_buffer)) {
+		if (!dma_buffer->map_dev) {
 			rga_job_err(job, "invalid dma-buffer with IOMMU device!\n");
 			return -EFAULT;
 		}
 
-		dma_sync_sg_for_cpu(buffer->dma_buffer->map_dev, sgt->sgl,
+		dma_sync_sg_for_cpu(dma_buffer->map_dev, sgt->sgl,
 				    sgt->orig_nents, dir);
 	}
 
@@ -2762,21 +2994,25 @@ static int rga_mm_sync_dma_sg_for_cpu(struct rga_internal_buffer *buffer,
 
 static int rga_mm_get_buffer_info(struct rga_job *job,
 				  struct rga_internal_buffer *internal_buffer,
+				  struct rga_job_buffer *job_buf,
 				  uint64_t *channel_addr)
 {
+	struct rga_dma_buffer *dma_buffer;
 	uint64_t addr;
 
 	switch (job->scheduler->data->mmu) {
 	case RGA_IOMMU:
-		if (rga_mm_is_invalid_dma_buffer(internal_buffer->dma_buffer)) {
+		dma_buffer = rga_mm_map_job_iommu_buffer(job, job_buf,
+						     internal_buffer);
+		if (IS_ERR(dma_buffer)) {
 			rga_job_err(job,
 				"core[%d] handle[%d] lookup buffer_type[0x%x] iova error!\n",
 				job->core, internal_buffer->handle, internal_buffer->type);
-			return -EINVAL;
+			return PTR_ERR(dma_buffer);
 		}
 
-		addr = rga_mm_lookup_iova(internal_buffer);
-		if (dma_mapping_error(internal_buffer->dma_buffer->map_dev, (dma_addr_t)addr)) {
+		addr = dma_buffer->iova + dma_buffer->offset;
+		if (dma_mapping_error(dma_buffer->map_dev, (dma_addr_t)addr)) {
 			rga_job_err(job, "invalid iova for dma-buffer with IOMMU device!\n");
 			return -EFAULT;
 		}
@@ -2838,6 +3074,7 @@ static int rga_mm_get_buffer_info(struct rga_job *job,
 
 static int rga_mm_get_buffer(struct rga_mm *mm,
 			     struct rga_job *job,
+			     struct rga_job_buffer *job_buf,
 			     uint64_t handle,
 			     uint64_t *channel_addr,
 			     struct rga_internal_buffer **buf,
@@ -2879,7 +3116,8 @@ static int rga_mm_get_buffer(struct rga_mm *mm,
 
 	mutex_unlock(&mm->lock);
 
-	ret = rga_mm_get_buffer_info(job, internal_buffer, channel_addr);
+	ret = rga_mm_get_buffer_info(job, internal_buffer, job_buf,
+				     channel_addr);
 	if (ret < 0) {
 		rga_job_err(job, "handle[%ld] failed to get internal buffer info!\n",
 			(unsigned long)handle);
@@ -2900,7 +3138,9 @@ static int rga_mm_get_buffer(struct rga_mm *mm,
 		 * interface for flushing the cache, so it is mandatory
 		 * to flush the cache when the virtual address is used.
 		 */
-		ret = rga_mm_sync_dma_sg_for_device(internal_buffer, job, dir);
+		ret = rga_mm_sync_dma_sg_for_device(
+			internal_buffer,
+			rga_mm_job_dma_buffer(job_buf, internal_buffer), job, dir);
 		if (ret < 0) {
 			rga_job_err(job, "sync sgt for device error!\n");
 			goto put_internal_buffer;
@@ -2921,11 +3161,15 @@ put_internal_buffer:
 
 static void rga_mm_put_buffer(struct rga_mm *mm,
 			      struct rga_job *job,
+			      struct rga_job_buffer *job_buf,
 			      struct rga_internal_buffer *internal_buffer,
 			      enum dma_data_direction dir)
 {
 	if (internal_buffer->mm_flag & RGA_MEM_FORCE_FLUSH_CACHE && dir != DMA_NONE)
-		if (rga_mm_sync_dma_sg_for_cpu(internal_buffer, job, dir))
+		if (rga_mm_sync_dma_sg_for_cpu(
+				internal_buffer,
+				rga_mm_job_dma_buffer(job_buf, internal_buffer), job,
+				dir))
 			rga_job_err(job, "sync sgt for cpu error!\n");
 
 	if (DEBUGGER_EN(MM)) {
@@ -2951,15 +3195,15 @@ static void rga_mm_put_channel_handle_info(struct rga_mm *mm,
 	rga_mm_put_rga2_bounce(job, job_buf, dir);
 
 	if (job_buf->y_addr) {
-		rga_mm_put_buffer(mm, job, job_buf->y_addr, dir);
+		rga_mm_put_buffer(mm, job, job_buf, job_buf->y_addr, dir);
 		job_buf->y_addr = NULL;
 	}
 	if (job_buf->uv_addr) {
-		rga_mm_put_buffer(mm, job, job_buf->uv_addr, dir);
+		rga_mm_put_buffer(mm, job, job_buf, job_buf->uv_addr, dir);
 		job_buf->uv_addr = NULL;
 	}
 	if (job_buf->v_addr) {
-		rga_mm_put_buffer(mm, job, job_buf->v_addr, dir);
+		rga_mm_put_buffer(mm, job, job_buf, job_buf->v_addr, dir);
 		job_buf->v_addr = NULL;
 	}
 
@@ -2975,6 +3219,8 @@ static void rga_mm_put_channel_handle_info(struct rga_mm *mm,
 		free_pages((unsigned long)job_buf->page_table, job_buf->order);
 		job_buf->page_table = NULL;
 	}
+
+	rga_mm_release_job_iommu_mappings(job_buf);
 }
 
 static int rga_mm_get_channel_handle_info(struct rga_mm *mm,
@@ -2999,7 +3245,7 @@ static int rga_mm_get_channel_handle_info(struct rga_mm *mm,
 	if (img->uv_addr > 0) {
 		handle = img->yrgb_addr;
 		if (handle > 0) {
-			ret = rga_mm_get_buffer(mm, job, handle, &img->yrgb_addr,
+			ret = rga_mm_get_buffer(mm, job, job_buf, handle, &img->yrgb_addr,
 						&job_buf->y_addr, yrgb_size, dir);
 			if (ret < 0) {
 				rga_job_err(job, "handle[%d] Can't get y/rgb address info!\n",
@@ -3010,7 +3256,7 @@ static int rga_mm_get_channel_handle_info(struct rga_mm *mm,
 
 		handle = img->uv_addr;
 		if (handle > 0) {
-			ret = rga_mm_get_buffer(mm, job, handle, &img->uv_addr,
+			ret = rga_mm_get_buffer(mm, job, job_buf, handle, &img->uv_addr,
 						&job_buf->uv_addr, uv_size, dir);
 			if (ret < 0) {
 				rga_job_err(job, "handle[%d] Can't get uv address info!\n", handle);
@@ -3020,7 +3266,7 @@ static int rga_mm_get_channel_handle_info(struct rga_mm *mm,
 
 		handle = img->v_addr;
 		if (handle > 0) {
-			ret = rga_mm_get_buffer(mm, job, handle, &img->v_addr,
+			ret = rga_mm_get_buffer(mm, job, job_buf, handle, &img->v_addr,
 						&job_buf->v_addr, v_size, dir);
 			if (ret < 0) {
 				rga_job_err(job, "handle[%d] Can't get uv address info!\n", handle);
@@ -3030,7 +3276,7 @@ static int rga_mm_get_channel_handle_info(struct rga_mm *mm,
 	} else {
 		handle = img->yrgb_addr;
 		if (handle > 0) {
-			ret = rga_mm_get_buffer(mm, job, handle, &img->yrgb_addr,
+			ret = rga_mm_get_buffer(mm, job, job_buf, handle, &img->yrgb_addr,
 						&job_buf->addr, img_size, dir);
 			if (ret < 0) {
 				rga_job_err(job, "handle[%d] Can't get y/rgb address info!\n",
@@ -3317,7 +3563,10 @@ static void rga_mm_unmap_channel_job_buffer(struct rga_job *job,
 	rga_mm_put_rga2_bounce(job, job_buffer, dir);
 
 	if (job_buffer->addr->mm_flag & RGA_MEM_FORCE_FLUSH_CACHE && dir != DMA_NONE)
-		if (rga_mm_sync_dma_sg_for_cpu(job_buffer->addr, job, dir))
+		if (rga_mm_sync_dma_sg_for_cpu(
+				job_buffer->addr,
+				rga_mm_job_dma_buffer(job_buffer, job_buffer->addr),
+				job, dir))
 			rga_job_err(job, "sync sgt for cpu error!\n");
 
 	if (DEBUGGER_EN(MM)) {
@@ -3325,6 +3574,7 @@ static void rga_mm_unmap_channel_job_buffer(struct rga_job *job,
 		rga_mm_dump_buffer(job_buffer->addr);
 	}
 
+	rga_mm_release_job_iommu_mappings(job_buffer);
 	rga_mm_unmap_buffer(job_buffer->addr);
 	kfree(job_buffer->addr);
 
@@ -3359,14 +3609,16 @@ static int rga_mm_map_channel_job_buffer(struct rga_job *job,
 		rga_mm_dump_buffer(buffer);
 	}
 
-	ret = rga_mm_get_buffer_info(job, buffer, &img->yrgb_addr);
+	ret = rga_mm_get_buffer_info(job, buffer, job_buffer,
+				     &img->yrgb_addr);
 	if (ret < 0) {
 		rga_job_err(job, "Failed to get internal buffer info!\n");
 		goto error_unmap_buffer;
 	}
 
 	if (buffer->mm_flag & RGA_MEM_FORCE_FLUSH_CACHE) {
-		ret = rga_mm_sync_dma_sg_for_device(buffer, job, dir);
+		ret = rga_mm_sync_dma_sg_for_device(
+			buffer, rga_mm_job_dma_buffer(job_buffer, buffer), job, dir);
 		if (ret < 0) {
 			rga_job_err(job, "sync sgt for device error!\n");
 			goto error_unmap_buffer;
@@ -3549,7 +3801,8 @@ static int rga_mm_alloc_channel_fake_buffer(struct rga_job *job,
 	buffer->memory_parm.format = img->format;
 	buffer->memory_parm.size = size;
 
-	ret = rga_mm_get_buffer_info(job, buffer, &img->yrgb_addr);
+	ret = rga_mm_get_buffer_info(job, buffer, job_buffer,
+				     &img->yrgb_addr);
 	if (ret < 0)
 		goto error_free_dma_buf;
 
@@ -3745,6 +3998,12 @@ int rga_mm_map_job_info(struct rga_job *job)
 			rga_job_err(job, "task[%d] failed to map job info\n", i);
 			goto err_unmap_job_info;
 		}
+	}
+
+	if (job->scheduler->data->mmu == RGA_IOMMU) {
+		ret = rga_iommu_flush_tlb(job->scheduler->iommu_info);
+		if (ret)
+			goto err_unmap_job_info;
 	}
 
 	return 0;
