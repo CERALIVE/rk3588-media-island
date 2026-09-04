@@ -1,0 +1,7 @@
+Sep 04 03:33:08 ceralive kernel: debugfs: '7054-16' already exists in 'sessions'
+Sep 04 03:33:09 ceralive kernel: fdee0000.hdmi_receiver: hdmirx_query_dv_timings: signal is not locked
+Sep 04 03:33:10 ceralive kernel: audit: type=1130 audit(1788492790.969:228): pid=1 uid=0 auid=4294967295 ses=4294967295 msg='unit=ceralive-hostname-reconcile comm="systemd" exe="/usr/lib/systemd/systemd" hostname=? addr=? terminal=? res=success'
+Sep 04 03:33:10 ceralive kernel: audit: type=1131 audit(1788492790.969:229): pid=1 uid=0 auid=4294967295 ses=4294967295 msg='unit=ceralive-hostname-reconcile comm="systemd" exe="/usr/lib/systemd/systemd" hostname=? addr=? terminal=? res=success'
+Sep 04 03:33:14 ceralive kernel: fdee0000.hdmi_receiver: hdmirx_query_dv_timings: signal is not locked
+Sep 04 03:33:16 ceralive kernel: debugfs: '7415-17' already exists in 'sessions'
+Sep 04 03:33:16 ceralive kernel: debugfs: '7416-18' already exists in 'sessions'

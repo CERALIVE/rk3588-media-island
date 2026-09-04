@@ -43,6 +43,7 @@ import re
 import sys
 import tempfile
 from pathlib import Path
+from typing import Final
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -55,7 +56,12 @@ ISLAND_SOURCE_ROOTS = (
 )
 ISLAND_SOURCE_SUFFIXES = (".c", ".h", ".S")
 ISLAND_SOURCE_EXACT = ("Kconfig", "Makefile")
+GENERATED_SOURCE_SUFFIXES = (".mod.c",)
 NOT_SOURCE = (".gitkeep",)
+
+REPOSITORY_SOURCE_COUNT: Final = 78
+REPOSITORY_INTEGRATION_COUNT: Final = 6
+REPOSITORY_SERIES_COUNT: Final = 7
 
 MBOX_DELIMITER = re.compile(r"^From [0-9a-f]{40} Mon Sep 17 00:00:00 2001$")
 SUBJECT = re.compile(r"^Subject: \[PATCH (\d+)/(\d+)\] (.+)$")
@@ -79,6 +85,8 @@ def island_source_files(root: Path) -> dict[str, str]:
                 continue
             name = candidate.name
             if name in NOT_SOURCE:
+                continue
+            if name.endswith(GENERATED_SOURCE_SUFFIXES):
                 continue
             if name not in ISLAND_SOURCE_EXACT and not name.endswith(
                 ISLAND_SOURCE_SUFFIXES
@@ -323,6 +331,29 @@ def verify(root: Path) -> list[str]:
     return problems
 
 
+def repository_census_problems(root: Path) -> list[str]:
+    sources = len(island_source_files(root))
+    integration = len(integration_payloads(root))
+    series = len(read_series_order(root / "patches"))
+    problems: list[str] = []
+
+    if sources != REPOSITORY_SOURCE_COUNT:
+        problems.append(
+            f"repository source census is {sources}, expected {REPOSITORY_SOURCE_COUNT}"
+        )
+    if integration != REPOSITORY_INTEGRATION_COUNT:
+        problems.append(
+            "repository integration census is "
+            f"{integration}, expected {REPOSITORY_INTEGRATION_COUNT}"
+        )
+    if series != REPOSITORY_SERIES_COUNT:
+        problems.append(
+            f"repository series census is {series}, expected {REPOSITORY_SERIES_COUNT}"
+        )
+
+    return problems
+
+
 def _self_test() -> int:
     """Every rule above, proven to FAIL when its input is mutated."""
     failures: list[str] = []
@@ -428,6 +459,25 @@ def _self_test() -> int:
             any("absent from the series" in p for p in verify(dropped)),
         )
 
+        generated = build(base / "generated", good, "int a;\n")
+        (generated / "drivers/video/rockchip/mpp/rk_vcodec.mod.c").write_text(
+            "generated module metadata\n", encoding="utf-8"
+        )
+        check("generated .mod.c is not island source", not verify(generated))
+
+        claimed_generated = build(
+            base / "claimed-generated",
+            good.replace(
+                "drivers/video/rockchip/mpp/a.c",
+                "drivers/video/rockchip/mpp/rk_vcodec.mod.c",
+            ),
+            "int a;\n",
+        )
+        check(
+            "a mailbox claiming generated .mod.c fails",
+            any("rk_vcodec.mod.c" in problem for problem in verify(claimed_generated)),
+        )
+
         misnumbered = build(
             base / "misnumbered", good.replace("[PATCH 1/1]", "[PATCH 2/7]"), "int a;\n"
         )
@@ -510,6 +560,7 @@ def main(argv: list[str]) -> int:
 
     try:
         problems = verify(ROOT)
+        problems.extend(repository_census_problems(ROOT))
     except ParityError as error:
         print(f"FAIL (independent): {error}")
         return 1

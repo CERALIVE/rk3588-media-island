@@ -11,6 +11,7 @@
 #include "rga_common.h"
 #include "rga_debugger.h"
 #include "rga_hw_config.h"
+#include "rga_job.h"
 
 #define FACTOR_MAX ((int)(2 << 15))
 
@@ -2317,7 +2318,8 @@ static int rga3_irq(struct rga_scheduler_t *scheduler)
 		rga_job_err(job, "irq handler err! INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x]\n",
 		       job->intr_status, job->hw_status, job->cmd_status);
 
-		scheduler->ops->soft_reset(scheduler);
+		rga_telemetry_reset(scheduler, -EIO,
+				    scheduler->ops->soft_reset);
 	} else if (job->intr_status & (m_RGA3_INT_FRM_DONE | m_RGA3_INT_CMD_LINE_FINISH)) {
 		if (job->task_count == 1) {
 			set_bit(RGA_JOB_STATE_FINISH, &job->state);

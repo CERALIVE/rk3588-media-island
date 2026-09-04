@@ -1,0 +1,22 @@
+Sep 04 04:02:35 ceralive kernel: debugfs: '5029-7' already exists in 'sessions'
+Sep 04 04:02:35 ceralive kernel: mpp_rkvenc2 fdbd0000.rkvenc-core: core 0 page fault found dchs 00090014
+Sep 04 04:02:35 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2746: --- dump task 1141 mem region ---
+Sep 04 04:02:35 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2751: reg[  0]: 0x00000000fdc00000, size 152000
+Sep 04 04:02:35 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2751: reg[  1]: 0x00000000fdc00000, size 152000
+Sep 04 04:02:35 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2751: reg[  2]: 0x00000000fdc00000, size 152000
+Sep 04 04:02:35 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2751: reg[  3]: 0x00000000fda00000, size 15d000
+Sep 04 04:02:35 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2751: reg[  4]: 0x00000000fda00000, size 15d000
+Sep 04 04:02:35 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2751: reg[  5]: 0x00000000fda00000, size 15d000
+Sep 04 04:02:35 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2751: reg[  6]: 0x00000000fda00000, size 15d000
+Sep 04 04:02:35 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2751: reg[  9]: 0x00000000ff3f0000, size 10000
+Sep 04 04:02:35 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2751: reg[ 10]: 0x00000000ff3f0000, size 10000
+Sep 04 04:02:35 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2751: reg[ 12]: 0x00000000fde00000, size e1000
+Sep 04 04:02:35 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2751: reg[ 13]: 0x00000000fde00000, size e1000
+Sep 04 04:02:35 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2751: reg[ 14]: 0x00000000fde00000, size e1000
+Sep 04 04:02:35 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2751: reg[ 15]: 0x00000000fde00000, size e1000
+Sep 04 04:02:35 ceralive kernel: mpp_rkvenc2 fdbd0000.rkvenc-core: resetting...
+Sep 04 04:02:35 ceralive kernel: mpp_rkvenc2 fdbd0000.rkvenc-core: reset done
+Sep 04 04:02:39 ceralive kernel: fdee0000.hdmi_receiver: hdmirx_query_dv_timings: signal is not locked
+Sep 04 04:02:44 ceralive kernel: fdee0000.hdmi_receiver: hdmirx_query_dv_timings: signal is not locked
+Sep 04 04:02:45 ceralive kernel: debugfs: '5242-8' already exists in 'sessions'
+Sep 04 04:02:45 ceralive kernel: debugfs: '5243-9' already exists in 'sessions'

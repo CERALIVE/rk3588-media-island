@@ -1,0 +1,2 @@
+row=malformed-ioctls verdict=SURVIVE baseline_fps=30.200 healthy_fps=30.400 reset_delta=0 busy=0 queue_depth=0 dmabufs=baseline iommu_maps=baseline journal_bad=0
+matrix failures=0 gated=0 baseline_fps=30.200 out=/tmp/todo17-v4/final-pass-malformed-ioctls

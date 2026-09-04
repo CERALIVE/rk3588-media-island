@@ -24,8 +24,109 @@
 #include "rga_job.h"
 
 #define RGA_DEBUGGER_ROOT_NAME "rkrga"
+#define RGA_TELEMETRY_ROOT_NAME "rockchip-rga"
 
 #define STR_ENABLE(en) (en ? "EN" : "DIS")
+
+static int rga_telemetry_atomic64_get(void *data, u64 *value)
+{
+	*value = atomic64_read(data);
+	return 0;
+}
+
+DEFINE_DEBUGFS_ATTRIBUTE(rga_telemetry_atomic64_fops,
+			 rga_telemetry_atomic64_get, NULL, "%llu\n");
+
+static struct dentry *
+rga_debugfs_create_atomic64(const char *name, struct dentry *parent,
+			    atomic64_t *value)
+{
+	return debugfs_create_file(name, 0444, parent, value,
+				   &rga_telemetry_atomic64_fops);
+}
+
+enum rga_session_telemetry_field {
+	RGA_SESSION_TELEMETRY_STATS,
+	RGA_SESSION_TELEMETRY_TASKS,
+	RGA_SESSION_TELEMETRY_BYTES,
+};
+
+struct rga_session_telemetry_reader {
+	struct rga_session *session;
+	enum rga_session_telemetry_field field;
+};
+
+static int rga_session_telemetry_show(struct seq_file *seq, void *unused)
+{
+	struct rga_session_telemetry_reader *reader = seq->private;
+	struct rga_session *session = reader->session;
+	u64 tasks = atomic64_read(&session->telemetry.tasks);
+	u64 bytes = atomic64_read(&session->telemetry.bytes);
+
+	switch (reader->field) {
+	case RGA_SESSION_TELEMETRY_STATS:
+		seq_printf(seq, "tasks:\t%llu\nbytes:\t%llu\n", tasks, bytes);
+		break;
+	case RGA_SESSION_TELEMETRY_TASKS:
+		seq_printf(seq, "%llu\n", tasks);
+		break;
+	case RGA_SESSION_TELEMETRY_BYTES:
+		seq_printf(seq, "%llu\n", bytes);
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int rga_session_telemetry_open(struct inode *inode, struct file *file)
+{
+	struct rga_session *session = inode->i_private;
+	struct rga_session_telemetry_reader *reader;
+	int ret;
+
+	if (!rga_session_get_unless_zero(session))
+		return -ENOENT;
+
+	reader = kmalloc(sizeof(*reader), GFP_KERNEL);
+	if (!reader) {
+		rga_session_put(session);
+		return -ENOMEM;
+	}
+
+	reader->session = session;
+	reader->field = debugfs_get_aux_num(file);
+	ret = single_open(file, rga_session_telemetry_show, reader);
+	if (ret) {
+		kfree(reader);
+		rga_session_put(session);
+	}
+
+	return ret;
+}
+
+static int rga_session_telemetry_release(struct inode *inode, struct file *file)
+{
+	struct seq_file *seq = file->private_data;
+	struct rga_session_telemetry_reader *reader = seq->private;
+	struct rga_session *session = reader->session;
+	int ret;
+
+	ret = single_release(inode, file);
+	kfree(reader);
+	rga_session_put(session);
+
+	return ret;
+}
+
+static const struct file_operations rga_session_telemetry_fops = {
+	.owner = THIS_MODULE,
+	.open = rga_session_telemetry_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = rga_session_telemetry_release,
+};
 
 int RGA_DEBUG_REG;
 int RGA_DEBUG_MSG;
@@ -660,6 +761,9 @@ static int rga_debugfs_remove_files(struct rga_debugger *debugger)
 	/* Delete all debugfs node in this directory */
 	debugfs_remove_recursive(debugger->debugfs_dir);
 	debugger->debugfs_dir = NULL;
+	debugfs_remove_recursive(debugger->telemetry_dir);
+	debugger->telemetry_dir = NULL;
+	debugger->telemetry_sessions = NULL;
 
 	mutex_unlock(&debugger->debugfs_lock);
 
@@ -685,7 +789,7 @@ static int rga_debugfs_create_files(const struct rga_debugger_list *files,
 		tmp->info_ent = &files[i];
 		tmp->debugger = debugger;
 
-		ent = debugfs_create_file(files[i].name, S_IFREG | S_IRUGO,
+		ent = debugfs_create_file(files[i].name, 0400,
 					 root, tmp, &rga_debugfs_fops);
 		if (!ent) {
 			pr_err("Cannot create /sys/kernel/debug/%pd/%s\n", root,
@@ -723,8 +827,11 @@ int rga_debugfs_remove(void)
 
 int rga_debugfs_init(void)
 {
+	struct dentry *entry;
 	int ret;
+	int i;
 	struct rga_debugger *debugger;
+	struct dentry *cores;
 
 	debugger = rga_drvdata->debugger;
 
@@ -744,12 +851,120 @@ int rga_debugfs_init(void)
 		goto CREATE_FAIL;
 	}
 
+	debugger->telemetry_dir = debugfs_create_dir(RGA_TELEMETRY_ROOT_NAME, NULL);
+	if (IS_ERR(debugger->telemetry_dir)) {
+		ret = PTR_ERR(debugger->telemetry_dir);
+		debugger->telemetry_dir = NULL;
+		goto CREATE_FAIL;
+	}
+	cores = debugfs_create_dir("cores", debugger->telemetry_dir);
+	if (IS_ERR(cores)) {
+		ret = PTR_ERR(cores);
+		goto CREATE_FAIL;
+	}
+	debugger->telemetry_sessions = debugfs_create_dir("sessions",
+							debugger->telemetry_dir);
+	if (IS_ERR(debugger->telemetry_sessions)) {
+		ret = PTR_ERR(debugger->telemetry_sessions);
+		debugger->telemetry_sessions = NULL;
+		goto CREATE_FAIL;
+	}
+	debugfs_create_atomic_t("queue_depth", 0444, debugger->telemetry_dir,
+				&rga_drvdata->telemetry_queue_depth);
+	for (i = 0; i < rga_drvdata->num_of_scheduler; i++) {
+		struct rga_scheduler_t *scheduler = rga_drvdata->scheduler[i];
+		char name[12];
+
+		snprintf(name, sizeof(name), "%d", i);
+		scheduler->telemetry_dir = debugfs_create_dir(name, cores);
+		if (IS_ERR(scheduler->telemetry_dir)) {
+			ret = PTR_ERR(scheduler->telemetry_dir);
+			goto CREATE_FAIL;
+		}
+
+		entry = rga_debugfs_create_atomic64("busy_ns",
+							scheduler->telemetry_dir,
+							&scheduler->telemetry.busy_ns);
+		if (IS_ERR(entry)) {
+			ret = PTR_ERR(entry);
+			goto CREATE_FAIL;
+		}
+		entry = rga_debugfs_create_atomic64("tasks",
+							scheduler->telemetry_dir,
+							&scheduler->telemetry.tasks);
+		if (IS_ERR(entry)) {
+			ret = PTR_ERR(entry);
+			goto CREATE_FAIL;
+		}
+		entry = rga_debugfs_create_atomic64("errors",
+							scheduler->telemetry_dir,
+							&scheduler->telemetry.errors);
+		if (IS_ERR(entry)) {
+			ret = PTR_ERR(entry);
+			goto CREATE_FAIL;
+		}
+		entry = rga_debugfs_create_atomic64("resets",
+							scheduler->telemetry_dir,
+							&scheduler->telemetry.resets);
+		if (IS_ERR(entry)) {
+			ret = PTR_ERR(entry);
+			goto CREATE_FAIL;
+		}
+	}
+
 	return 0;
 
 CREATE_FAIL:
 	rga_debugfs_remove();
 
 	return ret;
+}
+
+void rga_telemetry_add_session(struct rga_session *session)
+{
+	struct rga_debugger *debugger = rga_drvdata->debugger;
+	struct dentry *entry;
+	char name[32];
+
+	if (!debugger || !debugger->telemetry_sessions)
+		return;
+
+	snprintf(name, sizeof(name), "%d-%d", session->tgid, session->id);
+	session->telemetry_dir = debugfs_create_dir(name, debugger->telemetry_sessions);
+	if (IS_ERR(session->telemetry_dir)) {
+		session->telemetry_dir = NULL;
+		return;
+	}
+
+	entry = debugfs_create_file_aux_num("stats", 0444,
+					    session->telemetry_dir, session,
+					    RGA_SESSION_TELEMETRY_STATS,
+					    &rga_session_telemetry_fops);
+	if (IS_ERR(entry)) {
+		goto fail;
+	}
+	entry = debugfs_create_file_aux_num("tasks", 0444,
+					    session->telemetry_dir, session,
+					    RGA_SESSION_TELEMETRY_TASKS,
+					    &rga_session_telemetry_fops);
+	if (IS_ERR(entry))
+		goto fail;
+	entry = debugfs_create_file_aux_num("bytes", 0444,
+					    session->telemetry_dir, session,
+					    RGA_SESSION_TELEMETRY_BYTES,
+					    &rga_session_telemetry_fops);
+	if (!IS_ERR(entry))
+		return;
+
+fail:
+	debugfs_remove_recursive(session->telemetry_dir);
+	session->telemetry_dir = NULL;
+}
+
+void rga_telemetry_remove_session(struct rga_session *session)
+{
+	debugfs_remove_recursive(session->telemetry_dir);
+	session->telemetry_dir = NULL;
 }
 #endif /* #ifdef CONFIG_ROCKCHIP_RGA_DEBUG_FS */
 

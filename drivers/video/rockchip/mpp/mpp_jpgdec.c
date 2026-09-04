@@ -600,6 +600,7 @@ static const struct of_device_id mpp_jpgdec_dt_match[] = {
 	},
 	{},
 };
+MODULE_DEVICE_TABLE(of, mpp_jpgdec_dt_match);
 
 static int jpgdec_probe(struct platform_device *pdev)
 {

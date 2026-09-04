@@ -15,12 +15,27 @@ config ROCKCHIP_MPP_FAULT_KUNIT_TEST
 	  Exercise the atomic one-shot semantics used by the opt-in RKVENC2
 	  fault-injection controls.
 
+config ROCKCHIP_MPP_RECOVERY_KUNIT_TEST
+	tristate "Rockchip MPP recovery-state tests"
+	depends on KUNIT
+	default KUNIT_ALL_TESTS
+	help
+	  Exercise session teardown ordering and pending, running, timeout,
+	  finish, and done task transitions without RK3588 hardware.
+
 config ROCKCHIP_MPP_CAPABILITIES_KUNIT_TEST
 	tristate "Rockchip MPP capability-reporting tests"
 	depends on KUNIT
 	default KUNIT_ALL_TESTS
 	help
 	  Prove userspace sees only clients that are both compiled and probed.
+
+config ROCKCHIP_MPP_TELEMETRY_KUNIT_TEST
+	tristate "Rockchip MPP telemetry format tests"
+	depends on KUNIT
+	default KUNIT_ALL_TESTS
+	help
+	  Freeze the operator-visible MPP load row produced by the driver.
 
 config ROCKCHIP_RGA_FENCE_KUNIT_TEST
 	tristate "Rockchip RGA release-fence tests"
@@ -30,6 +45,14 @@ config ROCKCHIP_RGA_FENCE_KUNIT_TEST
 	help
 	  Exercise the production release-fence terminal helper for every RGA
 	  request exit class that must wake an asynchronous consumer.
+
+config ROCKCHIP_RGA_REQUEST_KUNIT_TEST
+	tristate "Rockchip RGA request-validation tests"
+	depends on KUNIT
+	default KUNIT_ALL_TESTS
+	help
+	  Exercise fail-closed per-plane descriptor, offset, stride, and
+	  format validation without binding the RGA driver.
 
 config ROCKCHIP_MEDIA_DMA_POLICY_KUNIT_TEST
 	tristate "Rockchip media DMA policy tests"

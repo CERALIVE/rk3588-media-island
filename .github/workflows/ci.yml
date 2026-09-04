@@ -88,6 +88,14 @@ jobs:
           done
           printf '=== scripts/check-action-pins.sh --self-test ===\n'
           bash scripts/check-action-pins.sh --self-test || rc=1
+          printf '=== scripts/check-module-contract.sh ===\n'
+          bash scripts/check-module-contract.sh || rc=1
+          printf '=== scripts/check-module-contract.sh --self-test ===\n'
+          bash scripts/check-module-contract.sh --self-test || rc=1
+          printf '=== scripts/check-telemetry-contract.sh ===\n'
+          bash scripts/check-telemetry-contract.sh || rc=1
+          printf '=== scripts/check-telemetry-contract.sh --self-test ===\n'
+          bash scripts/check-telemetry-contract.sh --self-test || rc=1
           printf '=== scripts/vendor-backlog.sh --self-test ===\n'
           bash scripts/vendor-backlog.sh --self-test || rc=1
           exit "$rc"
@@ -287,7 +295,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             bc bison ccache device-tree-compiler flex gcc-aarch64-linux-gnu \
-            libelf-dev libssl-dev
+            kmod libelf-dev libssl-dev
 
       - name: Cache ccache
         uses: actions/cache@v6
@@ -376,6 +384,20 @@ jobs:
             .work/linux/.config .work/rk3588-edge.fragment \
             configs/rk3588-media-island.fragment
           make -C .work/linux -j"$(nproc)" olddefconfig
+          for symbol in \
+            CONFIG_DEBUG_FS=y \
+            CONFIG_FTRACE=y \
+            CONFIG_ENABLE_DEFAULT_TRACERS=y \
+            CONFIG_TRACING=y \
+            CONFIG_EVENT_TRACING=y \
+            CONFIG_TRACEPOINTS=y \
+            CONFIG_ROCKCHIP_RGA_DEBUG_FS=y; do
+            grep -qx "$symbol" .work/linux/.config || {
+              echo "::error::telemetry config did not resolve: $symbol"
+              exit 1
+            }
+          done
+          grep -qx '# CONFIG_FUNCTION_TRACER is not set' .work/linux/.config
 
       - name: Build and expose the configured provider symbol table
         env:
@@ -423,6 +445,9 @@ jobs:
             echo "::error::expected ${expected[*]}, got ${modules[*]}"
             exit 1
           }
+          scripts/check-module-contract.sh --modules \
+            .work/linux/drivers/video/rockchip/mpp/rk_vcodec.ko \
+            .work/linux/drivers/video/rockchip/rga3/rga3.ko
 
       - name: Build both board DTBs and prove device ownership
         env:
@@ -488,10 +513,13 @@ jobs:
             drivers/video/rockchip/mpp/mpp_rkvenc_test.h \
             drivers/video/rockchip/mpp/mpp_capabilities.h \
             drivers/video/rockchip/mpp/mpp_dma_policy.h \
+            drivers/video/rockchip/mpp/mpp_telemetry.h \
+            drivers/video/rockchip/mpp/mpp_recovery_state.h \
             .work/linux/drivers/video/rockchip/mpp/
           mkdir -p .work/linux/drivers/video/rockchip/rga3/include
           cp drivers/video/rockchip/rga3/include/rga_fence.h \
             drivers/video/rockchip/rga3/include/rga_dma_policy.h \
+            drivers/video/rockchip/rga3/include/rga_request_validation.h \
             .work/linux/drivers/video/rockchip/rga3/include/
           cp -a tests/kunit ".work/linux/drivers/video/rockchip/"
           printf '\nsource "drivers/video/rockchip/kunit/Kconfig"\n' \
@@ -500,7 +528,19 @@ jobs:
             >>.work/linux/drivers/video/Makefile
           ./.work/linux/tools/testing/kunit/kunit.py run \
             --kunitconfig="$PWD/tests/kunit" \
-            --build_dir="$PWD/.work/kunit"
+            --build_dir="$PWD/.work/kunit" | tee .work/kunit.log
+          grep -qx 'CONFIG_ROCKCHIP_MPP_TELEMETRY_KUNIT_TEST=y' \
+            .work/kunit/.config
+          grep -qx 'CONFIG_ROCKCHIP_MPP_RECOVERY_KUNIT_TEST=y' \
+            .work/kunit/.config
+          grep -qx 'CONFIG_ROCKCHIP_RGA_REQUEST_KUNIT_TEST=y' \
+            .work/kunit/.config
+          grep -Fq 'rockchip-mpp-telemetry' .work/kunit.log
+          grep -Fq 'mpp_telemetry_session_stats_test' .work/kunit.log
+          grep -Fq 'rockchip-mpp-recovery-state' .work/kunit.log
+          grep -Fq 'mpp_task_rejects_claim_before_running_test' .work/kunit.log
+          grep -Fq 'rockchip-rga-request-validation' .work/kunit.log
+          grep -Fq 'rga_user_request_shape_validation_test' .work/kunit.log
 
   static-analysis:
     name: static analysis

@@ -1,0 +1,22 @@
+=== System Info ===
+Compatible:  ceralive-orangepi5-plus
+Variant:     
+Booted from: rootfs.0 (A)
+
+=== Bootloader ===
+Activated: rootfs.0 (A)
+
+=== Slot States ===
+o [1m[rootfs.1][0m (/dev/disk/by-partlabel/xrootfs_b, ext4, inactive[0m)
+      bootname: [34mB[0m
+      boot status: [32mgood[0m
+
+[1mx[0m [32m[32m[1m[rootfs.0][0m (/dev/disk/by-partlabel/xrootfs_a, ext4, [1mbooted[0m)
+      bootname: [34mA[0m
+      boot status: [32mgood[0m
+STATE_FILE=/boot/boot_state.txt
+BOOT_ORDER=A B
+BOOT_A_LEFT=2
+BOOT_B_LEFT=2
+inactive_status=good
+inactive_left=2

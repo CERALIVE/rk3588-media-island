@@ -1,0 +1,23 @@
+Sep 04 03:34:46 ceralive kernel: debugfs: '10164-35' already exists in 'sessions'
+Sep 04 03:34:47 ceralive kernel: rk_vcodec: mpp_task_timeout_work:711: session 16:117 task 5590 processing time out!
+Sep 04 03:34:47 ceralive kernel: rk_vcodec: task 5590 dump timing at 515816 us:
+Sep 04 03:34:47 ceralive kernel: rk_vcodec: timing: create         : 342270495 us
+Sep 04 03:34:47 ceralive kernel: rk_vcodec: timing: create end     : 721 us
+Sep 04 03:34:47 ceralive kernel: rk_vcodec: timing: pending        : 740 us
+Sep 04 03:34:47 ceralive kernel: rk_vcodec: timing: run            : 838 us
+Sep 04 03:34:47 ceralive kernel: rk_vcodec: timing: timeout start  : 998 us
+Sep 04 03:34:47 ceralive kernel: rk_vcodec: timing: run end        : 999 us
+Sep 04 03:34:47 ceralive kernel: rk_vcodec: timing: irq            : invalid
+Sep 04 03:34:47 ceralive kernel: rk_vcodec: timing: timeout cancel : invalid
+Sep 04 03:34:47 ceralive kernel: rk_vcodec: timing: finish         : invalid
+Sep 04 03:34:47 ceralive kernel: mpp_rkvenc2 fdbd0000.rkvenc-core: resetting...
+Sep 04 03:34:47 ceralive kernel: mpp_rkvenc2 fdbd0000.rkvenc-core: reset done
+Sep 04 03:34:47 ceralive kernel: mpp_rkvenc2 fdbd0000.rkvenc-core: reset recovery failed: -5
+Sep 04 03:34:47 ceralive kernel: rk_vcodec: mpp_msgs_wait:2240: session 117 wait result ret -5
+Sep 04 03:34:49 ceralive kernel: fdee0000.hdmi_receiver: hdmirx_query_dv_timings: signal is not locked
+Sep 04 03:34:51 ceralive kernel: rkvenc2_wait_result:2958: wait task break by signal in normal mode
+Sep 04 03:34:51 ceralive kernel: rk_vcodec: mpp_msgs_wait:2240: session 117 wait result ret -512
+Sep 04 03:34:53 ceralive kernel: rockchip-i2s-tdm fddf8000.i2s: clear failed, reset rx
+Sep 04 03:34:54 ceralive kernel: fdee0000.hdmi_receiver: hdmirx_query_dv_timings: signal is not locked
+Sep 04 03:34:56 ceralive kernel: debugfs: '10369-36' already exists in 'sessions'
+Sep 04 03:34:56 ceralive kernel: debugfs: '10370-37' already exists in 'sessions'

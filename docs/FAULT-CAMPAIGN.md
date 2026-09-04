@@ -28,12 +28,36 @@ self-tests are not presented as hardware evidence.
 | `0021a` balanced failed-run unwind | **GREEN-ON-IMPORT** | `fwport-0001` (`041c151608227cc55845fba2c0ad33cb378dbbf0`) separates failed-run cleanup from normal `mpp_task_finish()`; `fwport-0096` (`9352bcaa065277443632ede17f7b628ff4962187`) completes task/fault ownership sequencing | The 0021 contract passed this row on import; removing one imported `mpp_power_off()` unwind on `mutation/0021-proof` made only this imported guarantee newly fail, changing the already-red aggregate from 2/3 to 1/3 |
 | `0021b` worker task lifetime | **GREEN-ON-IMPORT** | `fwport-0052` (`3407cbf1b17f1cc447e4d5df09dd459e45e4e1fb`) makes device-less tasks disposable; `0053` (`2f8b8e41b41ad043190abed46027ca8137f1e2db`) guards the wait twin; `0096` (`9352bcaa065277443632ede17f7b628ff4962187`) serializes task/fault ownership | The worker has no task dereference after the releasing ISR/failure tail; adding an explicit post-ISR task-state read on `mutation/0021-proof` made only this imported guarantee newly fail, changing 2/3 to 1/3 |
 | `0021c` secondary-core dispatch eligibility | **RED → fix → GREEN** | Shared-domain helpers restore a detached secondary's default domain, but neither the scheduler nor generic attach rejected an unexpectedly missing domain/group | The aggregate 0021 contract was RED at 2/3 and is GREEN at 3/3 after `a9f6967`; RKVENC2 now removes a core without a usable domain from the idle candidate mask and `mpp_iommu_attach()` independently returns `-ENODEV` instead of calling `iommu_attach_group()` with NULL state |
-| `0022` class coverage, element and request-count bounds | **RED → fix → GREEN** | `fwport-0062`, local commit `6ed2da0`, stable patch-id `3e228bc54c1b53228a2cf98f53a840edf163962f`; `fwport-0076` as above | Explicit `mpp_req_hevc_sqi_scl_span_test` accepts the 3,228-byte SQI+SCL programme with its 24-byte map hole; `mpp_req_class_overrun_rejected_test` requires `-EINVAL`; element/count cases remain permanent |
+| `0022` class coverage, element and request-count bounds | **RED → fix → GREEN** | `fwport-0062`, local commit `6ed2da0`, stable patch-id `3e228bc54c1b53228a2cf98f53a840edf163962f`; `fwport-0076` as above | Explicit `mpp_req_hevc_sqi_scl_span_test` accepts the 3,228-byte SQI+SCL programme with its 24-byte map hole; `mpp_req_libmpp_partial_par_program_test` preserves libmpp's valid 720-byte partial PAR-class programme; `mpp_req_class_overrun_rejected_test` still requires `-EINVAL`; element/count cases remain permanent |
 | `0026`-class decoder/JPGDEC bounds | **RED → fix → GREEN** | Shared request validation from `fwport-0054`/`0076`; no claim that HDMI-RX patch `0026` is an MPP change | `mpp_req_rkvdec2_bounds_test` and `mpp_req_jpgdec_bounds_test` exercise the production helper used by `mpp_check_req()` |
 
 Every required hardening intent now has terminal evidence. Split rows retain
 the independent defect boundaries where one CeraLive patch covered multiple
 unrelated failures.
+
+The Orange Pi reliability drill found two integration gaps after the KUnit-only
+pass. `task_msgs_add()` discarded a task-construction error after the final
+message, so malformed register requests returned success even though no task was
+queued. It now returns that error through `mpp_collect_msgs()`; RKVENC2 also
+returns `ERR_PTR(ret)` so the exact validation errno survives the legacy
+pointer-returning task allocator instead of collapsing every refusal to `ENOMEM`.
+The opt-in IOMMU
+fault seam also requested a reset explicitly after invoking the real fault
+handler; unlike a physical translation fault, the synthetic callback runs before
+the hardware starts and cannot rely on a missing completion to force timeout
+recovery. The board matrix covers both paths and still requires the malformed
+errno contract, a consumed one-shot, a reset delta, unaffected healthy-session
+throughput, and idle counter restoration.
+
+The permanent recovery-state suite also checks the cumulative taskqueue
+milestones directly: PENDING must precede RUNNING, IRQ/timeout/abort may claim a
+running task only once, and FINISH/DONE may publish only after that claim.
+Session teardown is similarly monotonic through unpublication, telemetry
+removal, private cleanup, message cleanup, and final release. The companion RGA
+suite validates nonzero descriptors and dimensions, overflow-safe offsets,
+both stride bounds, every declared format code and malformed top-level request
+counts/pointers. All invalid shapes return `-EINVAL`; valid shapes are accepted
+without mutation.
 
 ## Test-first transcript
 

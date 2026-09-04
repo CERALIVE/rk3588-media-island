@@ -1,0 +1,27 @@
+Sep 04 03:33:43 ceralive kernel: debugfs: '8308-23' already exists in 'sessions'
+Sep 04 03:33:44 ceralive kernel: rk_vcodec: mpp_task_timeout_work:711: session 16:78 task 3658 processing time out!
+Sep 04 03:33:44 ceralive kernel: rk_vcodec: task 3658 dump timing at 520459 us:
+Sep 04 03:33:44 ceralive kernel: rk_vcodec: timing: create         : 279257315 us
+Sep 04 03:33:44 ceralive kernel: rk_vcodec: timing: create end     : 776 us
+Sep 04 03:33:44 ceralive kernel: rk_vcodec: timing: pending        : 794 us
+Sep 04 03:33:44 ceralive kernel: rk_vcodec: timing: run            : 2723 us
+Sep 04 03:33:44 ceralive kernel: rk_vcodec: timing: timeout start  : 2902 us
+Sep 04 03:33:44 ceralive kernel: rk_vcodec: timing: run end        : 2904 us
+Sep 04 03:33:44 ceralive kernel: rk_vcodec: timing: irq            : invalid
+Sep 04 03:33:44 ceralive kernel: rk_vcodec: timing: timeout cancel : invalid
+Sep 04 03:33:44 ceralive kernel: rk_vcodec: timing: finish         : invalid
+Sep 04 03:33:44 ceralive kernel: mpp_rkvenc2 fdbd0000.rkvenc-core: resetting...
+Sep 04 03:33:44 ceralive kernel: mpp_rkvenc2 fdbd0000.rkvenc-core: reset done
+Sep 04 03:33:44 ceralive kernel: fdee0000.hdmi_receiver: hdmirx_query_dv_timings: signal is not locked
+Sep 04 03:33:44 ceralive kernel: mpp_rkvenc2 fdbd0000.rkvenc-core: found error status 00000100
+Sep 04 03:33:44 ceralive kernel: mpp_rkvenc2 fdbd0000.rkvenc-core: resetting...
+Sep 04 03:33:44 ceralive kernel: mpp_rkvenc2 fdbe0000.rkvenc-core: found error status 00000100
+Sep 04 03:33:44 ceralive kernel: mpp_rkvenc2 fdbd0000.rkvenc-core: reset done
+Sep 04 03:33:44 ceralive kernel: mpp_rkvenc2 fdbe0000.rkvenc-core: resetting...
+Sep 04 03:33:44 ceralive kernel: mpp_rkvenc2 fdbe0000.rkvenc-core: reset done
+Sep 04 03:33:44 ceralive kernel: audit: type=1701 audit(1788492824.320:232): auid=1000 uid=0 gid=0 ses=10 pid=8308 comm="mpp_h264e_8308" exe="/usr/bin/gst-launch-1.0" sig=6 res=1
+Sep 04 03:33:49 ceralive kernel: fdee0000.hdmi_receiver: hdmirx_query_dv_timings: signal is not locked
+Sep 04 03:33:52 ceralive kernel: rockchip-i2s-tdm fddf8000.i2s: clear failed, reset rx
+Sep 04 03:33:53 ceralive kernel: debugfs: '8520-24' already exists in 'sessions'
+Sep 04 03:33:53 ceralive kernel: debugfs: '8523-25' already exists in 'sessions'
+Sep 04 03:33:54 ceralive kernel: fdee0000.hdmi_receiver: hdmirx_query_dv_timings: signal is not locked

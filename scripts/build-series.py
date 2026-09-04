@@ -86,6 +86,7 @@ SOURCE_ROOTS = (
 # backup or a scratch file into a kernel the device boots.
 SOURCE_SUFFIXES = (".c", ".h", ".S")
 SOURCE_EXACT_NAMES = ("Kconfig", "Makefile")
+GENERATED_SOURCE_SUFFIXES = (".mod.c",)
 
 # Scaffolding, never series content.
 IGNORED_NAMES = (".gitkeep",)
@@ -136,6 +137,8 @@ class PatchEntry:
 
 def _is_source_name(name: str) -> bool:
     if name in IGNORED_NAMES:
+        return False
+    if name.endswith(GENERATED_SOURCE_SUFFIXES):
         return False
     if name in SOURCE_EXACT_NAMES:
         return True
@@ -416,6 +419,9 @@ def _self_test() -> int:
         source_dir = fake / "drivers/video/rockchip/mpp"
         source_dir.mkdir(parents=True)
         (source_dir / "mpp_service.c").write_text("int probe(void);\n", encoding="utf-8")
+        (source_dir / "rk_vcodec.mod.c").write_text(
+            "generated module metadata\n", encoding="utf-8"
+        )
         (source_dir / ".gitkeep").write_text("", encoding="utf-8")
         (fake / "integration").mkdir(parents=True)
         (fake / "integration" / "0002-iommu-exports.patch").write_text(
@@ -456,6 +462,7 @@ def _self_test() -> int:
             and "+int probe(void);" in source_patch,
         )
         check(".gitkeep is not series content", ".gitkeep" not in source_patch)
+        check("generated .mod.c is not series content", ".mod.c" not in source_patch)
         check(
             "the mailbox is git-am shaped",
             source_patch.startswith(f"From {NULL_OID} {MBOX_EPOCH}\n")

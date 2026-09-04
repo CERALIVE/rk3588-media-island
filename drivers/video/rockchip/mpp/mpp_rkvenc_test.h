@@ -38,6 +38,9 @@ bool mpp_rkvenc_test_fail_ccu_attach(void);
 bool mpp_rkvenc_test_fail_irq_request(void);
 bool mpp_rkvenc_test_fail_clock_enable(void);
 bool mpp_rkvenc_test_fail_session_alloc(void);
+bool mpp_rkvenc_test_fail_reset(void);
+bool mpp_rkvenc_test_hang_task(pid_t session_pid);
+bool mpp_rkvenc_test_inject_iommu_fault(pid_t session_pid);
 unsigned int mpp_rkvenc_test_completion_delay_ms(void);
 #else
 static inline int mpp_rkvenc_test_init(void) { return 0; }
@@ -47,6 +50,9 @@ static inline bool mpp_rkvenc_test_fail_ccu_attach(void) { return false; }
 static inline bool mpp_rkvenc_test_fail_irq_request(void) { return false; }
 static inline bool mpp_rkvenc_test_fail_clock_enable(void) { return false; }
 static inline bool mpp_rkvenc_test_fail_session_alloc(void) { return false; }
+static inline bool mpp_rkvenc_test_fail_reset(void) { return false; }
+static inline bool mpp_rkvenc_test_hang_task(pid_t session_pid) { return false; }
+static inline bool mpp_rkvenc_test_inject_iommu_fault(pid_t session_pid) { return false; }
 static inline unsigned int mpp_rkvenc_test_completion_delay_ms(void) { return 0; }
 #endif
 

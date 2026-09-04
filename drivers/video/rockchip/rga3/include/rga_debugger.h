@@ -36,6 +36,8 @@ struct rga_debugger {
 #ifdef CONFIG_ROCKCHIP_RGA_DEBUG_FS
 	/* Directory of debugfs file */
 	struct dentry *debugfs_dir;
+	struct dentry *telemetry_dir;
+	struct dentry *telemetry_sessions;
 	struct list_head debugfs_entry_list;
 	struct mutex debugfs_lock;
 #endif
@@ -101,6 +103,8 @@ struct rga_debugger_node {
 #ifdef CONFIG_ROCKCHIP_RGA_DEBUG_FS
 int rga_debugfs_init(void);
 int rga_debugfs_remove(void);
+void rga_telemetry_add_session(struct rga_session *session);
+void rga_telemetry_remove_session(struct rga_session *session);
 #else
 static inline int rga_debugfs_remove(void)
 {
@@ -109,6 +113,12 @@ static inline int rga_debugfs_remove(void)
 static inline int rga_debugfs_init(void)
 {
 	return 0;
+}
+static inline void rga_telemetry_add_session(struct rga_session *session)
+{
+}
+static inline void rga_telemetry_remove_session(struct rga_session *session)
+{
 }
 #endif /* #ifdef CONFIG_ROCKCHIP_RGA_DEBUG_FS */
 
@@ -130,6 +140,13 @@ static inline int rga_procfs_init(void)
 
 #define DEBUGGER_EN(name) (unlikely(false))
 
+static inline void rga_telemetry_add_session(struct rga_session *session)
+{
+}
+static inline void rga_telemetry_remove_session(struct rga_session *session)
+{
+}
+
 #endif /* #ifdef CONFIG_ROCKCHIP_RGA_DEBUGGER */
 
 void rga_request_task_debug_info(struct seq_file *m, struct rga_req *req);
@@ -142,4 +159,3 @@ static inline void rga_dump_job_image(struct rga_job *dump_job)
 #endif /* #ifdef CONFIG_NO_GKI */
 
 #endif /* #ifndef _RGA_DEBUGGER_H_ */
-

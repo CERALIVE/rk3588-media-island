@@ -1,0 +1,17 @@
+mpp_service=/dev/mpp_service
+probe_hw_support=ok bitmap=0x00012200
+island_hw_support=exact bitmap=0x00012200
+query_cmd_support=ok support=0x00000003 query=0x00000000 init=0x00000000 send=0x00000000 poll=0x00000000 ctrl=0x00000000
+client=RKVDEC2 type=9 probe_bit=0x00000200 advertised=yes
+client_RKVDEC2.init_client_type=ok
+client_RKVDEC2.query_hw_id=ok hw_id=0x53813f05
+client_RKVDEC2=available
+client=JPGDEC type=13 probe_bit=0x00002000 advertised=yes
+client_JPGDEC.init_client_type=ok
+client_JPGDEC.query_hw_id=ok hw_id=0xdb1f0005
+client_JPGDEC=available
+client=RKVENC2 type=16 probe_bit=0x00010000 advertised=yes
+client_RKVENC2.init_client_type=ok
+client_RKVENC2.query_hw_id=ok hw_id=0x50603312
+client_RKVENC2=available
+VERDICT: PASS (service answered; per-client rows above)

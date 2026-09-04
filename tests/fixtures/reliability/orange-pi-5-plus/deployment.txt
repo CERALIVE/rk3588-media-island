@@ -1,0 +1,7 @@
+update-initramfs: Generating /boot/initrd.img-7.2.0-ceralive-rk3588
+8a22c0c99eade00cf61818a432316712d147fde3507bbff27ae0142774f76a3b  /mnt/slot-b/usr/lib/modules/7.2.0-ceralive-rk3588/kernel/drivers/video/rockchip/mpp/rk_vcodec.ko
+rauc status: activated slot rootfs.1
+STATE_FILE=/boot/boot_state.txt
+BOOT_ORDER=B A
+BOOT_A_LEFT=2
+BOOT_B_LEFT=3

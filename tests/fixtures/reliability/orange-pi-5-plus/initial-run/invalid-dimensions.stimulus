@@ -1,0 +1,1 @@
+WARNING: erroneous pipeline: could not link videotestsrc0 to mpph264enc0, neither element can handle caps video/x-raw, format=(string)NV12, width=(int)0, height=(int)1080

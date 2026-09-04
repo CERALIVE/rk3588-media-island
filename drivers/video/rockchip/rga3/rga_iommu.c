@@ -282,7 +282,8 @@ static int rga_iommu_intr_fault_handler(struct iommu_domain *iommu, struct devic
 	/* iommu interrupts on rga2 do not affect rga2 itself. */
 	if (!test_bit(RGA_JOB_STATE_INTR_ERR, &job->state)) {
 		set_bit(RGA_JOB_STATE_INTR_ERR, &job->state);
-		scheduler->ops->soft_reset(scheduler);
+		rga_telemetry_reset(scheduler, -EFAULT,
+				    scheduler->ops->soft_reset);
 	}
 
 	if (status & (ROCKCHIP_IOMMU_FAULT_BUS_ERROR | RGA_IOMMU_IRQ_BUS_ERROR)) {

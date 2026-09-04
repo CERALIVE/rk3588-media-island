@@ -401,6 +401,7 @@ err_put_request:
 
 err_put_session:
 	up_read(&session->release_rwsem);
+	rga_telemetry_remove_session(session);
 	rga_session_put(session);
 
 	return ret;
@@ -582,10 +583,14 @@ static int rga_session_manager_init(struct rga_session_manager **session_manager
  */
 static int rga_session_free_remove_idr_cb(int id, void *ptr, void *data)
 {
+	struct rga_session_manager *session_manager = data;
 	struct rga_session *session = ptr;
 
-	idr_remove(&rga_drvdata->session_manager->ctx_id_idr, session->id);
-	kfree(session);
+	idr_remove(&session_manager->ctx_id_idr, session->id);
+	session_manager->session_cnt--;
+	WRITE_ONCE(session->manager_removed, true);
+	rga_telemetry_remove_session(session);
+	rga_session_put(session);
 
 	return 0;
 }
@@ -669,6 +674,9 @@ static struct rga_session *rga_session_init(void)
 	init_rwsem(&session->release_rwsem);
 	kref_init(&session->refcount);
 	atomic64_set(&session->rga2_stage_active_bytes, 0);
+	atomic64_set(&session->telemetry.tasks, 0);
+	atomic64_set(&session->telemetry.bytes, 0);
+	rga_telemetry_add_session(session);
 
 	return session;
 }
@@ -678,8 +686,10 @@ static void rga_session_kref_release(struct kref *ref)
 	struct rga_session *session;
 
 	session = container_of(ref, struct rga_session, refcount);
+	rga_telemetry_remove_session(session);
 
-	rga_session_free_remove_idr(session);
+	if (!READ_ONCE(session->manager_removed))
+		rga_session_free_remove_idr(session);
 
 	kfree(session->pname);
 	kfree(session);
@@ -693,6 +703,11 @@ int rga_session_put(struct rga_session *session)
 void rga_session_get(struct rga_session *session)
 {
 	kref_get(&session->refcount);
+}
+
+bool rga_session_get_unless_zero(struct rga_session *session)
+{
+	return kref_get_unless_zero(&session->refcount);
 }
 
 static long rga_ioctl_import_buffer(unsigned long arg, struct rga_session *session)
@@ -1359,6 +1374,7 @@ static int rga_release(struct inode *inode, struct file *file)
 
 	up_write(&session->release_rwsem);
 
+	rga_telemetry_remove_session(session);
 	rga_session_put(session);
 
 	file->private_data = NULL;
@@ -1460,6 +1476,7 @@ static const struct of_device_id rga3_dt_ids[] = {
 	},
 	{},
 };
+MODULE_DEVICE_TABLE(of, rga3_dt_ids);
 
 static const struct of_device_id rga2_dt_ids[] = {
 	{
@@ -1473,6 +1490,7 @@ static const struct of_device_id rga2_dt_ids[] = {
 	},
 	{},
 };
+MODULE_DEVICE_TABLE(of, rga2_dt_ids);
 
 static int init_scheduler(struct rga_scheduler_t *scheduler,
 			  struct device *dev,
@@ -1521,6 +1539,10 @@ static int init_scheduler(struct rga_scheduler_t *scheduler,
 	spin_lock_init(&scheduler->irq_lock);
 	INIT_LIST_HEAD(&scheduler->todo_list);
 	init_waitqueue_head(&scheduler->job_done_wq);
+	atomic64_set(&scheduler->telemetry.busy_ns, 0);
+	atomic64_set(&scheduler->telemetry.tasks, 0);
+	atomic64_set(&scheduler->telemetry.errors, 0);
+	atomic64_set(&scheduler->telemetry.resets, 0);
 
 	return 0;
 }
@@ -1792,6 +1814,7 @@ static int __init rga_init(void)
 	mutex_init(&rga_drvdata->lock);
 	init_rwsem(&rga_drvdata->rwsem);
 	rga_drvdata->shutdown = false;
+	atomic_set(&rga_drvdata->telemetry_queue_depth, 0);
 
 	ret = platform_driver_register(&rga3_driver);
 	if (ret != 0) {

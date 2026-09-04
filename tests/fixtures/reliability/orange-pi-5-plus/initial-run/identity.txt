@@ -1,0 +1,2 @@
+board=Xunlong Orange Pi 5 Plus
+kernel=Linux ceralive 7.2.0-ceralive-rk3588 #3 SMP PREEMPT Thu Sep  3 20:11:22 -05 2026 aarch64 GNU/Linux

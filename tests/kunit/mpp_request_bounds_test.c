@@ -110,6 +110,14 @@ static void mpp_req_hevc_sqi_scl_span_test(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, coverage.hi - coverage.lo - coverage.bytes, 24u);
 }
 
+static void mpp_req_libmpp_partial_par_program_test(struct kunit *test)
+{
+	struct mpp_req_coverage coverage;
+
+	KUNIT_EXPECT_EQ(test, coverage_for(0x1700, 720, &coverage), 0);
+	KUNIT_EXPECT_EQ(test, coverage.bytes, 720u);
+}
+
 static void mpp_req_class_overrun_rejected_test(struct kunit *test)
 {
 	struct mpp_req_coverage coverage;
@@ -146,6 +154,7 @@ static struct kunit_case mpp_request_bounds_cases[] = {
 	KUNIT_CASE(mpp_iova_offset_guardrail_test),
 	KUNIT_CASE(mpp_req_result_window_uses_actual_buffer_test),
 	KUNIT_CASE(mpp_req_hevc_sqi_scl_span_test),
+	KUNIT_CASE(mpp_req_libmpp_partial_par_program_test),
 	KUNIT_CASE(mpp_req_class_overrun_rejected_test),
 	KUNIT_CASE(mpp_req_rkvdec2_bounds_test),
 	KUNIT_CASE(mpp_req_jpgdec_bounds_test),

@@ -40,9 +40,12 @@
 #include "mpp_debug.h"
 #include "mpp_capabilities.h"
 #include "mpp_common.h"
+#include "mpp_telemetry.h"
+#include "mpp_trace.h"
 #include "mpp_dma_policy.h"
 #include "mpp_iommu.h"
 #include "mpp_request_bounds.h"
+#include "mpp_rkvenc_test.h"
 
 /* input parmater structure for version 1 */
 struct mpp_msg_v1 {
@@ -103,6 +106,24 @@ const char *enc_info_item_name[ENC_INFO_BUTT] = {
 static void mpp_attach_workqueue(struct mpp_dev *mpp,
 				 struct mpp_taskqueue *queue);
 
+static void mpp_session_kref_release(struct kref *ref)
+{
+	struct mpp_session *session = container_of(ref, struct mpp_session,
+						  telemetry_ref);
+
+	kfree(session);
+}
+
+bool mpp_session_get(struct mpp_session *session)
+{
+	return kref_get_unless_zero(&session->telemetry_ref);
+}
+
+void mpp_session_put(struct mpp_session *session)
+{
+	kref_put(&session->telemetry_ref, mpp_session_kref_release);
+}
+
 static unsigned long mpp_compiled_client_mask(void)
 {
 	unsigned long mask = 0;
@@ -123,6 +144,16 @@ unsigned long mpp_service_visible_hw_support(struct mpp_service *srv)
 				       READ_ONCE(srv->hw_support));
 }
 
+static void mpp_telemetry_task_error(struct mpp_dev *mpp,
+				     struct mpp_task *task, u32 irq_status)
+{
+	if (!mpp_telemetry_mark_once(&task->state, TASK_STATE_ERROR_REPORTED))
+		return;
+
+	atomic64_inc(&mpp->telemetry.errors);
+	trace_mpp_task_error(mpp->core_id, task->task_id, irq_status);
+}
+
 static int
 mpp_taskqueue_pop_pending(struct mpp_taskqueue *queue,
 			  struct mpp_task *task)
@@ -139,6 +170,7 @@ mpp_taskqueue_pop_pending(struct mpp_taskqueue *queue,
 	mutex_lock(&queue->pending_lock);
 	list_del_init(&task->queue_link);
 	mutex_unlock(&queue->pending_lock);
+	atomic_dec(&task->session->srv->telemetry_queue_depth);
 	kref_put(&task->ref, mpp_free_task);
 
 	return 0;
@@ -178,6 +210,7 @@ int mpp_taskqueue_pending_to_run(struct mpp_taskqueue *queue, struct mpp_task *t
 	mutex_lock(&queue->pending_lock);
 	spin_lock_irqsave(&queue->running_lock, flags);
 	list_move_tail(&task->queue_link, &queue->running_list);
+	atomic_dec(&task->session->srv->telemetry_queue_depth);
 	spin_unlock_irqrestore(&queue->running_lock, flags);
 
 	mutex_unlock(&queue->pending_lock);
@@ -221,12 +254,11 @@ static void mpp_taskqueue_fail_running(struct mpp_taskqueue *queue,
 				       struct mpp_task *task)
 {
 	/* Claim the task and wait out any callback before dropping its ref. */
-	set_bit(TASK_STATE_HANDLE, &task->state);
+	WARN_ON_ONCE(!mpp_task_recovery_claim(&task->state,
+					      MPP_TASK_RECOVERY_ABORT));
 	cancel_delayed_work_sync(&task->timeout_work);
 
-	set_bit(TASK_STATE_ABORT, &task->state);
-	set_bit(TASK_STATE_FINISH, &task->state);
-	set_bit(TASK_STATE_DONE, &task->state);
+	WARN_ON_ONCE(!mpp_task_recovery_finish(&task->state));
 	wake_up(&task->wait);
 	mpp_taskqueue_pop_running(queue, task);
 }
@@ -462,6 +494,7 @@ static struct mpp_session *mpp_session_init(void)
 	if (!session)
 		return NULL;
 
+	kref_init(&session->telemetry_ref);
 	session->pid = current->pid;
 
 	mutex_init(&session->state_lock);
@@ -473,6 +506,9 @@ static struct mpp_session *mpp_session_init(void)
 
 	atomic_set(&session->task_count, 0);
 	atomic_set(&session->release_request, 0);
+	session->teardown_phase = MPP_SESSION_LIVE;
+	atomic64_set(&session->telemetry.tasks, 0);
+	atomic64_set(&session->telemetry.bytes, 0);
 
 	INIT_LIST_HEAD(&session->list_msgs);
 	INIT_LIST_HEAD(&session->list_msgs_idle);
@@ -521,15 +557,27 @@ void mpp_session_deinit(struct mpp_session *session)
 		list_del_init(&session->service_link);
 		mutex_unlock(&srv->session_lock);
 	}
+	WARN_ON_ONCE(mpp_session_teardown_advance(&session->teardown_phase,
+						  MPP_SESSION_UNPUBLISHED));
+
+	mpp_telemetry_remove_session(session);
+	WARN_ON_ONCE(mpp_session_teardown_advance(&session->teardown_phase,
+						  MPP_SESSION_TELEMETRY_REMOVED));
 
 	if (likely(session->deinit))
 		session->deinit(session);
 	else
 		pr_err("invalid NULL session deinit function\n");
+	WARN_ON_ONCE(mpp_session_teardown_advance(&session->teardown_phase,
+						  MPP_SESSION_PRIVATE_RELEASED));
 
 	clear_task_msgs(session);
+	WARN_ON_ONCE(mpp_session_teardown_advance(&session->teardown_phase,
+						  MPP_SESSION_MESSAGES_RELEASED));
 
-	kfree(session);
+	WARN_ON_ONCE(mpp_session_teardown_advance(&session->teardown_phase,
+						  MPP_SESSION_DEAD));
+	mpp_session_put(session);
 }
 
 static void mpp_session_attach_workqueue(struct mpp_session *session,
@@ -654,7 +702,7 @@ static void mpp_task_timeout_work(struct work_struct *work_s)
 		return;
 	}
 	disable_irq(mpp->irq);
-	if (test_and_set_bit(TASK_STATE_HANDLE, &task->state)) {
+	if (!mpp_task_recovery_claim(&task->state, MPP_TASK_RECOVERY_TIMEOUT)) {
 		mpp_err("session %d:%d task %d has been handled\n",
 			session->device_type, session->index, task->task_index);
 		enable_irq(mpp->irq);
@@ -664,7 +712,7 @@ static void mpp_task_timeout_work(struct work_struct *work_s)
 		session->device_type, session->index, task->task_index);
 
 	mpp_task_dump_timing(task, ktime_us_delta(ktime_get(), task->on_create));
-	set_bit(TASK_STATE_TIMEOUT, &task->state);
+	mpp_telemetry_task_error(mpp, task, task->irq_status);
 
 	enable_irq(mpp->irq);
 	mpp_taskqueue_trigger_work(mpp);
@@ -690,6 +738,8 @@ static int mpp_process_task_default(struct mpp_session *session,
 
 	if (mpp->dev_ops->alloc_task)
 		task = mpp->dev_ops->alloc_task(session, msgs);
+	if (IS_ERR(task))
+		return PTR_ERR(task);
 	if (!task) {
 		mpp_err("alloc_task failed.\n");
 		return -ENOMEM;
@@ -807,6 +857,11 @@ int mpp_dev_reset(struct mpp_dev *mpp)
 {
 	int ret;
 	int reset_ret = 0;
+	int reason;
+
+	reason = atomic_xchg(&mpp->reset_request, 0);
+	if (!reason)
+		return 0;
 
 	dev_info(mpp->dev, "resetting...\n");
 
@@ -827,10 +882,13 @@ int mpp_dev_reset(struct mpp_dev *mpp)
 	/* FIXME lock resource lock of the other devices in combo */
 	mpp_iommu_down_write(mpp->iommu_info);
 	mpp_reset_down_write(mpp->reset_group);
-	atomic_set(&mpp->reset_request, 0);
+	atomic64_inc(&mpp->telemetry.resets);
+	trace_mpp_reset(mpp->core_id, reason);
 
 	if (mpp->hw_ops->reset)
 		reset_ret = mpp->hw_ops->reset(mpp);
+	if (mpp_rkvenc_test_fail_reset())
+		reset_ret = -EIO;
 
 	/* Note: if the domain does not change, iommu attach will be return
 	 * as an empty operation. Therefore, force to close and then open,
@@ -904,6 +962,7 @@ static int mpp_task_run(struct mpp_dev *mpp,
 	if (mpp->hw_ops->set_grf) {
 		ret = mpp->hw_ops->set_grf(mpp);
 		if (ret) {
+			mpp_telemetry_task_error(mpp, task, 0);
 			dev_err(mpp->dev, "set grf failed\n");
 			return ret;
 		}
@@ -922,6 +981,7 @@ static int mpp_task_run(struct mpp_dev *mpp,
 	 */
 	ret = mpp_iommu_attach(mpp->iommu_info);
 	if (ret) {
+		mpp_telemetry_task_error(mpp, task, 0);
 		dev_err(mpp->dev, "mpp_iommu_attach failed\n");
 		mpp_reset_up_read(mpp->reset_group);
 		return -ENODATA;
@@ -929,6 +989,7 @@ static int mpp_task_run(struct mpp_dev *mpp,
 
 	ret = mpp_power_on(mpp);
 	if (ret) {
+		mpp_telemetry_task_error(mpp, task, 0);
 		mpp_reset_up_read(mpp->reset_group);
 		return ret;
 	}
@@ -941,6 +1002,7 @@ static int mpp_task_run(struct mpp_dev *mpp,
 
 	ret = mpp_iommu_dev_prepare_task(mpp->iommu_info, mpp);
 	if (ret) {
+		mpp_telemetry_task_error(mpp, task, 0);
 		dev_err(mpp->dev, "failed to prepare iommu task admission: %d\n",
 			ret);
 		mpp_power_off(mpp);
@@ -963,6 +1025,7 @@ static int mpp_task_run(struct mpp_dev *mpp,
 
 	ret = mpp_iommu_dev_activate_task(mpp->iommu_info, mpp);
 	if (ret) {
+		mpp_telemetry_task_error(mpp, task, 0);
 		dev_err(mpp->dev, "mpp_iommu_dev_activate failed: %d\n", ret);
 		mpp_iommu_dev_abort_task(mpp->iommu_info, mpp);
 		spin_lock_irqsave(&mpp->queue->running_lock, flags);
@@ -977,6 +1040,7 @@ static int mpp_task_run(struct mpp_dev *mpp,
 	if (mpp->dev_ops->run) {
 		ret = mpp->dev_ops->run(mpp, task);
 		if (ret) {
+			mpp_telemetry_task_error(mpp, task, 0);
 			dev_err(mpp->dev, "device run failed: %d\n", ret);
 			mpp_iommu_dev_abort_task(mpp->iommu_info, mpp);
 			spin_lock_irqsave(&mpp->queue->running_lock, flags);
@@ -992,6 +1056,7 @@ static int mpp_task_run(struct mpp_dev *mpp,
 
 	ret = mpp_iommu_dev_commit_task(mpp->iommu_info, mpp);
 	if (ret) {
+		mpp_telemetry_task_error(mpp, task, 0);
 		dev_err(mpp->dev, "failed to commit iommu task admission: %d\n",
 			ret);
 		/*
@@ -1014,6 +1079,10 @@ static int mpp_task_run(struct mpp_dev *mpp,
 		return ret;
 	}
 
+	task->telemetry_start = ktime_get();
+	set_bit(TASK_STATE_BUSY_REPORTED, &task->state);
+	atomic_inc(&mpp->telemetry.busy);
+	trace_mpp_task_started(mpp->core_id, task->task_id);
 	/* Fault admission is live before a pending codec completion can run. */
 	enable_irq(mpp->irq);
 
@@ -1194,8 +1263,10 @@ again:
 		struct mpp_dev *task_mpp = mpp_get_task_used_device(task, task->session);
 
 		atomic_inc(&task_mpp->task_count);
+		trace_mpp_core_selected(task->task_id, task_mpp->core_id,
+					queue->core_idle);
 		mpp_taskqueue_pending_to_run(queue, task);
-		set_bit(TASK_STATE_RUNNING, &task->state);
+		WARN_ON_ONCE(!mpp_task_recovery_mark_running(&task->state));
 		if (mpp_task_run(task_mpp, task))
 			mpp_taskqueue_fail_running(queue, task);
 		else
@@ -1614,6 +1685,7 @@ static int __mpp_process_request(struct mpp_session *session,
 				return ret;
 			}
 		}
+		mpp_telemetry_add_session(session);
 		if (mpp->dev_ops) {
 			if (mpp->dev_ops->process_task)
 				session->process_task =
@@ -1656,7 +1728,7 @@ static int __mpp_process_request(struct mpp_session *session,
 						  &trans_count)) {
 				mpp_err("init table size %d more than %d\n",
 					req->size, trans_tbl_size);
-				return -ENOMEM;
+				return -EINVAL;
 			}
 
 			if (copy_from_user(session->trans_table,
@@ -1860,7 +1932,7 @@ static int mpp_process_request(struct mpp_session *session,
 	return ret;
 }
 
-static void task_msgs_add(struct mpp_task_msgs *msgs, struct list_head *head)
+static int task_msgs_add(struct mpp_task_msgs *msgs, struct list_head *head)
 {
 	struct mpp_session *session = msgs->session;
 	int ret = 0;
@@ -1880,6 +1952,8 @@ static void task_msgs_add(struct mpp_task_msgs *msgs, struct list_head *head)
 	} else {
 		put_task_msgs(msgs);
 	}
+
+	return ret;
 }
 
 static int mpp_copy_msg_v1(struct mpp_msg_v1 *msg_v1, void __user **msg,
@@ -2004,12 +2078,15 @@ next:
 
 		/* NOTE: add previous ready task to queue and drop empty task */
 		if (msgs) {
-			if (msgs->req_cnt)
-				task_msgs_add(msgs, head);
-			else
+			if (msgs->req_cnt) {
+				ret = task_msgs_add(msgs, head);
+				msgs = NULL;
+				if (ret)
+					return ret;
+			} else {
 				put_task_msgs(msgs);
-
-			msgs = NULL;
+				msgs = NULL;
+			}
 		}
 
 		/* switch session */
@@ -2036,12 +2113,15 @@ session_switch_done:
 		 */
 		if (last) {
 			if (msgs) {
-				if (msgs->req_cnt)
-					task_msgs_add(msgs, head);
-				else
+				if (msgs->req_cnt) {
+					ret = task_msgs_add(msgs, head);
+					msgs = NULL;
+					if (ret)
+						return ret;
+				} else {
 					put_task_msgs(msgs);
-
-				msgs = NULL;
+					msgs = NULL;
+				}
 			}
 			return 0;
 		}
@@ -2082,10 +2162,10 @@ session_switch_done:
 	if (!last)
 		goto next;
 
-	task_msgs_add(msgs, head);
+	ret = task_msgs_add(msgs, head);
 	msgs = NULL;
 
-	return 0;
+	return ret;
 
 err_put_msgs:
 	/*
@@ -2112,6 +2192,7 @@ static void mpp_msgs_trigger(struct list_head *msgs_list)
 		struct mpp_dev *mpp;
 		struct mpp_task *task;
 		struct mpp_taskqueue *queue;
+		u32 region;
 
 		if (!msgs->set_cnt || !msgs->queue)
 			continue;
@@ -2136,8 +2217,15 @@ static void mpp_msgs_trigger(struct list_head *msgs_list)
 		if (test_bit(TASK_STATE_ABORT, &task->state))
 			pr_info("try to trigger abort task %d\n", task->task_id);
 
-		set_bit(TASK_STATE_PENDING, &task->state);
+		WARN_ON_ONCE(!mpp_task_recovery_mark_pending(&task->state));
+		for (region = 0; region < task->mem_count; region++)
+			task->bytes += task->mem_regions[region].len;
 		list_add_tail(&task->queue_link, &queue->pending_list);
+		atomic_inc(&task->session->srv->telemetry_queue_depth);
+		atomic64_inc(&task->session->telemetry.tasks);
+		atomic64_add(task->bytes, &task->session->telemetry.bytes);
+		trace_mpp_task_queued(task->session->index, task->task_id,
+				      task->session->device_type);
 	}
 
 	if (mpp_prev && queue_prev) {
@@ -2560,6 +2648,8 @@ int mpp_task_init(struct mpp_session *session, struct mpp_task *task)
 	task->state = 0;
 	task->mem_count = 0;
 	task->session = session;
+	task->telemetry_start = 0;
+	task->bytes = 0;
 
 	return 0;
 }
@@ -2577,6 +2667,19 @@ int mpp_task_finish(struct mpp_session *session,
 		dev_err(mpp->dev, "task finish failed: %d\n", ret);
 		set_bit(TASK_STATE_ABORT, &task->state);
 	}
+	if (ret || atomic_read(&mpp->reset_request) > 0)
+		mpp_telemetry_task_error(mpp, task, task->irq_status);
+
+	if (mpp_telemetry_mark_once(&task->state, TASK_STATE_DONE_REPORTED)) {
+		u64 busy_ns = task->telemetry_start ?
+			ktime_to_ns(ktime_sub(ktime_get(), task->telemetry_start)) : 0;
+
+		atomic64_add(busy_ns, &mpp->telemetry.busy_ns);
+		atomic64_inc(&mpp->telemetry.tasks);
+		trace_mpp_task_done(mpp->core_id, task->task_id, busy_ns);
+	}
+	if (test_and_clear_bit(TASK_STATE_BUSY_REPORTED, &task->state))
+		atomic_dec(&mpp->telemetry.busy);
 
 	mpp_reset_up_read(mpp->reset_group);
 	if (atomic_read(&mpp->reset_request) > 0) {
@@ -2590,8 +2693,7 @@ int mpp_task_finish(struct mpp_session *session,
 	}
 	mpp_power_off(mpp);
 
-	set_bit(TASK_STATE_FINISH, &task->state);
-	set_bit(TASK_STATE_DONE, &task->state);
+	WARN_ON_ONCE(!mpp_task_recovery_finish(&task->state));
 
 	if (session->srv->timing_en) {
 		s64 time_diff;
@@ -2776,6 +2878,11 @@ int mpp_dev_probe(struct mpp_dev *mpp,
 	atomic_set(&mpp->session_index, 0);
 	atomic_set(&mpp->task_count, 0);
 	atomic_set(&mpp->task_index, 0);
+	atomic_set(&mpp->telemetry.busy, 0);
+	atomic64_set(&mpp->telemetry.busy_ns, 0);
+	atomic64_set(&mpp->telemetry.tasks, 0);
+	atomic64_set(&mpp->telemetry.errors, 0);
+	atomic64_set(&mpp->telemetry.resets, 0);
 
 	device_init_wakeup(dev, true);
 	pm_runtime_enable(dev);
@@ -2946,7 +3053,7 @@ irqreturn_t mpp_dev_irq(int irq, void *param)
 		/* if wait or delayed work timeout, abort request will turn on,
 		 * isr should not to response, and handle it in delayed work
 		 */
-		if (test_and_set_bit(TASK_STATE_HANDLE, &task->state)) {
+		if (!mpp_task_recovery_claim(&task->state, MPP_TASK_RECOVERY_IRQ)) {
 			dev_err(mpp->dev, "error, task %d has been handled, irq_status %#x\n",
 				task->task_index, mpp->irq_status);
 			irq_ret = IRQ_HANDLED;
@@ -2958,7 +3065,6 @@ irqreturn_t mpp_dev_irq(int irq, void *param)
 		}
 		cancel_delayed_work(&task->timeout_work);
 		/* normal condition, set state and wake up isr thread */
-		set_bit(TASK_STATE_IRQ, &task->state);
 		task->irq_status = mpp->irq_status;
 		mpp_iommu_dev_deactivate(mpp->iommu_info, mpp);
 		irq_ret = IRQ_HANDLED;

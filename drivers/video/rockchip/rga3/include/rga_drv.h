@@ -142,6 +142,7 @@ enum rga_job_state {
 	RGA_JOB_STATE_INTR_ERR,
 	RGA_JOB_STATE_HW_TIMEOUT,
 	RGA_JOB_STATE_ABORT,
+	RGA_JOB_STATE_TELEMETRY_ACCOUNTED,
 };
 
 enum RGA_DEVICE_TYPE {
@@ -260,6 +261,18 @@ struct rga_buffer_import {
 struct rga_scheduler_t;
 struct rga_rga2_stage;
 
+struct rga_telemetry {
+	atomic64_t busy_ns;
+	atomic64_t tasks;
+	atomic64_t errors;
+	atomic64_t resets;
+};
+
+struct rga_session_telemetry {
+	atomic64_t tasks;
+	atomic64_t bytes;
+};
+
 struct rga_session {
 	int id;
 
@@ -270,9 +283,12 @@ struct rga_session {
 	ktime_t last_active;
 
 	bool release;
+	bool manager_removed;
 	struct rw_semaphore release_rwsem;
 	struct kref refcount;
 	atomic64_t rga2_stage_active_bytes;
+	struct rga_session_telemetry telemetry;
+	struct dentry *telemetry_dir;
 };
 
 struct rga_job_buffer {
@@ -381,12 +397,15 @@ struct rga_job {
 	uint32_t intr_status2;
 
 	uint32_t work_cycle;
+	ktime_t telemetry_start;
+	u64 bytes;
 };
 
 struct rga_backend_ops {
 	int (*get_version)(struct rga_scheduler_t *scheduler);
 	int (*set_reg)(struct rga_job *job, struct rga_scheduler_t *scheduler);
 	int (*init_reg)(struct rga_job *job);
+	/* Called with irq_lock held; must not sleep. */
 	void (*soft_reset)(struct rga_scheduler_t *scheduler);
 	int (*read_back_reg)(struct rga_job *job, struct rga_scheduler_t *scheduler);
 	int (*read_status)(struct rga_job *job, struct rga_scheduler_t *scheduler);
@@ -429,6 +448,8 @@ struct rga_scheduler_t {
 	int core;
 
 	struct rga_timer timer;
+	struct rga_telemetry telemetry;
+	struct dentry *telemetry_dir;
 
 	struct rga_dma_buf_pool *cmd_buf_pool;
 };
@@ -533,6 +554,7 @@ struct rga_drvdata_t {
 	struct rga_session_manager *session_manager;
 
 	struct rga_fence_context *fence_ctx;
+	atomic_t telemetry_queue_depth;
 
 #ifdef CONFIG_ROCKCHIP_RGA_DEBUGGER
 	struct rga_debugger *debugger;
@@ -569,6 +591,7 @@ int rga_power_disable(struct rga_scheduler_t *scheduler);
 
 int rga_session_put(struct rga_session *session);
 void rga_session_get(struct rga_session *session);
+bool rga_session_get_unless_zero(struct rga_session *session);
 
 int rga_kernel_commit(struct rga_req *cmd);
 

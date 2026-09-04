@@ -23,8 +23,118 @@
 
 #include "mpp_debug.h"
 #include "mpp_common.h"
-#include "mpp_rkvenc_test.h"
 #include "mpp_iommu.h"
+#include "mpp_rkvenc_test.h"
+#include "mpp_telemetry.h"
+
+static int mpp_telemetry_atomic64_get(void *data, u64 *value)
+{
+	*value = atomic64_read(data);
+	return 0;
+}
+
+DEFINE_DEBUGFS_ATTRIBUTE(mpp_telemetry_atomic64_fops,
+			 mpp_telemetry_atomic64_get, NULL, "%llu\n");
+
+static struct dentry *
+mpp_debugfs_create_atomic64(const char *name, struct dentry *parent,
+			    atomic64_t *value)
+{
+	return debugfs_create_file(name, 0444, parent, value,
+				   &mpp_telemetry_atomic64_fops);
+}
+
+enum mpp_session_telemetry_field {
+	MPP_SESSION_TELEMETRY_STATS,
+	MPP_SESSION_TELEMETRY_CLIENT,
+	MPP_SESSION_TELEMETRY_TASKS,
+	MPP_SESSION_TELEMETRY_BYTES,
+};
+
+struct mpp_session_telemetry_reader {
+	struct mpp_session *session;
+	enum mpp_session_telemetry_field field;
+};
+
+static int mpp_session_telemetry_show(struct seq_file *seq, void *unused)
+{
+	struct mpp_session_telemetry_reader *reader = seq->private;
+	struct mpp_session *session = reader->session;
+	const struct mpp_session_telemetry_values values = {
+		.client = READ_ONCE(session->device_type),
+		.tasks = atomic64_read(&session->telemetry.tasks),
+		.bytes = atomic64_read(&session->telemetry.bytes),
+	};
+	char stats[96];
+
+	switch (reader->field) {
+	case MPP_SESSION_TELEMETRY_STATS:
+		mpp_telemetry_format_session(stats, sizeof(stats), &values);
+		seq_puts(seq, stats);
+		break;
+	case MPP_SESSION_TELEMETRY_CLIENT:
+		seq_printf(seq, "%u\n", values.client);
+		break;
+	case MPP_SESSION_TELEMETRY_TASKS:
+		seq_printf(seq, "%llu\n", values.tasks);
+		break;
+	case MPP_SESSION_TELEMETRY_BYTES:
+		seq_printf(seq, "%llu\n", values.bytes);
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int mpp_session_telemetry_open(struct inode *inode, struct file *file)
+{
+	struct mpp_session *session = inode->i_private;
+	struct mpp_session_telemetry_reader *reader;
+	int ret;
+
+	if (!mpp_session_get(session))
+		return -ENOENT;
+
+	reader = kmalloc(sizeof(*reader), GFP_KERNEL);
+	if (!reader) {
+		mpp_session_put(session);
+		return -ENOMEM;
+	}
+
+	reader->session = session;
+	reader->field = debugfs_get_aux_num(file);
+	ret = single_open(file, mpp_session_telemetry_show, reader);
+	if (ret) {
+		kfree(reader);
+		mpp_session_put(session);
+	}
+
+	return ret;
+}
+
+static int mpp_session_telemetry_release(struct inode *inode, struct file *file)
+{
+	struct seq_file *seq = file->private_data;
+	struct mpp_session_telemetry_reader *reader = seq->private;
+	struct mpp_session *session = reader->session;
+	int ret;
+
+	ret = single_release(inode, file);
+	kfree(reader);
+	mpp_session_put(session);
+
+	return ret;
+}
+
+static const struct file_operations mpp_session_telemetry_fops = {
+	.owner = THIS_MODULE,
+	.open = mpp_session_telemetry_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = mpp_session_telemetry_release,
+};
 
 #define MPP_CLASS_NAME		"mpp_class"
 #define MPP_SERVICE_NAME	"mpp_service"
@@ -153,6 +263,159 @@ static int mpp_register_service(struct mpp_service *srv,
 				       NULL, "%s", service_name);
 
 	return 0;
+}
+
+static int mpp_telemetry_init(struct mpp_service *srv)
+{
+	struct dentry *entry;
+	u32 i;
+	u32 j;
+	u32 core = 0;
+	int ret;
+
+	if (!IS_ENABLED(CONFIG_DEBUG_FS))
+		return 0;
+
+	srv->telemetry_root = debugfs_create_dir("rockchip-mpp", NULL);
+	if (IS_ERR(srv->telemetry_root))
+		return PTR_ERR(srv->telemetry_root);
+
+	srv->telemetry_cores = debugfs_create_dir("cores", srv->telemetry_root);
+	if (IS_ERR(srv->telemetry_cores)) {
+		ret = PTR_ERR(srv->telemetry_cores);
+		goto fail;
+	}
+	srv->telemetry_sessions = debugfs_create_dir("sessions", srv->telemetry_root);
+	if (IS_ERR(srv->telemetry_sessions)) {
+		ret = PTR_ERR(srv->telemetry_sessions);
+		goto fail;
+	}
+	debugfs_create_atomic_t("queue_depth", 0444, srv->telemetry_root,
+				&srv->telemetry_queue_depth);
+
+	for (i = 0; i < srv->taskqueue_cnt; i++) {
+		struct mpp_taskqueue *queue = srv->task_queues[i];
+
+		if (!queue)
+			continue;
+		for (j = 0; j < MPP_MAX_CORE_NUM; j++) {
+			struct mpp_dev *mpp = queue->cores[j];
+			char name[12];
+
+			if (!mpp)
+				continue;
+
+			snprintf(name, sizeof(name), "%u", core++);
+			mpp->telemetry_dir = debugfs_create_dir(name,
+							  srv->telemetry_cores);
+			if (IS_ERR(mpp->telemetry_dir)) {
+				ret = PTR_ERR(mpp->telemetry_dir);
+				goto fail;
+			}
+			debugfs_create_atomic_t("busy", 0444, mpp->telemetry_dir,
+						&mpp->telemetry.busy);
+
+			entry = mpp_debugfs_create_atomic64("busy_ns",
+							mpp->telemetry_dir,
+							&mpp->telemetry.busy_ns);
+			if (IS_ERR(entry)) {
+				ret = PTR_ERR(entry);
+				goto fail;
+			}
+			entry = mpp_debugfs_create_atomic64("tasks",
+							mpp->telemetry_dir,
+							&mpp->telemetry.tasks);
+			if (IS_ERR(entry)) {
+				ret = PTR_ERR(entry);
+				goto fail;
+			}
+			entry = mpp_debugfs_create_atomic64("errors",
+							mpp->telemetry_dir,
+							&mpp->telemetry.errors);
+			if (IS_ERR(entry)) {
+				ret = PTR_ERR(entry);
+				goto fail;
+			}
+			entry = mpp_debugfs_create_atomic64("resets",
+							mpp->telemetry_dir,
+							&mpp->telemetry.resets);
+			if (IS_ERR(entry)) {
+				ret = PTR_ERR(entry);
+				goto fail;
+			}
+		}
+	}
+
+	return 0;
+
+fail:
+	debugfs_remove_recursive(srv->telemetry_root);
+	srv->telemetry_root = NULL;
+	srv->telemetry_cores = NULL;
+	srv->telemetry_sessions = NULL;
+
+	return ret;
+}
+
+static void mpp_telemetry_remove(struct mpp_service *srv)
+{
+	debugfs_remove_recursive(srv->telemetry_root);
+	srv->telemetry_root = NULL;
+	srv->telemetry_cores = NULL;
+	srv->telemetry_sessions = NULL;
+}
+
+void mpp_telemetry_add_session(struct mpp_session *session)
+{
+	struct dentry *entry;
+	char name[32];
+
+	if (!session->srv->telemetry_sessions)
+		return;
+
+	snprintf(name, sizeof(name), "%d-%u", session->pid, session->index);
+	session->telemetry_dir = debugfs_create_dir(name,
+						     session->srv->telemetry_sessions);
+	if (IS_ERR(session->telemetry_dir)) {
+		session->telemetry_dir = NULL;
+		return;
+	}
+
+	entry = debugfs_create_file_aux_num("stats", 0444,
+					    session->telemetry_dir, session,
+					    MPP_SESSION_TELEMETRY_STATS,
+					    &mpp_session_telemetry_fops);
+	if (IS_ERR(entry)) {
+		goto fail;
+	}
+	entry = debugfs_create_file_aux_num("client", 0444,
+					    session->telemetry_dir, session,
+					    MPP_SESSION_TELEMETRY_CLIENT,
+					    &mpp_session_telemetry_fops);
+	if (IS_ERR(entry))
+		goto fail;
+	entry = debugfs_create_file_aux_num("tasks", 0444,
+					    session->telemetry_dir, session,
+					    MPP_SESSION_TELEMETRY_TASKS,
+					    &mpp_session_telemetry_fops);
+	if (IS_ERR(entry))
+		goto fail;
+	entry = debugfs_create_file_aux_num("bytes", 0444,
+					    session->telemetry_dir, session,
+					    MPP_SESSION_TELEMETRY_BYTES,
+					    &mpp_session_telemetry_fops);
+	if (!IS_ERR(entry))
+		return;
+
+fail:
+	debugfs_remove_recursive(session->telemetry_dir);
+	session->telemetry_dir = NULL;
+}
+
+void mpp_telemetry_remove_session(struct mpp_session *session)
+{
+	debugfs_remove_recursive(session->telemetry_dir);
+	session->telemetry_dir = NULL;
 }
 
 static int mpp_remove_service(struct mpp_service *srv)
@@ -321,6 +584,7 @@ static int mpp_show_device_load(struct seq_file *file, void *v)
 {
 	u32 i, j;
 	struct mpp_service *srv = file->private;
+	char line[128];
 
 	if (!srv->load_interval) {
 		seq_puts(file, "please set load_interval first!!!\n");
@@ -351,10 +615,11 @@ static int mpp_show_device_load(struct seq_file *file, void *v)
 					mpp_dev_load_clear(mpp);
 			}
 
-			seq_printf(file, "%-25s load: %3d.%02d%% utilization: %3d.%02d%%\n",
-				   dev_name(mpp->dev),
-				   mpp->load_info.load, mpp->load_info.load_frac,
-				   mpp->load_info.utilization, mpp->load_info.utilization_frac);
+			mpp_telemetry_format_load(line, sizeof(line), dev_name(mpp->dev),
+					  mpp->load_info.load, mpp->load_info.load_frac,
+					  mpp->load_info.utilization,
+					  mpp->load_info.utilization_frac);
+			seq_puts(file, line);
 		}
 	}
 
@@ -441,6 +706,7 @@ static int mpp_service_probe(struct platform_device *pdev)
 
 	srv->dev = dev;
 	atomic_set(&srv->shutdown_request, 0);
+	atomic_set(&srv->telemetry_queue_depth, 0);
 	platform_set_drvdata(pdev, srv);
 
 	/* 6.18: class_create() dropped the THIS_MODULE argument */
@@ -519,9 +785,19 @@ static int mpp_service_probe(struct platform_device *pdev)
 	MPP_REGISTER_DRIVER(srv, HAS_AV1DEC, AV1DEC, av1dec);
 	MPP_REGISTER_DRIVER(srv, HAS_VDPP, VDPP, vdpp);
 
+	ret = mpp_telemetry_init(srv);
+	if (ret)
+		goto fail_telemetry;
+
 	dev_info(dev, "probe success\n");
 
 	return 0;
+
+fail_telemetry:
+	mpp_telemetry_remove(srv);
+	for (i = 0; i < MPP_DRIVER_BUTT; i++)
+		mpp_remove_driver(srv, i);
+	mpp_procfs_remove(srv);
 
 fail_procfs:
 	mpp_remove_service(srv);
@@ -556,6 +832,7 @@ static void mpp_service_remove(struct platform_device *pdev)
 	mpp_remove_service(srv);
 	class_destroy(srv->cls);
 	mpp_procfs_remove(srv);
+	mpp_telemetry_remove(srv);
 }
 
 static const struct of_device_id mpp_dt_ids[] = {

@@ -1,0 +1,30 @@
+session iova range dump:
+   0: 0x00000000fe000000..0x00000000febddfff (     12152 KiB)
+   1: 0x00000000fb000000..0x00000000fbbddfff (     12152 KiB)
+   2: 0x00000000fa000000..0x00000000fac6ffff (     12736 KiB)
+   3: 0x00000000fd000000..0x00000000fdc6ffff (     12736 KiB)
+   4: 0x00000000f9fc0000..0x00000000f9ff1fff (       200 KiB)
+   5: 0x00000000fcfc0000..0x00000000fcff1fff (       200 KiB)
+   6: 0x00000000f9f00000..0x00000000f9f83fff (       528 KiB)
+   7: 0x00000000fcf00000..0x00000000fcf83fff (       528 KiB)
+session: pid=3964 index=11
+ device: fdbd0000.rkvenc-core
+ memory: 50 MiB
+------------------------------------------------------------------------------------------------------------
+| session|  device|   width|  height|  format|  fps_in| fps_out| rc_mode| bitrate|gop_size| profile|
+|      11|  RKVENC|    3840|    2160|    h265|      30|      30|     cbr|30000000|      30|    main|
+session iova range dump:
+   0: 0x00000000f5000000..0x00000000f5bddfff (     12152 KiB)
+   1: 0x00000000f8000000..0x00000000f8bddfff (     12152 KiB)
+   2: 0x00000000f7000000..0x00000000f7c6ffff (     12736 KiB)
+   3: 0x00000000f4000000..0x00000000f4c6ffff (     12736 KiB)
+   4: 0x00000000f6fc0000..0x00000000f6ff1fff (       200 KiB)
+   5: 0x00000000f3fc0000..0x00000000f3ff1fff (       200 KiB)
+   6: 0x00000000f6f00000..0x00000000f6f83fff (       528 KiB)
+   7: 0x00000000f3f00000..0x00000000f3f83fff (       528 KiB)
+session: pid=4026 index=15
+ device: fdbd0000.rkvenc-core
+ memory: 50 MiB
+------------------------------------------------------------------------------------------------------------
+| session|  device|   width|  height|  format|  fps_in| fps_out| rc_mode| bitrate|gop_size| profile|
+|      15|  RKVENC|    3840|    2160|    h265|      30|      30|     cbr|30000000|      30|    main|
