@@ -144,6 +144,19 @@ This release carries the tracepoint/debugfs/procfs instrumentation, the recovery
 request-validation work, and the three fault fixes the reliability drill found. The base
 verdict it ships under is `docs/PHASE3-DECISION.md`: reversal gate G1 **NOT-FIRED**.
 
+## Release 3
+
+| Tag | Commit | Asset | Asset SHA-256 |
+|---|---|---|---|
+| `v2026.9.2` | `1fd357d8a8b83b6f4ed7f7692d761f7b653d44f5` | `rk3588-media-island-v2026.9.2.mbox.tar` | `393b50a26117b95659f35a603abb9939f767e397f71e85fb180dda107e2df616` |
+
+Published 2026-09-04T09:59:22Z at https://github.com/CERALIVE/rk3588-media-island/releases/tag/v2026.9.2.
+The accompanying checksum asset is `rk3588-media-island-v2026.9.2.mbox.tar.sha256` with SHA-256
+`bc05624e91b05e82638fbd190a35c8eac1b12b77ff967f8627f7aae1241b572e`.
+
+This release carries the multi_rga mainline API port, fail-closed request validation, and the
+atomic RGA3/RGA2 device-tree ownership flip.
+
 ## How to add a row
 
 Resolve the object live, never from a cache or a previous note; record the full
