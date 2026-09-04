@@ -155,9 +155,7 @@ struct rga_iommu_info {
 	struct device *dev;
 	struct device *default_dev;		/* for dma-buf_api */
 	struct iommu_domain *domain;
-	struct iommu_domain *default_domain;
 	struct iommu_group *group;
-	bool shared_domain;
 	bool rockchip_fault_handler;
 	bool generic_fault_handler;
 };
@@ -334,6 +332,14 @@ struct rga_job_buffer {
 	/* Shared, job-owned DMA32 staging references for incompatible DMA-BUFs. */
 	struct rga_rga2_stage *rga2_stage[3];
 	int rga2_stage_count;
+
+	/* Per-job mappings when an imported handle executes on another RGA3 core. */
+	struct {
+		struct rga_internal_buffer *origin;
+		struct rga_dma_buffer *mapping;
+		struct sg_table *owned_sgt;
+	} iommu_mapping[3];
+	int iommu_mapping_count;
 };
 
 struct rga_job_task_buffers {
@@ -572,7 +578,7 @@ struct rga_irqs_data_t {
 
 struct rga_match_data_t {
 	enum RGA_DEVICE_TYPE device_type;
-
+	int core;
 	const struct rga_backend_ops *ops;
 };
 

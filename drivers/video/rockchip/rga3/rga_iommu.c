@@ -275,7 +275,9 @@ static int rga_iommu_intr_fault_handler(struct iommu_domain *iommu, struct devic
 		return 0;
 	}
 
-	rga_err("IOMMU intr fault, IOVA[0x%lx], STATUS[0x%x]\n", iova, status);
+	rga_job_err(job,
+		    "IOMMU fault on scheduler[%d], IOVA[0x%lx], STATUS[0x%x]\n",
+		    scheduler->core, iova, status);
 	if (scheduler->ops->irq)
 		scheduler->ops->irq(scheduler);
 
@@ -357,12 +359,16 @@ static void rga_iommu_clear_fault_handler(struct rga_iommu_info *info)
 		info->domain->cookie_type = IOMMU_COOKIE_NONE;
 		info->generic_fault_handler = false;
 	}
+
+	rockchip_iommu_sync_fault_handler(info->dev);
 }
 
 int rga_iommu_detach(struct rga_iommu_info *info)
 {
 	if (!info)
 		return 0;
+	if (!info->domain || !info->group)
+		return -ENODEV;
 
 	iommu_detach_group(info->domain, info->group);
 	return 0;
@@ -372,46 +378,22 @@ int rga_iommu_attach(struct rga_iommu_info *info)
 {
 	if (!info)
 		return 0;
+	if (!info->domain || !info->group)
+		return -ENODEV;
+	if (info->domain == iommu_get_domain_for_dev(info->dev))
+		return 0;
 
 	return iommu_attach_group(info->domain, info->group);
 }
 
-static void rga_iommu_unbind_shared_domain(struct rga_iommu_info *info)
+int rga_iommu_flush_tlb(struct rga_iommu_info *info)
 {
-	struct iommu_domain *cur;
-	struct iommu_domain *shared_domain;
-	struct device *shared_default_dev;
-	bool was_shared;
-	int ret;
+	if (!info || !info->domain)
+		return -ENODEV;
 
-	if (!info || !info->shared_domain)
-		return;
+	iommu_flush_iotlb_all(info->domain);
 
-	shared_domain = info->domain;
-	shared_default_dev = info->default_dev;
-	was_shared = info->shared_domain;
-
-	rga_iommu_detach(info);
-	info->domain = info->default_domain;
-	info->default_dev = info->dev;
-	info->shared_domain = false;
-
-	cur = iommu_get_domain_for_dev(info->dev);
-	if (cur == info->domain)
-		return;
-
-	ret = rga_iommu_attach(info);
-	if (ret) {
-		dev_err(info->dev, "failed to restore default RGA IOMMU domain: %d\n",
-			ret);
-		info->domain = shared_domain;
-		info->default_dev = shared_default_dev;
-		info->shared_domain = was_shared;
-		ret = rga_iommu_attach(info);
-		if (ret)
-			dev_err(info->dev, "failed to reattach shared RGA IOMMU domain: %d\n",
-				ret);
-	}
+	return 0;
 }
 
 struct rga_iommu_info *rga_iommu_probe(struct device *dev)
@@ -441,7 +423,6 @@ struct rga_iommu_info *rga_iommu_probe(struct device *dev)
 	info->default_dev = info->dev;
 	info->group = group;
 	info->domain = domain;
-	info->default_domain = domain;
 
 	return info;
 
@@ -467,7 +448,6 @@ int rga_iommu_bind(void)
 	int i;
 	int ret;
 	struct rga_scheduler_t *scheduler = NULL;
-	struct rga_iommu_info *main_iommu = NULL;
 	int main_iommu_index = -1;
 	int main_mmu_index = -1;
 	int another_index = -1;
@@ -477,37 +457,19 @@ int rga_iommu_bind(void)
 
 		switch (scheduler->data->mmu) {
 		case RGA_IOMMU:
-			if (scheduler->iommu_info == NULL)
-				continue;
-
-			if (main_iommu == NULL) {
-				main_iommu = scheduler->iommu_info;
-				main_iommu_index = i;
-				ret = rga_iommu_set_fault_handler(scheduler);
-				if (ret)
-					goto err_unbind;
-			} else {
-				struct rga_iommu_info *info = scheduler->iommu_info;
-				struct device *old_default_dev = info->default_dev;
-				struct iommu_domain *old_domain = info->domain;
-
-				info->domain = main_iommu->domain;
-				info->default_dev = main_iommu->default_dev;
-				ret = rga_iommu_attach(info);
-				if (ret) {
-					dev_err(scheduler->dev,
-						"failed to attach shared RGA IOMMU domain: %d\n",
-						ret);
-					info->domain = old_domain;
-					info->default_dev = old_default_dev;
-					goto err_unbind;
-				}
-				info->shared_domain = true;
-
-				ret = rga_iommu_set_fault_handler(scheduler);
-				if (ret)
-					goto err_unbind;
+			if (scheduler->iommu_info == NULL) {
+				ret = -ENODEV;
+				goto err_unbind;
 			}
+
+			ret = rga_iommu_attach(scheduler->iommu_info);
+			if (ret)
+				goto err_unbind;
+			ret = rga_iommu_set_fault_handler(scheduler);
+			if (ret)
+				goto err_unbind;
+			if (main_iommu_index < 0)
+				main_iommu_index = i;
 
 			break;
 
@@ -572,10 +534,8 @@ void rga_iommu_unbind(void)
 	int i;
 
 	for (i = 0; i < rga_drvdata->num_of_scheduler; i++)
-		if (rga_drvdata->scheduler[i]->iommu_info) {
+		if (rga_drvdata->scheduler[i]->iommu_info)
 			rga_iommu_clear_fault_handler(rga_drvdata->scheduler[i]->iommu_info);
-			rga_iommu_unbind_shared_domain(rga_drvdata->scheduler[i]->iommu_info);
-		}
 
 	if (rga_drvdata->mmu_base)
 		rga_mmu_base_free(&rga_drvdata->mmu_base);
