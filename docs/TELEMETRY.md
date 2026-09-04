@@ -60,7 +60,7 @@ With the production `CONFIG_DEBUG_FS=y` configuration:
 ```text
 /sys/kernel/debug/rockchip-mpp/
   queue_depth
-  cores/<n>/{busy_ns,tasks,errors,resets}
+  cores/<n>/{busy,busy_ns,tasks,errors,resets}
   sessions/<pid>-<session>/{client,tasks,bytes,stats}
 
 /sys/kernel/debug/rockchip-rga/
@@ -81,7 +81,9 @@ completion, timeout, cancellation, or shutdown for RGA. Core `tasks` counts jobs
 that reached hardware completion, including completion with an IRQ error.
 `errors` counts a task once on MPP and counts RGA pre-start, IRQ, and timeout
 failures; operator cancellation is not an error. `resets` counts every reset
-attempt. Session `tasks` counts accepted submissions, while session `bytes`
+attempt. `busy` is the current number of submitted hardware tasks that have not
+yet finished; recovery drills require it to return to zero. Session `tasks`
+counts accepted submissions, while session `bytes`
 counts imported MPP buffer extents or RGA command bytes. Reads use atomic
 snapshots; IRQ and worker updates never take a telemetry lock.
 Every per-session file takes a session reference at open and drops it at

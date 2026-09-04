@@ -514,10 +514,12 @@ jobs:
             drivers/video/rockchip/mpp/mpp_capabilities.h \
             drivers/video/rockchip/mpp/mpp_dma_policy.h \
             drivers/video/rockchip/mpp/mpp_telemetry.h \
+            drivers/video/rockchip/mpp/mpp_recovery_state.h \
             .work/linux/drivers/video/rockchip/mpp/
           mkdir -p .work/linux/drivers/video/rockchip/rga3/include
           cp drivers/video/rockchip/rga3/include/rga_fence.h \
             drivers/video/rockchip/rga3/include/rga_dma_policy.h \
+            drivers/video/rockchip/rga3/include/rga_request_validation.h \
             .work/linux/drivers/video/rockchip/rga3/include/
           cp -a tests/kunit ".work/linux/drivers/video/rockchip/"
           printf '\nsource "drivers/video/rockchip/kunit/Kconfig"\n' \
@@ -529,8 +531,16 @@ jobs:
             --build_dir="$PWD/.work/kunit" | tee .work/kunit.log
           grep -qx 'CONFIG_ROCKCHIP_MPP_TELEMETRY_KUNIT_TEST=y' \
             .work/kunit/.config
+          grep -qx 'CONFIG_ROCKCHIP_MPP_RECOVERY_KUNIT_TEST=y' \
+            .work/kunit/.config
+          grep -qx 'CONFIG_ROCKCHIP_RGA_REQUEST_KUNIT_TEST=y' \
+            .work/kunit/.config
           grep -Fq 'rockchip-mpp-telemetry' .work/kunit.log
           grep -Fq 'mpp_telemetry_session_stats_test' .work/kunit.log
+          grep -Fq 'rockchip-mpp-recovery-state' .work/kunit.log
+          grep -Fq 'mpp_task_rejects_claim_before_running_test' .work/kunit.log
+          grep -Fq 'rockchip-rga-request-validation' .work/kunit.log
+          grep -Fq 'rga_user_request_shape_validation_test' .work/kunit.log
 
   static-analysis:
     name: static analysis

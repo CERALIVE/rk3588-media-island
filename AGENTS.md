@@ -189,7 +189,7 @@ remaining deferred inputs live in [`docs/CI.md`](docs/CI.md).
 | `pin` | Nothing — it *reads* the coordinates out of `kernel-pin.env` and emits them as job outputs |
 | `pin-equality` | The four mirrored `KERNEL_*` values equal the consumer's |
 | `cross-compile-modules` | Both pinned kernel objects resolve; the tree configures the way the device is configured; `vmlinux` supplies provider symbols, `modules_prepare` supplies the module linker script, and `vmlinux.symvers` is exposed as the `Module.symvers` external modpost requires; the two arm64 modules link with `-Werror` and expose their required OF aliases; both supported board DTBs build and pass `tests/dt/check-dtb-ownership.sh`; no island `compatible` collides with a mainline `of_match_table` |
-| `kunit` | Builds the request-boundary, RKVENC2 fault/lifecycle, DMA policy, fence, capability, and telemetry-format suites against the pinned tree |
+| `kunit` | Builds the MPP request-boundary, fault/lifecycle, session-teardown, DMA policy, fence, RGA request-validation, capability, and telemetry-format suites against the pinned tree |
 | `static-analysis` | sparse with findings promoted to errors plus coccinelle over every selected island object; smatch remains conditional on a suitable runner package |
 | `upstream-watch` | Nothing — it opens or updates ONE issue and never edits a pin or dispatches a build |
 

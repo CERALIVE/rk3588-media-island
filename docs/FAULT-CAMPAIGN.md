@@ -35,6 +35,16 @@ Every required hardening intent now has terminal evidence. Split rows retain
 the independent defect boundaries where one CeraLive patch covered multiple
 unrelated failures.
 
+The permanent recovery-state suite also checks the cumulative taskqueue
+milestones directly: PENDING must precede RUNNING, IRQ/timeout/abort may claim a
+running task only once, and FINISH/DONE may publish only after that claim.
+Session teardown is similarly monotonic through unpublication, telemetry
+removal, private cleanup, message cleanup, and final release. The companion RGA
+suite validates nonzero descriptors and dimensions, overflow-safe offsets,
+both stride bounds, every declared format code and malformed top-level request
+counts/pointers. All invalid shapes return `-EINVAL`; valid shapes are accepted
+without mutation.
+
 ## Test-first transcript
 
 Intent `0021` separated its three required lifecycle guarantees. Two were

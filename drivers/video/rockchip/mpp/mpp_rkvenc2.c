@@ -959,10 +959,21 @@ static int rkvenc_extract_task_msg(struct mpp_session *session,
 		case MPP_CMD_SET_REG_WRITE: {
 			void *data;
 			struct mpp_request *wreq;
+			struct mpp_req_coverage coverage;
+
+			mpp_req_coverage_init(&coverage);
 
 			for (j = 0; j < hw->reg_class; j++) {
+				struct mpp_req_part part;
+
 				if (!req_over_class(req, task, j))
 					continue;
+				if (mpp_req_class_part(req->offset, req->size,
+						       &hw->reg_msg[j], &part)) {
+					ret = -EINVAL;
+					goto fail;
+				}
+				mpp_req_coverage_add(&coverage, &part);
 
 				ret = rkvenc_alloc_class_msg(task, j);
 				if (ret) {
@@ -997,19 +1008,35 @@ static int rkvenc_extract_task_msg(struct mpp_session *session,
 				}
 				if (copy_from_user(data, wreq->data, wreq->size)) {
 					mpp_err("copy_from_user fail, offset %08x\n", wreq->offset);
-					ret = -EIO;
+					ret = -EFAULT;
 					goto fail;
 				}
 				task->reg[j].valid = 1;
 				task->w_req_cnt++;
 			}
+			ret = mpp_req_coverage_check(req->offset, req->size,
+						     hw->reg_msg, hw->reg_class,
+						     &coverage);
+			if (ret)
+				goto fail;
 		} break;
 		case MPP_CMD_SET_REG_READ: {
 			struct mpp_request *rreq;
+			struct mpp_req_coverage coverage;
+
+			mpp_req_coverage_init(&coverage);
 
 			for (j = 0; j < hw->reg_class; j++) {
+				struct mpp_req_part part;
+
 				if (!req_over_class(req, task, j))
 					continue;
+				if (mpp_req_class_part(req->offset, req->size,
+						       &hw->reg_msg[j], &part)) {
+					ret = -EINVAL;
+					goto fail;
+				}
+				mpp_req_coverage_add(&coverage, &part);
 
 				ret = rkvenc_alloc_class_msg(task, j);
 				if (ret) {
@@ -1032,9 +1059,16 @@ static int rkvenc_extract_task_msg(struct mpp_session *session,
 				task->reg[j].valid = 1;
 				task->r_req_cnt++;
 			}
+			ret = mpp_req_coverage_check(req->offset, req->size,
+						     hw->reg_msg, hw->reg_class,
+						     &coverage);
+			if (ret)
+				goto fail;
 		} break;
 		case MPP_CMD_SET_REG_ADDR_OFFSET: {
-			mpp_extract_reg_offset_info(&task->off_inf, req);
+			ret = mpp_extract_reg_offset_info(&task->off_inf, req);
+			if (ret)
+				goto fail;
 		} break;
 		case MPP_CMD_SET_RCB_INFO: {
 			struct rkvenc2_session_priv *priv = session->priv;
@@ -1666,6 +1700,21 @@ static int rkvenc_run(struct mpp_dev *mpp, struct mpp_task *mpp_task)
 	}
 
 	mpp_task_run_begin(mpp_task, timing_en, MPP_WORK_TIMEOUT_DELAY);
+	if (mpp_rkvenc_test_inject_iommu_fault(mpp_task->session->pid)) {
+		struct mpp_mem_region *region;
+		unsigned long invalid_iova;
+
+		region = list_first_entry_or_null(&mpp_task->mem_region_list,
+						  struct mpp_mem_region, reg_link);
+		invalid_iova = region ? region->iova + region->len + PAGE_SIZE :
+			mpp->io_base + PAGE_SIZE;
+		mpp->fault_handler(NULL, &mpp->iommu_info->pdev->dev,
+				   invalid_iova, 1, mpp);
+	}
+	if (mpp_rkvenc_test_hang_task(mpp_task->session->pid)) {
+		mpp_task_run_end(mpp_task, timing_en);
+		return 0;
+	}
 
 	/* Flush the register before the start the device */
 	wmb();

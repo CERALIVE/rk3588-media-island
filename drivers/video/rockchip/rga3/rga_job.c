@@ -12,6 +12,7 @@
 #include "rga_iommu.h"
 #include "rga_debugger.h"
 #include "rga_common.h"
+#include "rga_request_validation.h"
 #include "rga_trace.h"
 
 enum rga_acquire_fence_state {
@@ -834,38 +835,41 @@ static void rga_request_cancel_acquire_fence(struct rga_request *request)
 
 int rga_request_check(struct rga_user_request *req)
 {
+	int ret;
+
+	ret = rga_user_request_validate(req->id, req->task_num, req->task_ptr,
+					RGA_TASK_NUM_MAX);
+	if (!ret)
+		return 0;
+
 	if (req->id <= 0) {
 		rga_err("ID[%d]: request_id is invalid", req->id);
-		return -EINVAL;
-	}
-
-	if (req->task_num <= 0) {
+	} else if (req->task_num <= 0) {
 		rga_err("ID[%d]: invalid user request!\n", req->id);
-		return -EINVAL;
-	}
-
-	if (req->task_ptr == 0) {
+	} else if (req->task_ptr == 0) {
 		rga_err("ID[%d]: task_ptr is NULL!\n", req->id);
-		return -EINVAL;
-	}
-
-	if (req->task_num > RGA_TASK_NUM_MAX) {
+	} else {
 		rga_err("ID[%d]: Only supports running %d tasks, now %d\n",
 			req->id, RGA_TASK_NUM_MAX, req->task_num);
-		return -EFBIG;
 	}
 
-	return 0;
+	return ret;
 }
 
-/*
- * A channel carries a buffer when either address slot is set: handles and
- * physical addresses arrive in yrgb_addr, while the legacy blit path puts
- * user virtual addresses in uv_addr with yrgb_addr left at zero.
- */
-static bool rga_request_channel_has_buffer(const struct rga_img_info_t *img)
+static int rga_request_channel_validate(const struct rga_img_info_t *img)
 {
-	return img->yrgb_addr > 0 || img->uv_addr > 0;
+	const struct rga_plane_request plane = {
+		.address = img->yrgb_addr ? img->yrgb_addr : img->uv_addr,
+		.active_width = img->act_w,
+		.active_height = img->act_h,
+		.x_offset = img->x_offset,
+		.y_offset = img->y_offset,
+		.width_stride = img->vir_w,
+		.height_stride = img->vir_h,
+		.format = img->format,
+	};
+
+	return rga_plane_request_validate(&plane);
 }
 
 static int rga_request_task_check(const struct rga_req *task)
@@ -873,23 +877,22 @@ static int rga_request_task_check(const struct rga_req *task)
 	switch (task->render_mode) {
 	case BITBLT_MODE:
 	case COLOR_PALETTE_MODE:
-		if (!rga_request_channel_has_buffer(&task->src) ||
-		    !rga_request_channel_has_buffer(&task->dst))
+		if (rga_request_channel_validate(&task->src) ||
+		    rga_request_channel_validate(&task->dst))
 			return -EINVAL;
 
-		if (task->bsfilter_flag &&
-		    !rga_request_channel_has_buffer(&task->pat))
+		if (task->bsfilter_flag && rga_request_channel_validate(&task->pat))
 			return -EINVAL;
 
 		break;
 	case COLOR_FILL_MODE:
-		if (!rga_request_channel_has_buffer(&task->dst))
+		if (rga_request_channel_validate(&task->dst))
 			return -EINVAL;
 
 		break;
 	case UPDATE_PALETTE_TABLE_MODE:
 	case UPDATE_PATTEN_BUF_MODE:
-		if (!rga_request_channel_has_buffer(&task->pat))
+		if (rga_request_channel_validate(&task->pat))
 			return -EINVAL;
 
 		break;

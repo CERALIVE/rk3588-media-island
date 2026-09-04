@@ -312,6 +312,8 @@ static int mpp_telemetry_init(struct mpp_service *srv)
 				ret = PTR_ERR(mpp->telemetry_dir);
 				goto fail;
 			}
+			debugfs_create_atomic_t("busy", 0444, mpp->telemetry_dir,
+						&mpp->telemetry.busy);
 
 			entry = mpp_debugfs_create_atomic64("busy_ns",
 							mpp->telemetry_dir,

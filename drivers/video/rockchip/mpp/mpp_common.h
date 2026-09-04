@@ -28,6 +28,7 @@
 /* fwport 6.18: upstream pm_domains.h lacks rockchip_pmu_idle_request() (used by
  * the mpp_pmu_idle_request() inline below); supply a no-op stub. */
 #include "compat/rockchip_pmu_idle.h"
+#include "mpp_recovery_state.h"
 #include <uapi/linux/rk-mpp.h>
 
 #define MHZ				(1000 * 1000)
@@ -281,6 +282,7 @@ struct mpp_load_info {
 };
 
 struct mpp_telemetry {
+	atomic_t busy;
 	atomic64_t busy_ns;
 	atomic64_t tasks;
 	atomic64_t errors;
@@ -376,6 +378,7 @@ struct mpp_session {
 	pid_t pid;
 	atomic_t task_count;
 	atomic_t release_request;
+	enum mpp_session_teardown_phase teardown_phase;
 	/* trans info set by user */
 	int trans_count;
 	u16 trans_table[MPP_MAX_REG_TRANS_NUM];
@@ -406,36 +409,6 @@ struct mpp_session {
 	spinlock_t lock_msgs;
 	struct mpp_session_telemetry telemetry;
 	struct dentry *telemetry_dir;
-};
-
-/* task state in work thread */
-enum mpp_task_state {
-	TASK_STATE_PENDING	= 0,
-	TASK_STATE_RUNNING	= 1,
-	TASK_STATE_START	= 2,
-	TASK_STATE_HANDLE	= 3,
-	TASK_STATE_IRQ		= 4,
-	TASK_STATE_FINISH	= 5,
-	TASK_STATE_TIMEOUT	= 6,
-	TASK_STATE_DONE		= 7,
-
-	TASK_STATE_PREPARE	= 8,
-	TASK_STATE_ABORT	= 9,
-	TASK_STATE_ABORT_READY	= 10,
-	TASK_STATE_PROC_DONE	= 11,
-	TASK_STATE_ERROR_REPORTED = 12,
-	TASK_STATE_DONE_REPORTED = 13,
-
-	/* timing debug state */
-	TASK_TIMING_CREATE	= 16,
-	TASK_TIMING_CREATE_END	= 17,
-	TASK_TIMING_PENDING	= 18,
-	TASK_TIMING_RUN		= 19,
-	TASK_TIMING_TO_SCHED	= 20,
-	TASK_TIMING_RUN_END	= 21,
-	TASK_TIMING_IRQ		= 22,
-	TASK_TIMING_TO_CANCEL	= 23,
-	TASK_TIMING_FINISH	= 24,
 };
 
 /* The context for the a task */
