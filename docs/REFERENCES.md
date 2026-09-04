@@ -130,6 +130,20 @@ Published 2026-09-03T15:20:20Z at https://github.com/CERALIVE/rk3588-media-islan
 The accompanying checksum asset is `rk3588-media-island-v2026.9.0.mbox.tar.sha256` with SHA-256
 `ee3d23621c5615dfef0b618dc11d514f38ff9e88bd73c93d49a92dea099dcdea`.
 
+## Release 2
+
+| Tag | Commit | Asset | Asset SHA-256 |
+|---|---|---|---|
+| `v2026.9.1` | `b825aaedd538a97d83ba1c0ae08bc9a2b04e7b6c` | `rk3588-media-island-v2026.9.1.mbox.tar` | `a1992957b0e3b409cea7c570e2fedd64ebd29e95f0ea39635dc4f336325b6fbd` |
+
+Published 2026-09-04T05:16:43Z at https://github.com/CERALIVE/rk3588-media-island/releases/tag/v2026.9.1.
+The accompanying checksum asset is `rk3588-media-island-v2026.9.1.mbox.tar.sha256` with SHA-256
+`e139112ba01a3754256bf8717df7898abc0ad50da83d51cc2184d4930f0b6578`.
+
+This release carries the tracepoint/debugfs/procfs instrumentation, the recovery-state and
+request-validation work, and the three fault fixes the reliability drill found. The base
+verdict it ships under is `docs/PHASE3-DECISION.md`: reversal gate G1 **NOT-FIRED**.
+
 ## How to add a row
 
 Resolve the object live, never from a cache or a previous note; record the full
