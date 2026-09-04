@@ -36125,10 +36125,10 @@ index 0000000000000000000000000000000000000000..aeba404d133469bd9fe3f158280d0597
 +#endif
 diff --git a/drivers/video/rockchip/rga3/include/rga_request_validation.h b/drivers/video/rockchip/rga3/include/rga_request_validation.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..1d29e9cafd1e3517988ecd89f193bdb08bd50166
+index 0000000000000000000000000000000000000000..12602951a1361734111489f597990898a4dec5d7
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/include/rga_request_validation.h
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,106 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +#ifndef __ROCKCHIP_RGA_REQUEST_VALIDATION_H__
 +#define __ROCKCHIP_RGA_REQUEST_VALIDATION_H__
@@ -36166,6 +36166,13 @@ index 0000000000000000000000000000000000000000..1d29e9cafd1e3517988ecd89f193bdb0
 +	bool format_supported;
 +	struct rga_plane_buffer planes[RGA_REQUEST_MAX_PLANES];
 +};
++
++static inline bool rga_request_rotation_swaps_axes(u8 rotate_mode, s32 sina,
++						    s32 cosa)
++{
++	return (rotate_mode & 0x0f) == 1 && cosa == 0 &&
++		(sina == 65536 || sina == -65536);
++}
 +
 +static inline bool rga_request_format_valid(u32 format)
 +{
@@ -42199,10 +42206,10 @@ index 0000000000000000000000000000000000000000..569ad8fbb3fc08d63a6b650fbc962c1d
 +};
 diff --git a/drivers/video/rockchip/rga3/rga_common.c b/drivers/video/rockchip/rga3/rga_common.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..084c931e7d1a82110a96807bddeae683b60f2b19
+index 0000000000000000000000000000000000000000..725c03a0de09cfd7320c519573dff6abc2f04b4d
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_common.c
-@@ -0,0 +1,1141 @@
+@@ -0,0 +1,1147 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -43209,14 +43216,20 @@ index 0000000000000000000000000000000000000000..084c931e7d1a82110a96807bddeae683
 +{
 +	switch (task->render_mode) {
 +	case BITBLT_MODE:
-+	case COLOR_PALETTE_MODE:
++	case COLOR_PALETTE_MODE: {
++		struct rga_img_info_t dst = task->dst;
++
++		if (rga_request_rotation_swaps_axes(task->rotate_mode,
++						    task->sina, task->cosa))
++			swap(dst.act_w, dst.act_h);
 +		if (rga_validate_image(job, &task->src, 0) ||
-+		    rga_validate_image(job, &task->dst, 2))
++		    rga_validate_image(job, &dst, 2))
 +			return -EINVAL;
 +		if (task->bsfilter_flag &&
 +		    rga_validate_image(job, &task->pat, 1))
 +			return -EINVAL;
 +		return 0;
++	}
 +	case COLOR_FILL_MODE:
 +		return rga_validate_image(job, &task->dst, 2);
 +	case UPDATE_PALETTE_TABLE_MODE:
