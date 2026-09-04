@@ -33,6 +33,8 @@ int rga_job_commit(struct rga_req *task_list, size_t task_count,
 int rga_job_mpi_commit(struct rga_req *rga_command_base, struct rga_request *request);
 
 int rga_job_assign(struct rga_job *job);
+bool rga_check_format(const struct rga_hw_data *data, int rd_mode, int format,
+		      int win_num);
 
 
 int rga_request_check(struct rga_user_request *req);

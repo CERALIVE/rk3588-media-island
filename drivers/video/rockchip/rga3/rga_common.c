@@ -7,6 +7,10 @@
 
 #include "rga.h"
 #include "rga_common.h"
+#include "rga_hw_config.h"
+#include "rga_job.h"
+#include "rga_mm.h"
+#include "rga_request_validation.h"
 
 bool rga_is_rgb_format(uint32_t format)
 {
@@ -877,6 +881,159 @@ int rga_image_size_cal(int w, int h, int format,
 		*v_size = v;
 
 	return (yrgb + uv + v);
+}
+
+static int rga_validate_get_descriptor_size(struct rga_job *job, u64 descriptor,
+					    bool handle, u64 *size)
+{
+	struct dma_buf *dma_buf;
+
+	if (!descriptor || !size)
+		return -EINVAL;
+	if (handle)
+		return rga_mm_get_handle_size(descriptor, job->session, size);
+	if (descriptor > INT_MAX)
+		return -EINVAL;
+
+	dma_buf = dma_buf_get((int)descriptor);
+	if (IS_ERR(dma_buf))
+		return PTR_ERR(dma_buf);
+	*size = dma_buf->size;
+	dma_buf_put(dma_buf);
+
+	return *size ? 0 : -EINVAL;
+}
+
+static int rga_validate_image(struct rga_job *job,
+			      const struct rga_img_info_t *img, int win_num)
+{
+	struct rga_plane_request plane = {
+		.active_width = img->act_w,
+		.active_height = img->act_h,
+		.x_offset = img->x_offset,
+		.y_offset = img->y_offset,
+		.width_stride = img->vir_w,
+		.height_stride = img->vir_h,
+		.format = img->format,
+		.byte_stride_align = job->scheduler->data->byte_stride_align,
+		.max_byte_stride = job->scheduler->data->max_byte_stride,
+		.format_supported = rga_check_format(job->scheduler->data,
+						     img->rd_mode, img->format,
+						     win_num),
+	};
+	u64 descriptor = img->yrgb_addr ? img->yrgb_addr : img->uv_addr;
+	u64 total_size;
+	u64 buffer_size;
+	u64 bit_stride;
+	int required[RGA_REQUEST_MAX_PLANES] = {};
+	bool handle = job->flags & RGA_JOB_USE_HANDLE;
+	bool separate = handle && img->uv_addr;
+	int pixel_stride;
+	int image_size;
+	int ret;
+	int i;
+
+	image_size = rga_image_size_cal(img->vir_w, img->vir_h, img->format,
+					required, required + 1, required + 2);
+	if (image_size <= 0)
+		return -EINVAL;
+
+	if (rga_is_yuv10bit_format(img->format)) {
+		plane.byte_stride = img->vir_w;
+	} else {
+		pixel_stride = rga_get_pixel_stride_from_format(img->format);
+		if (pixel_stride <= 0 ||
+		    check_mul_overflow((u64)pixel_stride, (u64)img->vir_w,
+				       &bit_stride) ||
+		    DIV_ROUND_UP_ULL(bit_stride, 8) > U32_MAX)
+			return -EINVAL;
+		plane.byte_stride = DIV_ROUND_UP_ULL(bit_stride, 8);
+	}
+
+	for (i = 0; i < RGA_REQUEST_MAX_PLANES; i++)
+		if (required[i] > 0)
+			plane.plane_count++;
+	if (!plane.plane_count)
+		return -EINVAL;
+
+	if (separate) {
+		const u64 descriptors[RGA_REQUEST_MAX_PLANES] = {
+			img->yrgb_addr, img->uv_addr, img->v_addr,
+		};
+
+		for (i = 0; i < RGA_REQUEST_MAX_PLANES; i++) {
+			if (i >= plane.plane_count) {
+				if (descriptors[i])
+					return -EINVAL;
+				continue;
+			}
+			ret = rga_validate_get_descriptor_size(job, descriptors[i],
+							 handle, &buffer_size);
+			if (ret)
+				return -EINVAL;
+			plane.planes[i].descriptor = descriptors[i];
+			plane.planes[i].size = buffer_size;
+			plane.planes[i].required = required[i];
+		}
+	} else {
+		if (img->yrgb_addr) {
+			ret = rga_validate_get_descriptor_size(job, descriptor, handle,
+							 &buffer_size);
+			if (ret)
+				return -EINVAL;
+		} else {
+			buffer_size = image_size;
+		}
+
+		total_size = 0;
+		for (i = 0; i < plane.plane_count; i++) {
+			plane.planes[i].descriptor = descriptor;
+			plane.planes[i].offset = total_size;
+			plane.planes[i].size = buffer_size;
+			plane.planes[i].required = required[i];
+			if (check_add_overflow(total_size, (u64)required[i],
+					       &total_size))
+				return -EINVAL;
+		}
+	}
+
+	return rga_plane_request_validate(&plane);
+}
+
+static int rga_validate_task(struct rga_job *job, const struct rga_req *task)
+{
+	switch (task->render_mode) {
+	case BITBLT_MODE:
+	case COLOR_PALETTE_MODE:
+		if (rga_validate_image(job, &task->src, 0) ||
+		    rga_validate_image(job, &task->dst, 2))
+			return -EINVAL;
+		if (task->bsfilter_flag &&
+		    rga_validate_image(job, &task->pat, 1))
+			return -EINVAL;
+		return 0;
+	case COLOR_FILL_MODE:
+		return rga_validate_image(job, &task->dst, 2);
+	case UPDATE_PALETTE_TABLE_MODE:
+	case UPDATE_PATTEN_BUF_MODE:
+		return rga_validate_image(job, &task->pat, 1);
+	default:
+		return -EINVAL;
+	}
+}
+
+int rga_job_validate(struct rga_job *job)
+{
+	size_t i;
+
+	if (!job || !job->scheduler || !job->scheduler->data)
+		return -EINVAL;
+
+	for (i = 0; i < job->task_count; i++)
+		if (rga_validate_task(job, &job->task_list[i]))
+			return -EINVAL;
+
+	return 0;
 }
 
 void rga_dump_memory_parm(struct rga_memory_parm *parm)
