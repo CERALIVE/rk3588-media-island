@@ -102,8 +102,12 @@ check_sources() {
 
 	require_text "$mpp/mpp_service.c" 'mpp_telemetry_format_load' || return 1
 	require_text "$mpp/mpp_common.c" 'mpp_telemetry_task_error' || return 1
-	require_text "$mpp/mpp_common.h" 'TASK_STATE_ERROR_REPORTED' || return 1
-	require_text "$mpp/mpp_common.h" 'TASK_STATE_DONE_REPORTED' || return 1
+	# The exactly-once report bits live in the recovery-state header and reach
+	# mpp_common.h by include. Assert both halves: a relocated enum keeps the
+	# contract, a dropped include silently breaks every consumer of it.
+	require_text "$mpp/mpp_recovery_state.h" 'TASK_STATE_ERROR_REPORTED' || return 1
+	require_text "$mpp/mpp_recovery_state.h" 'TASK_STATE_DONE_REPORTED' || return 1
+	require_text "$mpp/mpp_common.h" '#include "mpp_recovery_state.h"' || return 1
 	require_text "$mpp/mpp_common.c" 'atomic_xchg(&mpp->reset_request, 0)' || return 1
 	require_text "$mpp/mpp_common.c" 'atomic64_inc(&task->session->telemetry.tasks)' || return 1
 	require_text "$mpp/mpp_common.c" 'atomic64_add(task->bytes, &task->session->telemetry.bytes)' || return 1
@@ -178,6 +182,8 @@ atomic64_inc(&task->session->telemetry.tasks);
 atomic64_add(task->bytes, &task->session->telemetry.bytes);
 EOF
 	printf '%s\n' 'TASK_STATE_ERROR_REPORTED TASK_STATE_DONE_REPORTED' \
+		>"$fixture/drivers/video/rockchip/mpp/mpp_recovery_state.h"
+	printf '%s\n' '#include "mpp_recovery_state.h"' \
 		>"$fixture/drivers/video/rockchip/mpp/mpp_common.h"
 	printf '%s\n' 'mpp_telemetry_mark_once' \
 		>"$fixture/drivers/video/rockchip/mpp/mpp_telemetry.h"
