@@ -3221,10 +3221,10 @@ index 0000000000000000000000000000000000000000..3ebeecc5719d09a0ff436a9d035d6cf9
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_common.c b/drivers/video/rockchip/mpp/mpp_common.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..227c85dc6421191ee5a4e081a80e019a2ea79c80
+index 0000000000000000000000000000000000000000..a712cf312b5f0d61bcf217c2c05a08610867c380
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_common.c
-@@ -0,0 +1,3402 @@
+@@ -0,0 +1,3412 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -3965,6 +3965,8 @@ index 0000000000000000000000000000000000000000..227c85dc6421191ee5a4e081a80e019a
 +
 +	if (mpp->dev_ops->alloc_task)
 +		task = mpp->dev_ops->alloc_task(session, msgs);
++	if (IS_ERR(task))
++		return PTR_ERR(task);
 +	if (!task) {
 +		mpp_err("alloc_task failed.\n");
 +		return -ENOMEM;
@@ -4953,7 +4955,7 @@ index 0000000000000000000000000000000000000000..227c85dc6421191ee5a4e081a80e019a
 +						  &trans_count)) {
 +				mpp_err("init table size %d more than %d\n",
 +					req->size, trans_tbl_size);
-+				return -ENOMEM;
++				return -EINVAL;
 +			}
 +
 +			if (copy_from_user(session->trans_table,
@@ -5157,7 +5159,7 @@ index 0000000000000000000000000000000000000000..227c85dc6421191ee5a4e081a80e019a
 +	return ret;
 +}
 +
-+static void task_msgs_add(struct mpp_task_msgs *msgs, struct list_head *head)
++static int task_msgs_add(struct mpp_task_msgs *msgs, struct list_head *head)
 +{
 +	struct mpp_session *session = msgs->session;
 +	int ret = 0;
@@ -5177,6 +5179,8 @@ index 0000000000000000000000000000000000000000..227c85dc6421191ee5a4e081a80e019a
 +	} else {
 +		put_task_msgs(msgs);
 +	}
++
++	return ret;
 +}
 +
 +static int mpp_copy_msg_v1(struct mpp_msg_v1 *msg_v1, void __user **msg,
@@ -5301,12 +5305,15 @@ index 0000000000000000000000000000000000000000..227c85dc6421191ee5a4e081a80e019a
 +
 +		/* NOTE: add previous ready task to queue and drop empty task */
 +		if (msgs) {
-+			if (msgs->req_cnt)
-+				task_msgs_add(msgs, head);
-+			else
++			if (msgs->req_cnt) {
++				ret = task_msgs_add(msgs, head);
++				msgs = NULL;
++				if (ret)
++					return ret;
++			} else {
 +				put_task_msgs(msgs);
-+
-+			msgs = NULL;
++				msgs = NULL;
++			}
 +		}
 +
 +		/* switch session */
@@ -5333,12 +5340,15 @@ index 0000000000000000000000000000000000000000..227c85dc6421191ee5a4e081a80e019a
 +		 */
 +		if (last) {
 +			if (msgs) {
-+				if (msgs->req_cnt)
-+					task_msgs_add(msgs, head);
-+				else
++				if (msgs->req_cnt) {
++					ret = task_msgs_add(msgs, head);
++					msgs = NULL;
++					if (ret)
++						return ret;
++				} else {
 +					put_task_msgs(msgs);
-+
-+				msgs = NULL;
++					msgs = NULL;
++				}
 +			}
 +			return 0;
 +		}
@@ -5379,10 +5389,10 @@ index 0000000000000000000000000000000000000000..227c85dc6421191ee5a4e081a80e019a
 +	if (!last)
 +		goto next;
 +
-+	task_msgs_add(msgs, head);
++	ret = task_msgs_add(msgs, head);
 +	msgs = NULL;
 +
-+	return 0;
++	return ret;
 +
 +err_put_msgs:
 +	/*
@@ -12346,10 +12356,10 @@ index 0000000000000000000000000000000000000000..8e000a4fecd51644a16f931f7d15a192
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_request_bounds.h b/drivers/video/rockchip/mpp/mpp_request_bounds.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..a78c459949dd10134c8b0e33971baf15b4ee6527
+index 0000000000000000000000000000000000000000..9153a0da20553ced13bf5ba30ba05a777ad2f819
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_request_bounds.h
-@@ -0,0 +1,170 @@
+@@ -0,0 +1,182 @@
 +/* SPDX-License-Identifier: (GPL-2.0+ OR MIT) */
 +#ifndef __ROCKCHIP_MPP_REQUEST_BOUNDS_H__
 +#define __ROCKCHIP_MPP_REQUEST_BOUNDS_H__
@@ -12476,11 +12486,23 @@ index 0000000000000000000000000000000000000000..a78c459949dd10134c8b0e33971baf15
 +	u32 map_e = 0;
 +	u32 owned = 0;
 +	u32 request_e;
++	u32 covered_classes = 0;
 +	u32 i;
 +
 +	if (mpp_req_shape(offset, size) || !class_count || !coverage->bytes)
 +		return -EINVAL;
 +	request_e = offset + size;
++	for (i = 0; i < class_count; i++) {
++		u32 class_s = classes[i].base_s;
++		u32 class_e = classes[i].base_e + sizeof(u32);
++
++		if (class_e > coverage->lo && class_s < coverage->hi)
++			covered_classes++;
++	}
++
++	if (covered_classes == 1 && coverage->lo == offset &&
++	    coverage->hi == request_e && coverage->bytes == size)
++		return 0;
 +
 +	for (i = 0; i < class_count; i++) {
 +		u32 class_s = classes[i].base_s;
@@ -21919,10 +21941,10 @@ index 0000000000000000000000000000000000000000..039752db69c71b3befeade39a91d81bf
 +};
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc2.c b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..7c7db8ea4cc3ffb0eada3fb55a31d849835afbd5
+index 0000000000000000000000000000000000000000..1f07b57c76110252901dc51a1ddfbf3aaf6cd7bb
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
-@@ -0,0 +1,3854 @@
+@@ -0,0 +1,3855 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
@@ -23279,7 +23301,7 @@ index 0000000000000000000000000000000000000000..7c7db8ea4cc3ffb0eada3fb55a31d849
 +free_task:
 +	kfree(task);
 +
-+	return NULL;
++	return ERR_PTR(ret);
 +}
 +
 +static void *rkvenc2_prepare(struct mpp_dev *mpp, struct mpp_task *mpp_task)
@@ -23635,6 +23657,7 @@ index 0000000000000000000000000000000000000000..7c7db8ea4cc3ffb0eada3fb55a31d849
 +			mpp->io_base + PAGE_SIZE;
 +		mpp->fault_handler(NULL, &mpp->iommu_info->pdev->dev,
 +				   invalid_iova, 1, mpp);
++		atomic_inc(&mpp->reset_request);
 +	}
 +	if (mpp_rkvenc_test_hang_task(mpp_task->session->pid)) {
 +		mpp_task_run_end(mpp_task, timing_en);

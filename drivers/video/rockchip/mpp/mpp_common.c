@@ -738,6 +738,8 @@ static int mpp_process_task_default(struct mpp_session *session,
 
 	if (mpp->dev_ops->alloc_task)
 		task = mpp->dev_ops->alloc_task(session, msgs);
+	if (IS_ERR(task))
+		return PTR_ERR(task);
 	if (!task) {
 		mpp_err("alloc_task failed.\n");
 		return -ENOMEM;
@@ -1726,7 +1728,7 @@ static int __mpp_process_request(struct mpp_session *session,
 						  &trans_count)) {
 				mpp_err("init table size %d more than %d\n",
 					req->size, trans_tbl_size);
-				return -ENOMEM;
+				return -EINVAL;
 			}
 
 			if (copy_from_user(session->trans_table,
@@ -1930,7 +1932,7 @@ static int mpp_process_request(struct mpp_session *session,
 	return ret;
 }
 
-static void task_msgs_add(struct mpp_task_msgs *msgs, struct list_head *head)
+static int task_msgs_add(struct mpp_task_msgs *msgs, struct list_head *head)
 {
 	struct mpp_session *session = msgs->session;
 	int ret = 0;
@@ -1950,6 +1952,8 @@ static void task_msgs_add(struct mpp_task_msgs *msgs, struct list_head *head)
 	} else {
 		put_task_msgs(msgs);
 	}
+
+	return ret;
 }
 
 static int mpp_copy_msg_v1(struct mpp_msg_v1 *msg_v1, void __user **msg,
@@ -2074,12 +2078,15 @@ next:
 
 		/* NOTE: add previous ready task to queue and drop empty task */
 		if (msgs) {
-			if (msgs->req_cnt)
-				task_msgs_add(msgs, head);
-			else
+			if (msgs->req_cnt) {
+				ret = task_msgs_add(msgs, head);
+				msgs = NULL;
+				if (ret)
+					return ret;
+			} else {
 				put_task_msgs(msgs);
-
-			msgs = NULL;
+				msgs = NULL;
+			}
 		}
 
 		/* switch session */
@@ -2106,12 +2113,15 @@ session_switch_done:
 		 */
 		if (last) {
 			if (msgs) {
-				if (msgs->req_cnt)
-					task_msgs_add(msgs, head);
-				else
+				if (msgs->req_cnt) {
+					ret = task_msgs_add(msgs, head);
+					msgs = NULL;
+					if (ret)
+						return ret;
+				} else {
 					put_task_msgs(msgs);
-
-				msgs = NULL;
+					msgs = NULL;
+				}
 			}
 			return 0;
 		}
@@ -2152,10 +2162,10 @@ session_switch_done:
 	if (!last)
 		goto next;
 
-	task_msgs_add(msgs, head);
+	ret = task_msgs_add(msgs, head);
 	msgs = NULL;
 
-	return 0;
+	return ret;
 
 err_put_msgs:
 	/*

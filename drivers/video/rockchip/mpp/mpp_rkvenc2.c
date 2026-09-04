@@ -1354,7 +1354,7 @@ fail:
 free_task:
 	kfree(task);
 
-	return NULL;
+	return ERR_PTR(ret);
 }
 
 static void *rkvenc2_prepare(struct mpp_dev *mpp, struct mpp_task *mpp_task)
@@ -1710,6 +1710,7 @@ static int rkvenc_run(struct mpp_dev *mpp, struct mpp_task *mpp_task)
 			mpp->io_base + PAGE_SIZE;
 		mpp->fault_handler(NULL, &mpp->iommu_info->pdev->dev,
 				   invalid_iova, 1, mpp);
+		atomic_inc(&mpp->reset_request);
 	}
 	if (mpp_rkvenc_test_hang_task(mpp_task->session->pid)) {
 		mpp_task_run_end(mpp_task, timing_en);

@@ -124,11 +124,23 @@ static inline int mpp_req_coverage_check(u32 offset, u32 size,
 	u32 map_e = 0;
 	u32 owned = 0;
 	u32 request_e;
+	u32 covered_classes = 0;
 	u32 i;
 
 	if (mpp_req_shape(offset, size) || !class_count || !coverage->bytes)
 		return -EINVAL;
 	request_e = offset + size;
+	for (i = 0; i < class_count; i++) {
+		u32 class_s = classes[i].base_s;
+		u32 class_e = classes[i].base_e + sizeof(u32);
+
+		if (class_e > coverage->lo && class_s < coverage->hi)
+			covered_classes++;
+	}
+
+	if (covered_classes == 1 && coverage->lo == offset &&
+	    coverage->hi == request_e && coverage->bytes == size)
+		return 0;
 
 	for (i = 0; i < class_count; i++) {
 		u32 class_s = classes[i].base_s;
