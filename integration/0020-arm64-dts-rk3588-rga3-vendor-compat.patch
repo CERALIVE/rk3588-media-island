@@ -1,8 +1,8 @@
-Subject: arm64: dts: rockchip: stage RK3588 RGA3 ownership for multi_rga
+Subject: arm64: dts: rockchip: give RK3588 RGA3 ownership to multi_rga
 
-Prepare the RGA3 compatible-only ownership flip for the later RGA release.
-This patch remains under integration/pending and is deliberately excluded from
-the generated release series until todo 19 promotes both RGA patches together.
+Switch both RGA3 nodes to the multi_rga driver's core-specific compatibles.
+Each node has one owner and can return to mainline rockchip-rga by reverting
+this patch together with the RGA2 ownership patch.
 
 Reference: armbian/linux-rockchip@fd9f82366e235b8afbdf516765210e97d24dce93:arch/arm64/boot/dts/rockchip/rk3588s.dtsi
 
