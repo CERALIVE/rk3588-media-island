@@ -1,0 +1,27 @@
+Linux ceralive 7.2.0-ceralive-rk3588 #4 SMP PREEMPT Thu Sep  3 21:35:08 -05 2026 aarch64 GNU/Linux
+root=PARTLABEL=xrootfs_b rootwait rw console=ttyS2,1500000 earlycon cera_slot=B rauc.slot=B
+=== System Info ===
+Compatible:  ceralive-orangepi5-plus
+Variant:     
+Booted from: rootfs.1 (B)
+
+=== Bootloader ===
+Activated: rootfs.1 (B)
+
+=== Slot States ===
+[1mx[0m [32m[32m[1m[rootfs.1][0m (/dev/disk/by-partlabel/xrootfs_b, ext4, [1mbooted[0m)
+      bootname: [34mB[0m
+      boot status: [32mgood[0m
+
+o [1m[rootfs.0][0m (/dev/disk/by-partlabel/xrootfs_a, ext4, inactive[0m)
+      bootname: [34mA[0m
+      boot status: [32mgood[0m
+STATE_FILE=/boot/boot_state.txt
+BOOT_ORDER=B A
+BOOT_A_LEFT=2
+BOOT_B_LEFT=2
+CONFIG_ROCKCHIP_MPP_CERALIVE_TEST=y
+CONFIG_KASAN=y
+CONFIG_PROVE_LOCKING=y
+8a22c0c99eade00cf61818a432316712d147fde3507bbff27ae0142774f76a3b  /usr/lib/modules/7.2.0-ceralive-rk3588/kernel/drivers/video/rockchip/mpp/rk_vcodec.ko
+ debug_locks:                             1

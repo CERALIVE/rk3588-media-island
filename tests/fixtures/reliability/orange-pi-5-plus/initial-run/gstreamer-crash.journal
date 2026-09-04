@@ -1,0 +1,4 @@
+Sep 04 03:33:29 ceralive kernel: fdee0000.hdmi_receiver: hdmirx_query_dv_timings: port has no link
+Sep 04 03:33:32 ceralive kernel: debugfs: '7891-20' already exists in 'sessions'
+Sep 04 03:33:32 ceralive kernel: debugfs: '7894-21' already exists in 'sessions'
+Sep 04 03:33:34 ceralive kernel: fdee0000.hdmi_receiver: hdmirx_query_dv_timings: port has no link

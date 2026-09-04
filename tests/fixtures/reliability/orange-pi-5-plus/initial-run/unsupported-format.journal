@@ -1,0 +1,5 @@
+Sep 04 03:32:33 ceralive kernel: debugfs: '5824-8' already exists in 'sessions'
+Sep 04 03:32:34 ceralive kernel: fdee0000.hdmi_receiver: hdmirx_query_dv_timings: signal is not locked
+Sep 04 03:32:38 ceralive kernel: debugfs: '5953-9' already exists in 'sessions'
+Sep 04 03:32:38 ceralive kernel: debugfs: '5954-10' already exists in 'sessions'
+Sep 04 03:32:39 ceralive kernel: fdee0000.hdmi_receiver: hdmirx_query_dv_timings: signal is not locked

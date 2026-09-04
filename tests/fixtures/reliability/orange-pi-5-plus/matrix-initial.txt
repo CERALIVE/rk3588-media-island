@@ -1,0 +1,18 @@
+row=invalid-descriptor verdict=FAIL reason=stimulus
+row=malformed-ioctls verdict=FAIL reason=stimulus
+row=invalid-dimensions verdict=SURVIVE baseline_fps=30.200 healthy_fps=30.200 reset_delta=0 busy=0 queue_depth=0 dmabufs=baseline iommu_maps=baseline journal_bad=0
+row=unsupported-format verdict=SURVIVE baseline_fps=30.200 healthy_fps=30.200 reset_delta=0 busy=0 queue_depth=0 dmabufs=baseline iommu_maps=baseline journal_bad=0
+row=dmabuf-vanishing verdict=SURVIVE baseline_fps=30.200 healthy_fps=30.200 reset_delta=0 busy=0 queue_depth=0 dmabufs=baseline iommu_maps=baseline journal_bad=0
+row=sigkill-mid-encode verdict=SURVIVE baseline_fps=30.200 healthy_fps=30.400 reset_delta=0 busy=0 queue_depth=0 dmabufs=baseline iommu_maps=baseline journal_bad=0
+row=gstreamer-crash verdict=SURVIVE baseline_fps=30.200 healthy_fps=30.200 reset_delta=0 busy=0 queue_depth=0 dmabufs=baseline iommu_maps=baseline journal_bad=0
+row=irq-timeout verdict=SURVIVE baseline_fps=30.200 healthy_fps=30.200 reset_delta=3 busy=0 queue_depth=0 dmabufs=baseline iommu_maps=baseline journal_bad=0
+row=iommu-fault verdict=FAIL reason=recovery-assertion
+row=hardware-hang verdict=SURVIVE baseline_fps=30.200 healthy_fps=30.200 reset_delta=2 busy=0 queue_depth=0 dmabufs=baseline iommu_maps=baseline journal_bad=0
+row=reset-failure verdict=SURVIVE baseline_fps=30.200 healthy_fps=30.200 reset_delta=1 busy=0 queue_depth=0 dmabufs=baseline iommu_maps=baseline journal_bad=0
+row=teardown-active verdict=SURVIVE baseline_fps=30.200 healthy_fps=30.000 reset_delta=0 busy=0 queue_depth=0 dmabufs=baseline iommu_maps=baseline journal_bad=0
+row=concurrent-destruction verdict=SURVIVE baseline_fps=30.200 healthy_fps=30.200 reset_delta=0 busy=0 queue_depth=0 dmabufs=baseline iommu_maps=baseline journal_bad=0
+row=rapid-cycles verdict=SURVIVE baseline_fps=30.200 healthy_fps=30.200 reset_delta=0 busy=0 queue_depth=0 dmabufs=baseline iommu_maps=baseline journal_bad=0
+row=concurrent-destroy-loops verdict=SURVIVE baseline_fps=30.400 healthy_fps=30.200 reset_delta=0 busy=0 queue_depth=0 dmabufs=baseline iommu_maps=baseline journal_bad=0
+row=libmpp-4k5994-h265 verdict=SURVIVE baseline_fps=30.200 healthy_fps=30.200 reset_delta=0 busy=0 queue_depth=0 dmabufs=baseline iommu_maps=baseline journal_bad=0
+matrix failures=3 gated=0 baseline_fps=30.200 out=/tmp/todo17-v4/final-results
+remote_exit=1

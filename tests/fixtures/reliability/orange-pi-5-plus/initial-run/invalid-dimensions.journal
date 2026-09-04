@@ -1,0 +1,5 @@
+Sep 04 03:32:17 ceralive kernel: debugfs: '5349-4' already exists in 'sessions'
+Sep 04 03:32:19 ceralive kernel: fdee0000.hdmi_receiver: hdmirx_query_dv_timings: port has no link
+Sep 04 03:32:22 ceralive kernel: debugfs: '5450-5' already exists in 'sessions'
+Sep 04 03:32:22 ceralive kernel: debugfs: '5451-6' already exists in 'sessions'
+Sep 04 03:32:22 ceralive kernel: rockchip-i2s-tdm fddf8000.i2s: clear failed, reset rx

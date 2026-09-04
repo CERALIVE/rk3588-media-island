@@ -1,0 +1,15 @@
+Sep 04 04:02:02 ceralive kernel: rk_vcodec: mpp_dev_ioctl_common:2295: collect msgs failed -22
+Sep 04 04:02:02 ceralive kernel: rk_vcodec: mpp_dev_ioctl_common:2295: collect msgs failed -22
+Sep 04 04:02:02 ceralive kernel: rk_vcodec: mpp_dev_ioctl_common:2295: collect msgs failed -22
+Sep 04 04:02:02 ceralive kernel: rk_vcodec: mpp_dev_ioctl_common:2295: collect msgs failed -22
+Sep 04 04:02:02 ceralive kernel: rk_vcodec: mpp_extract_reg_offset_info:2580: invalid reg offset size 13
+Sep 04 04:02:02 ceralive kernel: rk_vcodec: mpp_dev_ioctl_common:2295: collect msgs failed -22
+Sep 04 04:02:02 ceralive kernel: rk_vcodec: __mpp_process_request:1729: init table size 121 more than 160
+Sep 04 04:02:02 ceralive kernel: rk_vcodec: mpp_collect_msgs:2157: session 14 process cmd 102 ret -22
+Sep 04 04:02:02 ceralive kernel: rk_vcodec: mpp_dev_ioctl_common:2295: collect msgs failed -22
+Sep 04 04:02:02 ceralive kernel: rkvenc_extract_task_msg:1010: copy_from_user fail, offset 00000000
+Sep 04 04:02:02 ceralive kernel: rk_vcodec: mpp_dev_ioctl_common:2295: collect msgs failed -14
+Sep 04 04:02:02 ceralive kernel: rk_vcodec: mpp_dev_ioctl_common:2295: collect msgs failed -22
+Sep 04 04:02:04 ceralive kernel: fdee0000.hdmi_receiver: hdmirx_query_dv_timings: port has no link
+Sep 04 04:02:08 ceralive kernel: debugfs: '4179-4' already exists in 'sessions'
+Sep 04 04:02:08 ceralive kernel: debugfs: '4180-5' already exists in 'sessions'

@@ -1,0 +1,10 @@
+  FAIL valid-after-failures: expected OK, got EINVAL (22)
+RESULT=FAIL case=rkvenc-invalid-ioctl failures=1
+  ok   offset-size-wrap -> EINVAL
+  ok   undersized-word -> EINVAL
+  ok   unaligned-offset -> EINVAL
+  ok   class-overrun -> EINVAL
+  ok   invalid-metadata -> EINVAL
+  ok   trans-table-odd-size -> EINVAL
+  ok   bad-user-pointer -> EFAULT
+EXPECTED_RED valid-after-failures: the BASE-only request has no PIC class, so rkvenc_task_get_format() correctly returns EINVAL before dispatch

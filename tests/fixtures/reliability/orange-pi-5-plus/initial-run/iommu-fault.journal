@@ -1,0 +1,24 @@
+Sep 04 03:34:04 ceralive kernel: fdee0000.hdmi_receiver: hdmirx_query_dv_timings: signal is not locked
+Sep 04 03:34:04 ceralive kernel: debugfs: '8912-27' already exists in 'sessions'
+Sep 04 03:34:04 ceralive kernel: mpp_rkvenc2 fdbd0000.rkvenc-core: core 0 page fault found dchs 00090014
+Sep 04 03:34:04 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2736: --- dump task 4251 mem region ---
+Sep 04 03:34:04 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2741: reg[  0]: 0x00000000fdc00000, size 152000
+Sep 04 03:34:04 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2741: reg[  1]: 0x00000000fdc00000, size 152000
+Sep 04 03:34:04 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2741: reg[  2]: 0x00000000fdc00000, size 152000
+Sep 04 03:34:04 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2741: reg[  3]: 0x00000000fda00000, size 15d000
+Sep 04 03:34:04 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2741: reg[  4]: 0x00000000fda00000, size 15d000
+Sep 04 03:34:04 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2741: reg[  5]: 0x00000000fda00000, size 15d000
+Sep 04 03:34:04 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2741: reg[  6]: 0x00000000fda00000, size 15d000
+Sep 04 03:34:04 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2741: reg[  9]: 0x00000000ff3f0000, size 10000
+Sep 04 03:34:04 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2741: reg[ 10]: 0x00000000ff3f0000, size 10000
+Sep 04 03:34:04 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2741: reg[ 12]: 0x00000000fde00000, size e1000
+Sep 04 03:34:04 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2741: reg[ 13]: 0x00000000fde00000, size e1000
+Sep 04 03:34:04 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2741: reg[ 14]: 0x00000000fde00000, size e1000
+Sep 04 03:34:04 ceralive kernel: rk_vcodec: mpp_task_dump_mem_region:2741: reg[ 15]: 0x00000000fde00000, size e1000
+Sep 04 03:34:09 ceralive kernel: fdee0000.hdmi_receiver: hdmirx_query_dv_timings: signal is not locked
+Sep 04 03:34:09 ceralive kernel: rkvenc2_wait_result:2958: wait task break by signal in normal mode
+Sep 04 03:34:09 ceralive kernel: rk_vcodec: mpp_msgs_wait:2240: session 91 wait result ret -512
+Sep 04 03:34:13 ceralive kernel: audit: type=1130 audit(1788492852.992:233): pid=1 uid=0 auid=4294967295 ses=4294967295 msg='unit=ceralive-hostname-reconcile comm="systemd" exe="/usr/lib/systemd/systemd" hostname=? addr=? terminal=? res=success'
+Sep 04 03:34:13 ceralive kernel: audit: type=1131 audit(1788492852.992:234): pid=1 uid=0 auid=4294967295 ses=4294967295 msg='unit=ceralive-hostname-reconcile comm="systemd" exe="/usr/lib/systemd/systemd" hostname=? addr=? terminal=? res=success'
+Sep 04 03:34:14 ceralive kernel: fdee0000.hdmi_receiver: hdmirx_query_dv_timings: signal is not locked
+Sep 04 03:34:14 ceralive kernel: debugfs: '9163-29' already exists in 'sessions'

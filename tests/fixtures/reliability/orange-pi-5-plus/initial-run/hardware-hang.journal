@@ -1,0 +1,22 @@
+Sep 04 03:34:25 ceralive kernel: debugfs: '9532-31' already exists in 'sessions'
+Sep 04 03:34:26 ceralive kernel: rk_vcodec: mpp_task_timeout_work:711: session 16:104 task 4995 processing time out!
+Sep 04 03:34:26 ceralive kernel: rk_vcodec: task 4995 dump timing at 539478 us:
+Sep 04 03:34:26 ceralive kernel: rk_vcodec: timing: create         : 321195224 us
+Sep 04 03:34:26 ceralive kernel: rk_vcodec: timing: create end     : 676 us
+Sep 04 03:34:26 ceralive kernel: rk_vcodec: timing: pending        : 695 us
+Sep 04 03:34:26 ceralive kernel: rk_vcodec: timing: run            : 766 us
+Sep 04 03:34:26 ceralive kernel: rk_vcodec: timing: timeout start  : 1213 us
+Sep 04 03:34:26 ceralive kernel: rk_vcodec: timing: run end        : 1217 us
+Sep 04 03:34:26 ceralive kernel: rk_vcodec: timing: irq            : invalid
+Sep 04 03:34:26 ceralive kernel: rk_vcodec: timing: timeout cancel : invalid
+Sep 04 03:34:26 ceralive kernel: rk_vcodec: timing: finish         : invalid
+Sep 04 03:34:26 ceralive kernel: mpp_rkvenc2 fdbd0000.rkvenc-core: resetting...
+Sep 04 03:34:26 ceralive kernel: mpp_rkvenc2 fdbd0000.rkvenc-core: reset done
+Sep 04 03:34:26 ceralive kernel: mpp_rkvenc2 fdbd0000.rkvenc-core: found error status 00000100
+Sep 04 03:34:26 ceralive kernel: mpp_rkvenc2 fdbd0000.rkvenc-core: resetting...
+Sep 04 03:34:26 ceralive kernel: mpp_rkvenc2 fdbd0000.rkvenc-core: reset done
+Sep 04 03:34:26 ceralive kernel: audit: type=1701 audit(1788492866.284:235): auid=1000 uid=0 gid=0 ses=10 pid=9532 comm="mpp_h264e_9532" exe="/usr/bin/gst-launch-1.0" sig=6 res=1
+Sep 04 03:34:29 ceralive kernel: fdee0000.hdmi_receiver: hdmirx_query_dv_timings: port has no link
+Sep 04 03:34:34 ceralive kernel: fdee0000.hdmi_receiver: hdmirx_query_dv_timings: signal is not locked
+Sep 04 03:34:35 ceralive kernel: debugfs: '9763-32' already exists in 'sessions'
+Sep 04 03:34:35 ceralive kernel: debugfs: '9764-33' already exists in 'sessions'
