@@ -4,6 +4,7 @@ menuconfig ROCKCHIP_MULTI_RGA
 	depends on ARCH_ROCKCHIP && ROCKCHIP_IOMMU
 	default m
 	select SYNC_FILE
+	select WANT_DEV_COREDUMP
 	help
 	  multi_rga module.
 

@@ -513,6 +513,7 @@ jobs:
             drivers/video/rockchip/mpp/media_request_size.h \
             drivers/video/rockchip/mpp/media_map.h \
             drivers/video/rockchip/mpp/media_fault.h \
+            drivers/video/rockchip/mpp/media_dump.h \
             drivers/video/rockchip/mpp/mpp_rkvenc_test.h \
             drivers/video/rockchip/mpp/mpp_capabilities.h \
             drivers/video/rockchip/mpp/mpp_dma_policy.h \

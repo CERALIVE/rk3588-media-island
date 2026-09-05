@@ -100,6 +100,26 @@ static u64 rga_telemetry_record_busy(struct rga_scheduler_t *scheduler,
 	return busy_ns;
 }
 
+static void rga_dump_job(struct rga_scheduler_t *scheduler, struct rga_job *job)
+{
+	struct media_dump_record record = { .core = scheduler->core };
+	u32 i;
+
+	if (job) {
+		record.task = job->request_id;
+		record.status = job->intr_status;
+		if (job->cmd_buf) {
+			record.iova = job->cmd_buf->dma_addr;
+			record.span = job->cmd_buf->size;
+		}
+	}
+	media_dump_event(&scheduler->dump, MEDIA_FAULT, record.task, record.status);
+	record.reg_count = MEDIA_DUMP_REGS;
+	for (i = 0; i < record.reg_count; i++)
+		record.regs[i] = rga_read(i * 4, scheduler);
+	media_dump_capture(&scheduler->dump, &record);
+}
+
 void rga_telemetry_reset(struct rga_scheduler_t *scheduler, int reason,
 			 void (*reset)(struct rga_scheduler_t *scheduler))
 {
@@ -108,6 +128,9 @@ void rga_telemetry_reset(struct rga_scheduler_t *scheduler, int reason,
 
 	atomic64_inc(&scheduler->telemetry.resets);
 	trace_rga_reset(scheduler->core, reason);
+	if (scheduler->running_job)
+		rga_dump_job(scheduler, scheduler->running_job);
+	media_dump_event(&scheduler->dump, MEDIA_RESET, 0, reason);
 	reset(scheduler);
 }
 
@@ -263,6 +286,7 @@ static int rga_job_run(struct rga_job *job, struct rga_scheduler_t *scheduler)
 	set_bit(RGA_JOB_STATE_RUNNING, &job->state);
 	job->telemetry_start = ktime_get();
 	trace_rga_job_started(scheduler->core, job->request_id);
+	media_dump_event(&scheduler->dump, MEDIA_STARTED, job->request_id, 0);
 
 	return ret;
 }
@@ -361,7 +385,8 @@ struct rga_job *rga_job_done(struct rga_scheduler_t *scheduler)
 
 		if (job->ret || test_bit(RGA_JOB_STATE_INTR_ERR, &job->state))
 			atomic64_inc(&scheduler->telemetry.errors);
-		trace_rga_job_done(scheduler->core, job->request_id, busy_ns);
+	trace_rga_job_done(scheduler->core, job->request_id, busy_ns);
+	media_dump_event(&scheduler->dump, MEDIA_DONE, job->request_id, 0);
 	}
 	job->session->last_active = job->timestamp.hw_done;
 	set_bit(RGA_JOB_STATE_DONE, &job->state);
@@ -437,6 +462,7 @@ static void rga_job_scheduler_timeout_clean(struct rga_scheduler_t *scheduler)
 		rga_telemetry_record_busy(scheduler, job, false);
 		atomic64_inc(&scheduler->telemetry.errors);
 		trace_rga_job_timeout(scheduler->core, job->request_id);
+		rga_dump_job(scheduler, job);
 
 		scheduler->running_job = NULL;
 		scheduler->status = RGA_SCHEDULER_ABORT;

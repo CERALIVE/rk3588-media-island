@@ -5,23 +5,24 @@ Subject: [PATCH 1/9] video: rockchip: add the CeraLive RK3588 media island
 
 The Rockchip MPP service with its three compiled clients (RKVENC2, RKVDEC2, JPGDEC), the multi_rga 2D engine driver, and the UAPI headers they publish.
 
-81 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
+82 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
 
 GENERATED from the rk3588-media-island source tree by scripts/build-series.py. The source is the truth and this series is its output; per-file provenance is docs/PROVENANCE.md and the originating commits' Origin: trailers, never this mailbox header.
 
 ---
 diff --git a/drivers/video/rockchip/mpp/Kconfig b/drivers/video/rockchip/mpp/Kconfig
 new file mode 100644
-index 0000000000000000000000000000000000000000..dc4a33d225be028dc683be794bc6683986c2b23f
+index 0000000000000000000000000000000000000000..4ac5a09510b25ead79b348f192c67cf72100851d
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/Kconfig
-@@ -0,0 +1,127 @@
+@@ -0,0 +1,128 @@
 +# SPDX-License-Identifier: GPL-2.0
 +config ROCKCHIP_MPP_SERVICE
 +	tristate "Rockchip MPP service framework"
 +	depends on ARCH_ROCKCHIP && ROCKCHIP_IOMMU
 +	default m
 +	select DMA_SHARED_BUFFER
++	select WANT_DEV_COREDUMP
 +	help
 +	  Rockchip Media Process Platform service framework. Provides the
 +	  /dev/mpp_service character device and the shared task, IOMMU, clock,
@@ -2008,6 +2009,140 @@ index 0000000000000000000000000000000000000000..a200d63a678877fb2faab04e15bcf558
 +
 +	rkvdec2_3568_hack_link[125] = iova + PAGE_SIZE;
 +}
+diff --git a/drivers/video/rockchip/mpp/media_dump.h b/drivers/video/rockchip/mpp/media_dump.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..e0a2946fded2cfcb588a38c39a8415039e109281
+--- /dev/null
++++ b/drivers/video/rockchip/mpp/media_dump.h
+@@ -0,0 +1,128 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef ROCKCHIP_MEDIA_DUMP_H
++#define ROCKCHIP_MEDIA_DUMP_H
++
++#include <linux/devcoredump.h>
++#include <linux/ktime.h>
++#include <linux/spinlock.h>
++#include <linux/workqueue.h>
++
++#define MEDIA_DUMP_BYTES 4096
++#define MEDIA_DUMP_EVENTS 8
++#define MEDIA_DUMP_REGS 16
++
++enum media_dump_event {
++	MEDIA_STARTED = 1,
++	MEDIA_DONE,
++	MEDIA_FAULT,
++	MEDIA_RESET,
++};
++
++struct media_dump_event_record {
++	u64 ns;
++	u32 event, task, status;
++};
++
++struct media_dump_record {
++	u32 task, core, status, reg_base, reg_count;
++	u64 iova, span;
++	u32 regs[MEDIA_DUMP_REGS];
++	struct media_dump_event_record events[MEDIA_DUMP_EVENTS];
++};
++
++struct media_dump {
++	struct device *dev;
++	spinlock_t lock;
++	struct work_struct work;
++	atomic_t queued;
++	u32 next;
++	struct media_dump_event_record events[MEDIA_DUMP_EVENTS];
++	struct media_dump_record pending;
++};
++
++static inline void media_dump_submit(struct device *dev, void **owned, size_t len)
++{
++	void *data = *owned;
++
++	*owned = NULL;
++	dev_coredumpv(dev, data, len, GFP_KERNEL);
++}
++
++static inline size_t media_dump_format(char *data, const struct media_dump_record *r)
++{
++	size_t n;
++	unsigned int i;
++
++	n = scnprintf(data, MEDIA_DUMP_BYTES,
++		"media-island snapshot v1\ntask=%u core=%u status=%#x\niova=%#llx span=%#llx\n",
++		r->task, r->core, r->status, r->iova, r->span);
++	for (i = 0; i < min_t(u32, r->reg_count, MEDIA_DUMP_REGS); i++)
++		n += scnprintf(data + n, MEDIA_DUMP_BYTES - n, "reg[%#x]=%#x\n",
++			       r->reg_base + i * 4, r->regs[i]);
++	for (i = 0; i < MEDIA_DUMP_EVENTS; i++)
++		n += scnprintf(data + n, MEDIA_DUMP_BYTES - n,
++			       "event=%u task=%u status=%#x ns=%llu\n",
++			       r->events[i].event, r->events[i].task,
++			       r->events[i].status, r->events[i].ns);
++	return n;
++}
++
++static inline void media_dump_work(struct work_struct *work)
++{
++	struct media_dump *dump = container_of(work, struct media_dump, work);
++	void *owned = vzalloc(MEDIA_DUMP_BYTES);
++
++	/* queued excludes writers until submission has relinquished the buffer. */
++	if (owned)
++		media_dump_submit(dump->dev, &owned,
++				  media_dump_format(owned, &dump->pending));
++	atomic_set_release(&dump->queued, 0);
++}
++
++static inline void media_dump_cancel(void *data)
++{
++	struct media_dump *dump = data;
++
++	cancel_work_sync(&dump->work);
++}
++
++static inline int media_dump_init(struct media_dump *dump, struct device *dev)
++{
++	dump->dev = dev;
++	spin_lock_init(&dump->lock);
++	atomic_set(&dump->queued, 0);
++	INIT_WORK(&dump->work, media_dump_work);
++	return devm_add_action_or_reset(dev, media_dump_cancel, dump);
++}
++
++static inline void media_dump_event(struct media_dump *dump, u32 event,
++				    u32 task, u32 status)
++{
++	unsigned long flags;
++	struct media_dump_event_record *record;
++
++	spin_lock_irqsave(&dump->lock, flags);
++	record = &dump->events[dump->next++ % MEDIA_DUMP_EVENTS];
++	*record = (struct media_dump_event_record) {
++		.ns = ktime_get_ns(), .event = event, .task = task, .status = status,
++	};
++	spin_unlock_irqrestore(&dump->lock, flags);
++}
++
++static inline void media_dump_capture(struct media_dump *dump,
++				      const struct media_dump_record *record)
++{
++	unsigned long flags;
++	unsigned int i;
++
++	if (atomic_cmpxchg_acquire(&dump->queued, 0, 1))
++		return;
++	spin_lock_irqsave(&dump->lock, flags);
++	dump->pending = *record;
++	for (i = 0; i < MEDIA_DUMP_EVENTS; i++)
++		dump->pending.events[i] = dump->events[(dump->next + i) % MEDIA_DUMP_EVENTS];
++	spin_unlock_irqrestore(&dump->lock, flags);
++	schedule_work(&dump->work);
++}
++
++#endif
 diff --git a/drivers/video/rockchip/mpp/media_fault.h b/drivers/video/rockchip/mpp/media_fault.h
 new file mode 100644
 index 0000000000000000000000000000000000000000..4642718e050a6052c7bb37fb6c78e027b2459774
@@ -3311,10 +3446,10 @@ index 0000000000000000000000000000000000000000..3ebeecc5719d09a0ff436a9d035d6cf9
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_common.c b/drivers/video/rockchip/mpp/mpp_common.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..7528a226229dd63bec51c1d1af8532a2c94d6280
+index 0000000000000000000000000000000000000000..fd45ee9f3568b1374949a7036cc05b7cdafe1433
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_common.c
-@@ -0,0 +1,3417 @@
+@@ -0,0 +1,3446 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -3467,9 +3602,30 @@ index 0000000000000000000000000000000000000000..7528a226229dd63bec51c1d1af8532a2
 +{
 +	if (!mpp_telemetry_mark_once(&task->state, TASK_STATE_ERROR_REPORTED))
 +		return;
-+
 +	atomic64_inc(&mpp->telemetry.errors);
 +	trace_mpp_task_error(mpp->core_id, task->task_id, irq_status);
++	media_dump_event(&mpp->dump, MEDIA_FAULT, task->task_id, irq_status);
++}
++
++static void mpp_dump_task(struct mpp_dev *mpp, struct mpp_task *task, u32 irq_status)
++{
++	struct media_dump_record record = {
++		.task = task->task_id, .core = mpp->core_id, .status = irq_status,
++	};
++	const struct mpp_hw_info *hw = mpp->var->hw_info;
++	u32 i;
++
++	if (!list_empty(&task->mem_region_list)) {
++		struct mpp_mem_region *mem = list_first_entry(&task->mem_region_list,
++							    struct mpp_mem_region, reg_link);
++		record.iova = mem->iova;
++		record.span = mem->len;
++	}
++	record.reg_base = hw->reg_start * 4;
++	record.reg_count = min_t(u32, hw->reg_end - hw->reg_start + 1, MEDIA_DUMP_REGS);
++	for (i = 0; i < record.reg_count; i++)
++		record.regs[i] = mpp_read_relaxed(mpp, record.reg_base + i * 4);
++	media_dump_capture(&mpp->dump, &record);
 +}
 +
 +static int
@@ -4031,6 +4187,7 @@ index 0000000000000000000000000000000000000000..7528a226229dd63bec51c1d1af8532a2
 +
 +	mpp_task_dump_timing(task, ktime_us_delta(ktime_get(), task->on_create));
 +	mpp_telemetry_task_error(mpp, task, task->irq_status);
++	mpp_dump_task(mpp, task, task->irq_status);
 +
 +	enable_irq(mpp->irq);
 +	mpp_taskqueue_trigger_work(mpp);
@@ -4202,6 +4359,7 @@ index 0000000000000000000000000000000000000000..7528a226229dd63bec51c1d1af8532a2
 +	mpp_reset_down_write(mpp->reset_group);
 +	atomic64_inc(&mpp->telemetry.resets);
 +	trace_mpp_reset(mpp->core_id, reason);
++	media_dump_event(&mpp->dump, MEDIA_RESET, 0, reason);
 +
 +	if (mpp->hw_ops->reset)
 +		reset_ret = mpp->hw_ops->reset(mpp);
@@ -4401,6 +4559,7 @@ index 0000000000000000000000000000000000000000..7528a226229dd63bec51c1d1af8532a2
 +	set_bit(TASK_STATE_BUSY_REPORTED, &task->state);
 +	atomic_inc(&mpp->telemetry.busy);
 +	trace_mpp_task_started(mpp->core_id, task->task_id);
++	media_dump_event(&mpp->dump, MEDIA_STARTED, task->task_id, 0);
 +	/* Fault admission is live before a pending codec completion can run. */
 +	enable_irq(mpp->irq);
 +
@@ -5998,12 +6157,14 @@ index 0000000000000000000000000000000000000000..7528a226229dd63bec51c1d1af8532a2
 +		atomic64_add(busy_ns, &mpp->telemetry.busy_ns);
 +		atomic64_inc(&mpp->telemetry.tasks);
 +		trace_mpp_task_done(mpp->core_id, task->task_id, busy_ns);
++		media_dump_event(&mpp->dump, MEDIA_DONE, task->task_id, 0);
 +	}
 +	if (test_and_clear_bit(TASK_STATE_BUSY_REPORTED, &task->state))
 +		atomic_dec(&mpp->telemetry.busy);
 +
 +	mpp_reset_up_read(mpp->reset_group);
 +	if (atomic_read(&mpp->reset_request) > 0) {
++		mpp_dump_task(mpp, task, task->irq_status);
 +		reset_ret = mpp_dev_reset(mpp);
 +		if (reset_ret) {
 +			mpp_fault(mpp, "reset recovery failed: %d\n", reset_ret);
@@ -6166,6 +6327,9 @@ index 0000000000000000000000000000000000000000..7528a226229dd63bec51c1d1af8532a2
 +
 +	mpp->dev = dev;
 +	media_fault_init(&mpp->fault_limit);
++	ret = media_dump_init(&mpp->dump, dev);
++	if (ret)
++		return ret;
 +	mpp->hw_ops = mpp->var->hw_ops;
 +	mpp->dev_ops = mpp->var->dev_ops;
 +	ret = dma_set_mask_and_coherent(dev,
@@ -6734,10 +6898,10 @@ index 0000000000000000000000000000000000000000..7528a226229dd63bec51c1d1af8532a2
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_common.h b/drivers/video/rockchip/mpp/mpp_common.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..c7bb36ed3339d752601627102257da27eeb1a36c
+index 0000000000000000000000000000000000000000..3594eff875abaea0b615d1d7bf9e90977e8d5ec8
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_common.h
-@@ -0,0 +1,898 @@
+@@ -0,0 +1,900 @@
 +/* SPDX-License-Identifier: (GPL-2.0+ OR MIT) */
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -6770,6 +6934,7 @@ index 0000000000000000000000000000000000000000..c7bb36ed3339d752601627102257da27
 +#include "compat/rockchip_pmu_idle.h"
 +#include "mpp_recovery_state.h"
 +#include "media_fault.h"
++#include "media_dump.h"
 +#include <uapi/linux/rk-mpp.h>
 +
 +#define MHZ				(1000 * 1000)
@@ -7038,6 +7203,7 @@ index 0000000000000000000000000000000000000000..c7bb36ed3339d752601627102257da27
 +struct mpp_dev {
 +	struct device *dev;
 +	struct ratelimit_state fault_limit;
++	struct media_dump dump;
 +	const struct mpp_dev_var *var;
 +	struct mpp_hw_ops *hw_ops;
 +	struct mpp_dev_ops *dev_ops;
@@ -32068,16 +32234,17 @@ index 0000000000000000000000000000000000000000..784781726ea0b8779dcbdef6441cf561
 +#endif
 diff --git a/drivers/video/rockchip/rga3/Kconfig b/drivers/video/rockchip/rga3/Kconfig
 new file mode 100644
-index 0000000000000000000000000000000000000000..aff932c94292105a8025e0c45018f936250747f8
+index 0000000000000000000000000000000000000000..340a462bd7c6490359d13468c826615413f7cb6d
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/Kconfig
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,64 @@
 +# SPDX-License-Identifier: GPL-2.0
 +menuconfig ROCKCHIP_MULTI_RGA
 +	tristate "MULTI_RGA"
 +	depends on ARCH_ROCKCHIP && ROCKCHIP_IOMMU
 +	default m
 +	select SYNC_FILE
++	select WANT_DEV_COREDUMP
 +	help
 +	  multi_rga module.
 +
@@ -34701,10 +34868,10 @@ index 0000000000000000000000000000000000000000..b9fcfa507997d60325220f6edb59a73d
 +#endif
 diff --git a/drivers/video/rockchip/rga3/include/rga_drv.h b/drivers/video/rockchip/rga3/include/rga_drv.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..07a5786bda3cd1e96e7905f98aa45efab7902069
+index 0000000000000000000000000000000000000000..e40e6687ad0d7f5372b0cf81079559aabf2cf44f
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/include/rga_drv.h
-@@ -0,0 +1,606 @@
+@@ -0,0 +1,608 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -34754,6 +34921,7 @@ index 0000000000000000000000000000000000000000..07a5786bda3cd1e96e7905f98aa45efa
 +#include <linux/sizes.h>
 +#include <linux/string_helpers.h>
 +#include "../../mpp/media_fault.h"
++#include "../../mpp/media_dump.h"
 +
 +#include <asm/cacheflush.h>
 +
@@ -35135,6 +35303,7 @@ index 0000000000000000000000000000000000000000..07a5786bda3cd1e96e7905f98aa45efa
 +struct rga_scheduler_t {
 +	struct device *dev;
 +	struct ratelimit_state fault_limit;
++	struct media_dump dump;
 +	void __iomem *rga_base;
 +	struct rga_iommu_info *iommu_info;
 +
@@ -45111,7 +45280,7 @@ index 0000000000000000000000000000000000000000..2eabff20024a5b2cea7138a428b2daf7
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_drv.c b/drivers/video/rockchip/rga3/rga_drv.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..938ea8a4a877395afea8b8f6e6e0cf75300b75b8
+index 0000000000000000000000000000000000000000..ca82e552aaf7e1bd6d7531644b58a85afe0455ac
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_drv.c
 @@ -0,0 +1,2011 @@
@@ -46692,7 +46861,7 @@ index 0000000000000000000000000000000000000000..938ea8a4a877395afea8b8f6e6e0cf75
 +	atomic64_set(&scheduler->telemetry.errors, 0);
 +	atomic64_set(&scheduler->telemetry.resets, 0);
 +
-+	return 0;
++	return media_dump_init(&scheduler->dump, dev);
 +}
 +
 +static int rga_drv_probe(struct platform_device *pdev)
@@ -48603,10 +48772,10 @@ index 0000000000000000000000000000000000000000..aeace228cdddeaed86017ed0dca1d8c1
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_job.c b/drivers/video/rockchip/rga3/rga_job.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..f50b9f4c55be5fde73d02e62859c1029d00d4424
+index 0000000000000000000000000000000000000000..5dba1afdbc00f678cbd2f8e82d9f477522748c6e
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_job.c
-@@ -0,0 +1,2046 @@
+@@ -0,0 +1,2072 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -48709,6 +48878,26 @@ index 0000000000000000000000000000000000000000..f50b9f4c55be5fde73d02e62859c1029
 +	return busy_ns;
 +}
 +
++static void rga_dump_job(struct rga_scheduler_t *scheduler, struct rga_job *job)
++{
++	struct media_dump_record record = { .core = scheduler->core };
++	u32 i;
++
++	if (job) {
++		record.task = job->request_id;
++		record.status = job->intr_status;
++		if (job->cmd_buf) {
++			record.iova = job->cmd_buf->dma_addr;
++			record.span = job->cmd_buf->size;
++		}
++	}
++	media_dump_event(&scheduler->dump, MEDIA_FAULT, record.task, record.status);
++	record.reg_count = MEDIA_DUMP_REGS;
++	for (i = 0; i < record.reg_count; i++)
++		record.regs[i] = rga_read(i * 4, scheduler);
++	media_dump_capture(&scheduler->dump, &record);
++}
++
 +void rga_telemetry_reset(struct rga_scheduler_t *scheduler, int reason,
 +			 void (*reset)(struct rga_scheduler_t *scheduler))
 +{
@@ -48717,6 +48906,9 @@ index 0000000000000000000000000000000000000000..f50b9f4c55be5fde73d02e62859c1029
 +
 +	atomic64_inc(&scheduler->telemetry.resets);
 +	trace_rga_reset(scheduler->core, reason);
++	if (scheduler->running_job)
++		rga_dump_job(scheduler, scheduler->running_job);
++	media_dump_event(&scheduler->dump, MEDIA_RESET, 0, reason);
 +	reset(scheduler);
 +}
 +
@@ -48872,6 +49064,7 @@ index 0000000000000000000000000000000000000000..f50b9f4c55be5fde73d02e62859c1029
 +	set_bit(RGA_JOB_STATE_RUNNING, &job->state);
 +	job->telemetry_start = ktime_get();
 +	trace_rga_job_started(scheduler->core, job->request_id);
++	media_dump_event(&scheduler->dump, MEDIA_STARTED, job->request_id, 0);
 +
 +	return ret;
 +}
@@ -48970,7 +49163,8 @@ index 0000000000000000000000000000000000000000..f50b9f4c55be5fde73d02e62859c1029
 +
 +		if (job->ret || test_bit(RGA_JOB_STATE_INTR_ERR, &job->state))
 +			atomic64_inc(&scheduler->telemetry.errors);
-+		trace_rga_job_done(scheduler->core, job->request_id, busy_ns);
++	trace_rga_job_done(scheduler->core, job->request_id, busy_ns);
++	media_dump_event(&scheduler->dump, MEDIA_DONE, job->request_id, 0);
 +	}
 +	job->session->last_active = job->timestamp.hw_done;
 +	set_bit(RGA_JOB_STATE_DONE, &job->state);
@@ -49046,6 +49240,7 @@ index 0000000000000000000000000000000000000000..f50b9f4c55be5fde73d02e62859c1029
 +		rga_telemetry_record_busy(scheduler, job, false);
 +		atomic64_inc(&scheduler->telemetry.errors);
 +		trace_rga_job_timeout(scheduler->core, job->request_id);
++		rga_dump_job(scheduler, job);
 +
 +		scheduler->running_job = NULL;
 +		scheduler->status = RGA_SCHEDULER_ABORT;

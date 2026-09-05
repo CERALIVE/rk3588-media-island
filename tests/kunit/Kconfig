@@ -10,6 +10,7 @@ config ROCKCHIP_MPP_BOUNDARY_KUNIT_TEST
 config ROCKCHIP_MPP_FAULT_KUNIT_TEST
 	tristate "Rockchip MPP fault-injection tests"
 	depends on KUNIT
+	select WANT_DEV_COREDUMP
 	default KUNIT_ALL_TESTS
 	help
 	  Exercise the atomic one-shot semantics used by the opt-in RKVENC2

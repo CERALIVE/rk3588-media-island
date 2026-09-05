@@ -30,6 +30,7 @@
 #include "compat/rockchip_pmu_idle.h"
 #include "mpp_recovery_state.h"
 #include "media_fault.h"
+#include "media_dump.h"
 #include <uapi/linux/rk-mpp.h>
 
 #define MHZ				(1000 * 1000)
@@ -298,6 +299,7 @@ struct mpp_session_telemetry {
 struct mpp_dev {
 	struct device *dev;
 	struct ratelimit_state fault_limit;
+	struct media_dump dump;
 	const struct mpp_dev_var *var;
 	struct mpp_hw_ops *hw_ops;
 	struct mpp_dev_ops *dev_ops;

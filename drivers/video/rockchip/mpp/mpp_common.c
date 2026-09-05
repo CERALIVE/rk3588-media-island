@@ -150,9 +150,30 @@ static void mpp_telemetry_task_error(struct mpp_dev *mpp,
 {
 	if (!mpp_telemetry_mark_once(&task->state, TASK_STATE_ERROR_REPORTED))
 		return;
-
 	atomic64_inc(&mpp->telemetry.errors);
 	trace_mpp_task_error(mpp->core_id, task->task_id, irq_status);
+	media_dump_event(&mpp->dump, MEDIA_FAULT, task->task_id, irq_status);
+}
+
+static void mpp_dump_task(struct mpp_dev *mpp, struct mpp_task *task, u32 irq_status)
+{
+	struct media_dump_record record = {
+		.task = task->task_id, .core = mpp->core_id, .status = irq_status,
+	};
+	const struct mpp_hw_info *hw = mpp->var->hw_info;
+	u32 i;
+
+	if (!list_empty(&task->mem_region_list)) {
+		struct mpp_mem_region *mem = list_first_entry(&task->mem_region_list,
+							    struct mpp_mem_region, reg_link);
+		record.iova = mem->iova;
+		record.span = mem->len;
+	}
+	record.reg_base = hw->reg_start * 4;
+	record.reg_count = min_t(u32, hw->reg_end - hw->reg_start + 1, MEDIA_DUMP_REGS);
+	for (i = 0; i < record.reg_count; i++)
+		record.regs[i] = mpp_read_relaxed(mpp, record.reg_base + i * 4);
+	media_dump_capture(&mpp->dump, &record);
 }
 
 static int
@@ -714,6 +735,7 @@ static void mpp_task_timeout_work(struct work_struct *work_s)
 
 	mpp_task_dump_timing(task, ktime_us_delta(ktime_get(), task->on_create));
 	mpp_telemetry_task_error(mpp, task, task->irq_status);
+	mpp_dump_task(mpp, task, task->irq_status);
 
 	enable_irq(mpp->irq);
 	mpp_taskqueue_trigger_work(mpp);
@@ -885,6 +907,7 @@ int mpp_dev_reset(struct mpp_dev *mpp)
 	mpp_reset_down_write(mpp->reset_group);
 	atomic64_inc(&mpp->telemetry.resets);
 	trace_mpp_reset(mpp->core_id, reason);
+	media_dump_event(&mpp->dump, MEDIA_RESET, 0, reason);
 
 	if (mpp->hw_ops->reset)
 		reset_ret = mpp->hw_ops->reset(mpp);
@@ -1084,6 +1107,7 @@ static int mpp_task_run(struct mpp_dev *mpp,
 	set_bit(TASK_STATE_BUSY_REPORTED, &task->state);
 	atomic_inc(&mpp->telemetry.busy);
 	trace_mpp_task_started(mpp->core_id, task->task_id);
+	media_dump_event(&mpp->dump, MEDIA_STARTED, task->task_id, 0);
 	/* Fault admission is live before a pending codec completion can run. */
 	enable_irq(mpp->irq);
 
@@ -2681,12 +2705,14 @@ int mpp_task_finish(struct mpp_session *session,
 		atomic64_add(busy_ns, &mpp->telemetry.busy_ns);
 		atomic64_inc(&mpp->telemetry.tasks);
 		trace_mpp_task_done(mpp->core_id, task->task_id, busy_ns);
+		media_dump_event(&mpp->dump, MEDIA_DONE, task->task_id, 0);
 	}
 	if (test_and_clear_bit(TASK_STATE_BUSY_REPORTED, &task->state))
 		atomic_dec(&mpp->telemetry.busy);
 
 	mpp_reset_up_read(mpp->reset_group);
 	if (atomic_read(&mpp->reset_request) > 0) {
+		mpp_dump_task(mpp, task, task->irq_status);
 		reset_ret = mpp_dev_reset(mpp);
 		if (reset_ret) {
 			mpp_fault(mpp, "reset recovery failed: %d\n", reset_ret);
@@ -2849,6 +2875,9 @@ int mpp_dev_probe(struct mpp_dev *mpp,
 
 	mpp->dev = dev;
 	media_fault_init(&mpp->fault_limit);
+	ret = media_dump_init(&mpp->dump, dev);
+	if (ret)
+		return ret;
 	mpp->hw_ops = mpp->var->hw_ops;
 	mpp->dev_ops = mpp->var->dev_ops;
 	ret = dma_set_mask_and_coherent(dev,

@@ -1575,7 +1575,7 @@ scheduler_ready:
 	atomic64_set(&scheduler->telemetry.errors, 0);
 	atomic64_set(&scheduler->telemetry.resets, 0);
 
-	return 0;
+	return media_dump_init(&scheduler->dump, dev);
 }
 
 static int rga_drv_probe(struct platform_device *pdev)

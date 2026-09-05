@@ -7,7 +7,7 @@ drills, not part of this source series.
 | Item | Source status | Proof |
 |---|---|---|
 | (a) Fault logging | Shared per-device budget on the common MPP, selected-client IRQ/reset, and RGA fault paths | `media_fault_storm_test`: 1,000 direct log calls admit 10 lines in the five-second burst window; UML 57/57. Probe diagnostics are not rate limited |
-| (b) Wedge snapshots | Pending | Pending |
+| (b) Wedge snapshots | ≤4 KiB text snapshots, IRQ-safe capture and deferred vzalloc/submission; last eight lifecycle events | `media_dump_submission_owns_buffer_test` uses CONFIG_DEV_COREDUMP=y, checks task=42 in formatted data, a real sysfs devcoredump link, and no retained buffer pointer after submission; UML 58/58 |
 | (c) Recovery epochs / bulk resets | Pending | Pending |
 | (d) Deferred resource diagnostics | Pending | Pending |
 | (e) Request sizing | Checked multiplication; variable-sized RGA request/pool/job arrays use kvzalloc with kvfree on every exit | `media_request_size_rejects_overflow_test`: SIZE_MAX / sizeof(u64) + 1 returns -EINVAL and clears the size; 64 KiB boundary accepted. UML: 55/55 passed |
@@ -30,6 +30,26 @@ the DMA allocator (vmalloc memory cannot replace coherent device memory); their
 nested products use `array_size`. No ioctl values or public structures changed.
 
 ## Mapping ownership
+
+## Wedge evidence and image requirement
+
+MPP task errors (including IRQ timeout and reset-after-fault) and RGA timeout/
+reset paths copy status/config registers, task/core identity, one active IOVA
+window and an eight-event lifecycle ring before reset can erase the registers.
+MPP names the first task memory window; RGA names the command-buffer window.
+The snapshot worker owns no task or DMA-buffer pointer. It allocates with
+`vzalloc`; the core owns that allocation after `dev_coredumpv` returns. Device
+teardown cancels the worker before freeing the embedded state.
+
+Both driver Kconfigs select `WANT_DEV_COREDUMP`. The image-side kernel fragment
+must include **CONFIG_DEV_COREDUMP=y** (with ALLOW_DEV_COREDUMP enabled) when this
+series is adopted through the consumer's island lane. No image repository is
+changed here. KUnit explicitly enables the real implementation rather than its
+vfree-only stub.
+
+The live timeout → `/sys/class/devcoredump/devcd*/data` → five-minute kernel
+expiry drill is **deferred until a modified kernel is deployed**. UML tests
+submission/ownership and the sysfs link, not the board timeout or expiry timer.
 
 RGA staging retains its RAM-only map as an `iosys_map`; exporter maps use the
 reservation-locking `_unlocked` dma-buf wrappers. Debug reads and image dumps use
