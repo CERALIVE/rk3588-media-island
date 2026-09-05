@@ -5,7 +5,7 @@ Subject: [PATCH 1/9] video: rockchip: add the CeraLive RK3588 media island
 
 The Rockchip MPP service with its three compiled clients (RKVENC2, RKVDEC2, JPGDEC), the multi_rga 2D engine driver, and the UAPI headers they publish.
 
-83 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
+84 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
 
 GENERATED from the rk3588-media-island source tree by scripts/build-series.py. The source is the truth and this series is its output; per-file provenance is docs/PROVENANCE.md and the originating commits' Origin: trailers, never this mailbox header.
 
@@ -2210,6 +2210,24 @@ index 0000000000000000000000000000000000000000..8d8b1de0c733e4089d3a3b6bd4f3e37e
 +}
 +
 +#endif
+diff --git a/drivers/video/rockchip/mpp/media_probe.h b/drivers/video/rockchip/mpp/media_probe.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..a7f719438c906151df2b8ee56840ba9cac6b34d9
+--- /dev/null
++++ b/drivers/video/rockchip/mpp/media_probe.h
+@@ -0,0 +1,12 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef ROCKCHIP_MEDIA_PROBE_H
++#define ROCKCHIP_MEDIA_PROBE_H
++
++#include <linux/device.h>
++
++static inline int media_probe_error(struct device *dev, int error, const char *resource)
++{
++	return dev_err_probe(dev, error, "failed to acquire %s\n", resource);
++}
++
++#endif
 diff --git a/drivers/video/rockchip/mpp/media_recovery.h b/drivers/video/rockchip/mpp/media_recovery.h
 new file mode 100644
 index 0000000000000000000000000000000000000000..80c8d4faabfa00dfdf3dc83d464e2021c7ad9ad1
@@ -3537,10 +3555,10 @@ index 0000000000000000000000000000000000000000..3ebeecc5719d09a0ff436a9d035d6cf9
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_common.c b/drivers/video/rockchip/mpp/mpp_common.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..32ba96ea183d1c4bf02e57a75b885455f68b70dd
+index 0000000000000000000000000000000000000000..59369964fe7f4c777fa8723822e025ae71525fea
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_common.c
-@@ -0,0 +1,3459 @@
+@@ -0,0 +1,3467 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -4404,8 +4422,10 @@ index 0000000000000000000000000000000000000000..32ba96ea183d1c4bf02e57a75b885455
 +	rst = group->resets[type];
 +	if (!rst) {
 +		rst = devm_reset_control_get(mpp->dev, shared_name);
-+		if (IS_ERR(rst))
++		if (IS_ERR(rst)) {
++			media_probe_error(mpp->dev, PTR_ERR(rst), shared_name);
 +			goto out_unlock;
++		}
 +		ret = mpp_safe_unreset(rst);
 +		if (ret) {
 +			rst = ERR_PTR(ret);
@@ -6478,8 +6498,7 @@ index 0000000000000000000000000000000000000000..32ba96ea183d1c4bf02e57a75b885455
 +	pm_runtime_enable(dev);
 +	mpp->irq = platform_get_irq(pdev, 0);
 +	if (mpp->irq < 0) {
-+		dev_err(dev, "No interrupt resource found\n");
-+		ret = -ENODEV;
++		ret = media_probe_error(dev, mpp->irq, "interrupts[0]");
 +		goto failed;
 +	}
 +
@@ -6508,7 +6527,7 @@ index 0000000000000000000000000000000000000000..32ba96ea183d1c4bf02e57a75b885455
 +	mpp->iommu_info = mpp_iommu_probe(dev);
 +	if (IS_ERR(mpp->iommu_info)) {
 +		ret = PTR_ERR(mpp->iommu_info);
-+		dev_err(dev, "failed to attach iommu: %d\n", ret);
++		media_probe_error(dev, ret, "iommus");
 +		mpp->iommu_info = NULL;
 +		goto failed;
 +	} else {
@@ -6525,13 +6544,13 @@ index 0000000000000000000000000000000000000000..32ba96ea183d1c4bf02e57a75b885455
 +	if (hw_info->reg_id >= 0) {
 +		ret = pm_runtime_resume_and_get(dev);
 +		if (ret) {
-+			dev_err(dev, "pm_runtime_resume_and_get failed: %d\n", ret);
++			media_probe_error(dev, ret, "power-domains");
 +			goto failed;
 +		}
 +		if (mpp->hw_ops->clk_on) {
 +			ret = mpp->hw_ops->clk_on(mpp);
 +			if (ret) {
-+				dev_err(dev, "clk_on failed: %d\n", ret);
++				media_probe_error(dev, ret, "codec clocks (enable)");
 +				pm_runtime_put_sync_suspend(dev);
 +				goto failed;
 +			}
@@ -6819,15 +6838,14 @@ index 0000000000000000000000000000000000000000..32ba96ea183d1c4bf02e57a75b885455
 +					     "clock-names", name);
 +
 +	if (index < 0)
-+		return -EINVAL;
++		return media_probe_error(mpp->dev, -EINVAL, name);
 +
 +	clk_info->clk = devm_clk_get(mpp->dev, name);
 +	if (IS_ERR(clk_info->clk)) {
 +		int ret = PTR_ERR(clk_info->clk);
 +
 +		clk_info->clk = NULL;
-+		return dev_err_probe(mpp->dev, ret,
-+				     "failed to get %s clock\n", name);
++		return media_probe_error(mpp->dev, ret, name);
 +	}
 +	of_property_read_u32_index(mpp->dev->of_node,
 +				   "rockchip,normal-rates",
@@ -6839,6 +6857,14 @@ index 0000000000000000000000000000000000000000..32ba96ea183d1c4bf02e57a75b885455
 +				   &clk_info->advanced_rate_hz);
 +
 +	return 0;
++}
++
++int mpp_get_optional_clk_info(struct mpp_dev *mpp, struct mpp_clk_info *info,
++			      const char *name)
++{
++	if (of_property_match_string(mpp->dev->of_node, "clock-names", name) < 0)
++		return 0;
++	return mpp_get_clk_info(mpp, info, name);
 +}
 +
 +int mpp_set_clk_info_rate_hz(struct mpp_clk_info *clk_info,
@@ -7002,10 +7028,10 @@ index 0000000000000000000000000000000000000000..32ba96ea183d1c4bf02e57a75b885455
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_common.h b/drivers/video/rockchip/mpp/mpp_common.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..f6607a90a6d185ea40f678caadba1c7a0a9befe3
+index 0000000000000000000000000000000000000000..6365cd7b8311d8b777f9e92119d59d857b678263
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_common.h
-@@ -0,0 +1,905 @@
+@@ -0,0 +1,911 @@
 +/* SPDX-License-Identifier: (GPL-2.0+ OR MIT) */
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -7040,7 +7066,13 @@ index 0000000000000000000000000000000000000000..f6607a90a6d185ea40f678caadba1c7a
 +#include "media_fault.h"
 +#include "media_dump.h"
 +#include "media_recovery.h"
++#include "media_probe.h"
 +#include <uapi/linux/rk-mpp.h>
++
++struct mpp_dev;
++struct mpp_clk_info;
++int mpp_get_optional_clk_info(struct mpp_dev *mpp, struct mpp_clk_info *info,
++			      const char *name);
 +
 +#define MHZ				(1000 * 1000)
 +#define MPP_WORK_TIMEOUT_DELAY		(500)
@@ -9532,10 +9564,10 @@ index 0000000000000000000000000000000000000000..97f3d74b127425838f2efa61e2cd7db6
 +EXPORT_SYMBOL(rockchip_iep2_driver);
 diff --git a/drivers/video/rockchip/mpp/mpp_iommu.c b/drivers/video/rockchip/mpp/mpp_iommu.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..a35b92d93276de5e38d55f2ad99589989763d31e
+index 0000000000000000000000000000000000000000..6d2a054c66d9cced1598f9e12ab7d1bee78c6072
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_iommu.c
-@@ -0,0 +1,1469 @@
+@@ -0,0 +1,1472 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -10526,15 +10558,14 @@ index 0000000000000000000000000000000000000000..a35b92d93276de5e38d55f2ad9958998
 +#endif
 +	np = of_parse_phandle(dev->of_node, "iommus", 0);
 +	if (!np || !of_device_is_available(np)) {
-+		mpp_err("failed to get device node\n");
-+		return ERR_PTR(-ENODEV);
++		of_node_put(np);
++		return ERR_PTR(media_probe_error(dev, -ENODEV, "iommus phandle"));
 +	}
 +
 +	pdev = of_find_device_by_node(np);
 +	of_node_put(np);
 +	if (!pdev) {
-+		mpp_err("failed to get platform device\n");
-+		return ERR_PTR(-ENODEV);
++		return ERR_PTR(media_probe_error(dev, -EPROBE_DEFER, "iommus provider"));
 +	}
 +
 +	group = iommu_group_get(dev);
@@ -10580,6 +10611,10 @@ index 0000000000000000000000000000000000000000..a35b92d93276de5e38d55f2ad9958998
 +	info->default_domain = domain;
 +	info->dev_active = NULL;
 +	info->irq = platform_get_irq(pdev, 0);
++	if (info->irq == -EPROBE_DEFER) {
++		ret = media_probe_error(dev, info->irq, "iommus provider interrupt");
++		goto err_put_group;
++	}
 +	info->got_irq = (info->irq < 0) ? false : true;
 +
 +	/* get shared flag, if true detach */
@@ -11279,7 +11314,7 @@ index 0000000000000000000000000000000000000000..c4f661cb313b82975cce93e705158f13
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_jpgdec.c b/drivers/video/rockchip/mpp/mpp_jpgdec.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..b3f25abe318430d3f49e152a1d02d8c382f53b64
+index 0000000000000000000000000000000000000000..18b8e823d81ef0a74d48c38e86cc44ff58e580a3
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_jpgdec.c
 @@ -0,0 +1,675 @@
@@ -11720,12 +11755,12 @@ index 0000000000000000000000000000000000000000..b3f25abe318430d3f49e152a1d02d8c3
 +	struct jpgdec_dev *dec = to_jpgdec_dev(mpp);
 +
 +	/* Get clock info from dtsi */
-+	ret = mpp_get_clk_info(mpp, &dec->aclk_info, "aclk_vcodec");
++	ret = mpp_get_optional_clk_info(mpp, &dec->aclk_info, "aclk_vcodec");
 +	if (ret)
-+		mpp_err("failed on clk_get aclk_vcodec\n");
-+	ret = mpp_get_clk_info(mpp, &dec->hclk_info, "hclk_vcodec");
++		return ret;
++	ret = mpp_get_optional_clk_info(mpp, &dec->hclk_info, "hclk_vcodec");
 +	if (ret)
-+		mpp_err("failed on clk_get hclk_vcodec\n");
++		return ret;
 +	/* Set default rates */
 +	mpp_set_clk_info_rate_hz(&dec->aclk_info, CLK_MODE_DEFAULT, 300 * MHZ);
 +
@@ -14859,10 +14894,10 @@ index 0000000000000000000000000000000000000000..f02af64d28642a6231668ad5f8dfb280
 +EXPORT_SYMBOL(rockchip_rkvdec_driver);
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvdec2.c b/drivers/video/rockchip/mpp/mpp_rkvdec2.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..27e3df01614e3778afadae1ab0a4d6ba4efe1ccc
+index 0000000000000000000000000000000000000000..2e978f856fc5d7e2173c889c60a3285fb143b2c0
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvdec2.c
-@@ -0,0 +1,2338 @@
+@@ -0,0 +1,2340 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2020 Rockchip Electronics Co., Ltd.
@@ -16089,21 +16124,21 @@ index 0000000000000000000000000000000000000000..27e3df01614e3778afadae1ab0a4d6ba
 +	mpp->grf_info = &mpp->srv->grf_infos[MPP_DRIVER_RKVDEC];
 +
 +	/* Get clock info from dtsi */
-+	ret = mpp_get_clk_info(mpp, &dec->aclk_info, "aclk_vcodec");
++	ret = mpp_get_optional_clk_info(mpp, &dec->aclk_info, "aclk_vcodec");
 +	if (ret)
-+		mpp_err("failed on clk_get aclk_vcodec\n");
-+	ret = mpp_get_clk_info(mpp, &dec->hclk_info, "hclk_vcodec");
++		return ret;
++	ret = mpp_get_optional_clk_info(mpp, &dec->hclk_info, "hclk_vcodec");
 +	if (ret)
-+		mpp_err("failed on clk_get hclk_vcodec\n");
-+	ret = mpp_get_clk_info(mpp, &dec->core_clk_info, "clk_core");
++		return ret;
++	ret = mpp_get_optional_clk_info(mpp, &dec->core_clk_info, "clk_core");
 +	if (ret)
-+		mpp_err("failed on clk_get clk_core\n");
-+	ret = mpp_get_clk_info(mpp, &dec->cabac_clk_info, "clk_cabac");
++		return ret;
++	ret = mpp_get_optional_clk_info(mpp, &dec->cabac_clk_info, "clk_cabac");
 +	if (ret)
-+		mpp_err("failed on clk_get clk_cabac\n");
-+	ret = mpp_get_clk_info(mpp, &dec->hevc_cabac_clk_info, "clk_hevc_cabac");
++		return ret;
++	ret = mpp_get_optional_clk_info(mpp, &dec->hevc_cabac_clk_info, "clk_hevc_cabac");
 +	if (ret)
-+		mpp_err("failed on clk_get clk_hevc_cabac\n");
++		return ret;
 +	/* Set default rates */
 +	mpp_set_clk_info_rate_hz(&dec->aclk_info, CLK_MODE_DEFAULT, 300 * MHZ);
 +	mpp_set_clk_info_rate_hz(&dec->core_clk_info, CLK_MODE_DEFAULT, 200 * MHZ);
@@ -16682,10 +16717,12 @@ index 0000000000000000000000000000000000000000..27e3df01614e3778afadae1ab0a4d6ba
 +	}
 +
 +	ccu->aclk_info.clk = devm_clk_get(dev, "aclk_ccu");
-+	if (!ccu->aclk_info.clk)
-+		mpp_err("failed on clk_get ccu aclk\n");
++	if (IS_ERR(ccu->aclk_info.clk))
++		return media_probe_error(dev, PTR_ERR(ccu->aclk_info.clk), "aclk_ccu");
 +
 +	ccu->rst_a = devm_reset_control_get(dev, "video_ccu");
++	if (IS_ERR(ccu->rst_a))
++		return media_probe_error(dev, PTR_ERR(ccu->rst_a), "video_ccu");
 +	if (ccu->rst_a)
 +		mpp_safe_unreset(ccu->rst_a);
 +	else
@@ -34982,10 +35019,10 @@ index 0000000000000000000000000000000000000000..b9fcfa507997d60325220f6edb59a73d
 +#endif
 diff --git a/drivers/video/rockchip/rga3/include/rga_drv.h b/drivers/video/rockchip/rga3/include/rga_drv.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..19307c2e66d7dfc411488432530ef479d30c6b43
+index 0000000000000000000000000000000000000000..148f07b694a877afa6aab8602a036824f18ef7f4
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/include/rga_drv.h
-@@ -0,0 +1,611 @@
+@@ -0,0 +1,612 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -35037,6 +35074,7 @@ index 0000000000000000000000000000000000000000..19307c2e66d7dfc411488432530ef479
 +#include "../../mpp/media_fault.h"
 +#include "../../mpp/media_dump.h"
 +#include "../../mpp/media_recovery.h"
++#include "../../mpp/media_probe.h"
 +
 +#include <asm/cacheflush.h>
 +
@@ -45407,10 +45445,10 @@ index 0000000000000000000000000000000000000000..2eabff20024a5b2cea7138a428b2daf7
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_drv.c b/drivers/video/rockchip/rga3/rga_drv.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..467c345cabf0ea0736123891401349cee1505d88
+index 0000000000000000000000000000000000000000..049fc0a8eadfcd2252dd57ee17fe2c813232f5c5
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_drv.c
-@@ -0,0 +1,2015 @@
+@@ -0,0 +1,2013 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -47063,8 +47101,7 @@ index 0000000000000000000000000000000000000000..467c345cabf0ea0736123891401349ce
 +	/* there are irq names in dts */
 +	irq = platform_get_irq(pdev, 0);
 +	if (irq < 0) {
-+		dev_err(dev, "no irq in dts\n");
-+		return irq;
++		return media_probe_error(dev, irq, "interrupts[0]");
 +	}
 +
 +	scheduler->irq = irq;
@@ -47084,8 +47121,7 @@ index 0000000000000000000000000000000000000000..467c345cabf0ea0736123891401349ce
 +	/* clk init */
 +	ret = devm_clk_bulk_get_all(dev, &scheduler->clks);
 +	if (ret < 1) {
-+		dev_err(dev, "failed to get clk\n");
-+		return ret < 0 ? ret : -EINVAL;
++		return media_probe_error(dev, ret < 0 ? ret : -EINVAL, "clocks");
 +	}
 +	scheduler->num_clks = ret;
 +
@@ -47095,13 +47131,13 @@ index 0000000000000000000000000000000000000000..467c345cabf0ea0736123891401349ce
 +
 +	ret = pm_runtime_resume_and_get(scheduler->dev);
 +	if (ret < 0) {
-+		dev_err(dev, "failed to get pm runtime, ret = %d\n", ret);
++		media_probe_error(dev, ret, "power-domains");
 +		goto pm_disable;
 +	}
 +
 +	ret = clk_bulk_prepare_enable(scheduler->num_clks, scheduler->clks);
 +	if (ret < 0) {
-+		dev_err(dev, "failed to enable clk\n");
++		media_probe_error(dev, ret, "clocks (enable)");
 +		goto pm_put;
 +	}
 +#endif /* #ifndef RGA_DISABLE_PM */
@@ -47156,7 +47192,7 @@ index 0000000000000000000000000000000000000000..467c345cabf0ea0736123891401349ce
 +		scheduler->iommu_info = rga_iommu_probe(dev);
 +		if (IS_ERR(scheduler->iommu_info)) {
 +			ret = PTR_ERR(scheduler->iommu_info);
-+			dev_err(dev, "failed to attach iommu: %d\n", ret);
++			media_probe_error(dev, ret, "iommus");
 +			scheduler->iommu_info = NULL;
 +			goto err_disable_pm;
 +		}

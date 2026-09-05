@@ -49,6 +49,7 @@
 #include "../../mpp/media_fault.h"
 #include "../../mpp/media_dump.h"
 #include "../../mpp/media_recovery.h"
+#include "../../mpp/media_probe.h"
 
 #include <asm/cacheflush.h>
 

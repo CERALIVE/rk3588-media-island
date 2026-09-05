@@ -435,12 +435,12 @@ static int jpgdec_init(struct mpp_dev *mpp)
 	struct jpgdec_dev *dec = to_jpgdec_dev(mpp);
 
 	/* Get clock info from dtsi */
-	ret = mpp_get_clk_info(mpp, &dec->aclk_info, "aclk_vcodec");
+	ret = mpp_get_optional_clk_info(mpp, &dec->aclk_info, "aclk_vcodec");
 	if (ret)
-		mpp_err("failed on clk_get aclk_vcodec\n");
-	ret = mpp_get_clk_info(mpp, &dec->hclk_info, "hclk_vcodec");
+		return ret;
+	ret = mpp_get_optional_clk_info(mpp, &dec->hclk_info, "hclk_vcodec");
 	if (ret)
-		mpp_err("failed on clk_get hclk_vcodec\n");
+		return ret;
 	/* Set default rates */
 	mpp_set_clk_info_rate_hz(&dec->aclk_info, CLK_MODE_DEFAULT, 300 * MHZ);
 

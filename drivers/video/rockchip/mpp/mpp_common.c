@@ -861,8 +861,10 @@ mpp_reset_control_get(struct mpp_dev *mpp, enum MPP_RESET_TYPE type, const char 
 	rst = group->resets[type];
 	if (!rst) {
 		rst = devm_reset_control_get(mpp->dev, shared_name);
-		if (IS_ERR(rst))
+		if (IS_ERR(rst)) {
+			media_probe_error(mpp->dev, PTR_ERR(rst), shared_name);
 			goto out_unlock;
+		}
 		ret = mpp_safe_unreset(rst);
 		if (ret) {
 			rst = ERR_PTR(ret);
@@ -2935,8 +2937,7 @@ int mpp_dev_probe(struct mpp_dev *mpp,
 	pm_runtime_enable(dev);
 	mpp->irq = platform_get_irq(pdev, 0);
 	if (mpp->irq < 0) {
-		dev_err(dev, "No interrupt resource found\n");
-		ret = -ENODEV;
+		ret = media_probe_error(dev, mpp->irq, "interrupts[0]");
 		goto failed;
 	}
 
@@ -2965,7 +2966,7 @@ int mpp_dev_probe(struct mpp_dev *mpp,
 	mpp->iommu_info = mpp_iommu_probe(dev);
 	if (IS_ERR(mpp->iommu_info)) {
 		ret = PTR_ERR(mpp->iommu_info);
-		dev_err(dev, "failed to attach iommu: %d\n", ret);
+		media_probe_error(dev, ret, "iommus");
 		mpp->iommu_info = NULL;
 		goto failed;
 	} else {
@@ -2982,13 +2983,13 @@ int mpp_dev_probe(struct mpp_dev *mpp,
 	if (hw_info->reg_id >= 0) {
 		ret = pm_runtime_resume_and_get(dev);
 		if (ret) {
-			dev_err(dev, "pm_runtime_resume_and_get failed: %d\n", ret);
+			media_probe_error(dev, ret, "power-domains");
 			goto failed;
 		}
 		if (mpp->hw_ops->clk_on) {
 			ret = mpp->hw_ops->clk_on(mpp);
 			if (ret) {
-				dev_err(dev, "clk_on failed: %d\n", ret);
+				media_probe_error(dev, ret, "codec clocks (enable)");
 				pm_runtime_put_sync_suspend(dev);
 				goto failed;
 			}
@@ -3276,15 +3277,14 @@ int mpp_get_clk_info(struct mpp_dev *mpp,
 					     "clock-names", name);
 
 	if (index < 0)
-		return -EINVAL;
+		return media_probe_error(mpp->dev, -EINVAL, name);
 
 	clk_info->clk = devm_clk_get(mpp->dev, name);
 	if (IS_ERR(clk_info->clk)) {
 		int ret = PTR_ERR(clk_info->clk);
 
 		clk_info->clk = NULL;
-		return dev_err_probe(mpp->dev, ret,
-				     "failed to get %s clock\n", name);
+		return media_probe_error(mpp->dev, ret, name);
 	}
 	of_property_read_u32_index(mpp->dev->of_node,
 				   "rockchip,normal-rates",
@@ -3296,6 +3296,14 @@ int mpp_get_clk_info(struct mpp_dev *mpp,
 				   &clk_info->advanced_rate_hz);
 
 	return 0;
+}
+
+int mpp_get_optional_clk_info(struct mpp_dev *mpp, struct mpp_clk_info *info,
+			      const char *name)
+{
+	if (of_property_match_string(mpp->dev->of_node, "clock-names", name) < 0)
+		return 0;
+	return mpp_get_clk_info(mpp, info, name);
 }
 
 int mpp_set_clk_info_rate_hz(struct mpp_clk_info *clk_info,

@@ -1650,8 +1650,7 @@ static int rga_drv_probe(struct platform_device *pdev)
 	/* there are irq names in dts */
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0) {
-		dev_err(dev, "no irq in dts\n");
-		return irq;
+		return media_probe_error(dev, irq, "interrupts[0]");
 	}
 
 	scheduler->irq = irq;
@@ -1671,8 +1670,7 @@ static int rga_drv_probe(struct platform_device *pdev)
 	/* clk init */
 	ret = devm_clk_bulk_get_all(dev, &scheduler->clks);
 	if (ret < 1) {
-		dev_err(dev, "failed to get clk\n");
-		return ret < 0 ? ret : -EINVAL;
+		return media_probe_error(dev, ret < 0 ? ret : -EINVAL, "clocks");
 	}
 	scheduler->num_clks = ret;
 
@@ -1682,13 +1680,13 @@ static int rga_drv_probe(struct platform_device *pdev)
 
 	ret = pm_runtime_resume_and_get(scheduler->dev);
 	if (ret < 0) {
-		dev_err(dev, "failed to get pm runtime, ret = %d\n", ret);
+		media_probe_error(dev, ret, "power-domains");
 		goto pm_disable;
 	}
 
 	ret = clk_bulk_prepare_enable(scheduler->num_clks, scheduler->clks);
 	if (ret < 0) {
-		dev_err(dev, "failed to enable clk\n");
+		media_probe_error(dev, ret, "clocks (enable)");
 		goto pm_put;
 	}
 #endif /* #ifndef RGA_DISABLE_PM */
@@ -1743,7 +1741,7 @@ static int rga_drv_probe(struct platform_device *pdev)
 		scheduler->iommu_info = rga_iommu_probe(dev);
 		if (IS_ERR(scheduler->iommu_info)) {
 			ret = PTR_ERR(scheduler->iommu_info);
-			dev_err(dev, "failed to attach iommu: %d\n", ret);
+			media_probe_error(dev, ret, "iommus");
 			scheduler->iommu_info = NULL;
 			goto err_disable_pm;
 		}

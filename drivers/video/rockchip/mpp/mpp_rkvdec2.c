@@ -1224,21 +1224,21 @@ static int rkvdec2_init(struct mpp_dev *mpp)
 	mpp->grf_info = &mpp->srv->grf_infos[MPP_DRIVER_RKVDEC];
 
 	/* Get clock info from dtsi */
-	ret = mpp_get_clk_info(mpp, &dec->aclk_info, "aclk_vcodec");
+	ret = mpp_get_optional_clk_info(mpp, &dec->aclk_info, "aclk_vcodec");
 	if (ret)
-		mpp_err("failed on clk_get aclk_vcodec\n");
-	ret = mpp_get_clk_info(mpp, &dec->hclk_info, "hclk_vcodec");
+		return ret;
+	ret = mpp_get_optional_clk_info(mpp, &dec->hclk_info, "hclk_vcodec");
 	if (ret)
-		mpp_err("failed on clk_get hclk_vcodec\n");
-	ret = mpp_get_clk_info(mpp, &dec->core_clk_info, "clk_core");
+		return ret;
+	ret = mpp_get_optional_clk_info(mpp, &dec->core_clk_info, "clk_core");
 	if (ret)
-		mpp_err("failed on clk_get clk_core\n");
-	ret = mpp_get_clk_info(mpp, &dec->cabac_clk_info, "clk_cabac");
+		return ret;
+	ret = mpp_get_optional_clk_info(mpp, &dec->cabac_clk_info, "clk_cabac");
 	if (ret)
-		mpp_err("failed on clk_get clk_cabac\n");
-	ret = mpp_get_clk_info(mpp, &dec->hevc_cabac_clk_info, "clk_hevc_cabac");
+		return ret;
+	ret = mpp_get_optional_clk_info(mpp, &dec->hevc_cabac_clk_info, "clk_hevc_cabac");
 	if (ret)
-		mpp_err("failed on clk_get clk_hevc_cabac\n");
+		return ret;
 	/* Set default rates */
 	mpp_set_clk_info_rate_hz(&dec->aclk_info, CLK_MODE_DEFAULT, 300 * MHZ);
 	mpp_set_clk_info_rate_hz(&dec->core_clk_info, CLK_MODE_DEFAULT, 200 * MHZ);
@@ -1817,10 +1817,12 @@ static int rkvdec2_ccu_probe(struct platform_device *pdev)
 	}
 
 	ccu->aclk_info.clk = devm_clk_get(dev, "aclk_ccu");
-	if (!ccu->aclk_info.clk)
-		mpp_err("failed on clk_get ccu aclk\n");
+	if (IS_ERR(ccu->aclk_info.clk))
+		return media_probe_error(dev, PTR_ERR(ccu->aclk_info.clk), "aclk_ccu");
 
 	ccu->rst_a = devm_reset_control_get(dev, "video_ccu");
+	if (IS_ERR(ccu->rst_a))
+		return media_probe_error(dev, PTR_ERR(ccu->rst_a), "video_ccu");
 	if (ccu->rst_a)
 		mpp_safe_unreset(ccu->rst_a);
 	else

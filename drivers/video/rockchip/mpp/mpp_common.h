@@ -32,7 +32,13 @@
 #include "media_fault.h"
 #include "media_dump.h"
 #include "media_recovery.h"
+#include "media_probe.h"
 #include <uapi/linux/rk-mpp.h>
+
+struct mpp_dev;
+struct mpp_clk_info;
+int mpp_get_optional_clk_info(struct mpp_dev *mpp, struct mpp_clk_info *info,
+			      const char *name);
 
 #define MHZ				(1000 * 1000)
 #define MPP_WORK_TIMEOUT_DELAY		(500)

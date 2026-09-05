@@ -5,6 +5,8 @@
 #include "../mpp/mpp_rkvenc_test.h"
 #include "../mpp/media_fault.h"
 #include "../mpp/media_dump.h"
+#include "../mpp/media_probe.h"
+#include "../../../base/base.h"
 
 static void mpp_fault_flag_is_one_shot_test(struct kunit *test)
 {
@@ -70,7 +72,22 @@ static void media_dump_submission_owns_buffer_test(struct kunit *test)
 	dev_coredump_put(dev);
 }
 
+static void media_probe_names_deferred_resource_test(struct kunit *test)
+{
+	struct device *dev = kunit_device_register(test, "media-probe-kunit");
+
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, dev);
+	KUNIT_EXPECT_EQ(test, media_probe_error(dev, -EPROBE_DEFER, "iommus provider"),
+			-EPROBE_DEFER);
+	KUNIT_ASSERT_NOT_NULL(test, dev->p->deferred_probe_reason);
+	KUNIT_EXPECT_NOT_NULL(test, strstr(dev->p->deferred_probe_reason, "iommus provider"));
+	KUNIT_EXPECT_EQ(test, media_probe_error(dev, -EPROBE_DEFER, "aclk_vcodec"),
+			-EPROBE_DEFER);
+	KUNIT_EXPECT_NOT_NULL(test, strstr(dev->p->deferred_probe_reason, "aclk_vcodec"));
+}
+
 static struct kunit_case mpp_fault_injection_cases[] = {
+	KUNIT_CASE(media_probe_names_deferred_resource_test),
 	KUNIT_CASE(media_dump_submission_owns_buffer_test),
 	KUNIT_CASE(media_fault_storm_test),
 	KUNIT_CASE(mpp_fault_flag_is_one_shot_test),

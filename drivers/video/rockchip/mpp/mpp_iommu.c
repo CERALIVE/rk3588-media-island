@@ -988,15 +988,14 @@ mpp_iommu_probe(struct device *dev)
 #endif
 	np = of_parse_phandle(dev->of_node, "iommus", 0);
 	if (!np || !of_device_is_available(np)) {
-		mpp_err("failed to get device node\n");
-		return ERR_PTR(-ENODEV);
+		of_node_put(np);
+		return ERR_PTR(media_probe_error(dev, -ENODEV, "iommus phandle"));
 	}
 
 	pdev = of_find_device_by_node(np);
 	of_node_put(np);
 	if (!pdev) {
-		mpp_err("failed to get platform device\n");
-		return ERR_PTR(-ENODEV);
+		return ERR_PTR(media_probe_error(dev, -EPROBE_DEFER, "iommus provider"));
 	}
 
 	group = iommu_group_get(dev);
@@ -1042,6 +1041,10 @@ mpp_iommu_probe(struct device *dev)
 	info->default_domain = domain;
 	info->dev_active = NULL;
 	info->irq = platform_get_irq(pdev, 0);
+	if (info->irq == -EPROBE_DEFER) {
+		ret = media_probe_error(dev, info->irq, "iommus provider interrupt");
+		goto err_put_group;
+	}
 	info->got_irq = (info->irq < 0) ? false : true;
 
 	/* get shared flag, if true detach */

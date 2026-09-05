@@ -515,6 +515,7 @@ jobs:
             drivers/video/rockchip/mpp/media_fault.h \
             drivers/video/rockchip/mpp/media_dump.h \
             drivers/video/rockchip/mpp/media_recovery.h \
+            drivers/video/rockchip/mpp/media_probe.h \
             drivers/video/rockchip/mpp/mpp_rkvenc_test.h \
             drivers/video/rockchip/mpp/mpp_capabilities.h \
             drivers/video/rockchip/mpp/mpp_dma_policy.h \
