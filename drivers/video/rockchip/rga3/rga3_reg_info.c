@@ -1791,12 +1791,12 @@ static void rga3_soft_reset(struct rga_scheduler_t *scheduler)
 	}
 
 	if (i == RGA_RESET_TIMEOUT)
-		rga_err("%s[%#x] soft reset timeout. SYS_CTRL[0x%x], RO_SRST[0x%x]\n",
+		rga_fault(scheduler, "%s[%#x] soft reset timeout. SYS_CTRL[0x%x], RO_SRST[0x%x]\n",
 			rga_get_core_name(scheduler->core), scheduler->core,
 			rga_read(RGA3_SYS_CTRL, scheduler),
 			rga_read(RGA3_RO_SRST, scheduler));
 	else
-		rga_log("%s[%#x] soft reset complete.\n",
+		rga_fault(scheduler, "%s[%#x] soft reset complete.\n",
 			rga_get_core_name(scheduler->core), scheduler->core);
 }
 
@@ -2287,7 +2287,7 @@ static int rga3_irq(struct rga_scheduler_t *scheduler)
 
 	if (job == NULL) {
 		rga3_clear_intr(scheduler);
-		rga_err("core[%d], invalid job, INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x]\n",
+		rga_fault(scheduler, "core[%d], invalid job, INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x]\n",
 			scheduler->core, rga_read(RGA3_INT_RAW, scheduler),
 			rga_read(RGA3_STATUS0, scheduler), rga_read(RGA3_CMD_STATE, scheduler));
 
@@ -2315,7 +2315,7 @@ static int rga3_irq(struct rga_scheduler_t *scheduler)
 		set_bit(RGA_JOB_STATE_INTR_ERR, &job->state);
 		job->finished_count = cmd_cur_num > 0 ? cmd_cur_num - 1 : 0;
 
-		rga_job_err(job, "irq handler err! INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x]\n",
+		rga_job_fault(job, "irq handler err! INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x]\n",
 		       job->intr_status, job->hw_status, job->cmd_status);
 
 		rga_telemetry_reset(scheduler, -EIO,
@@ -2363,21 +2363,21 @@ static int rga3_isr_thread(struct rga_job *job, struct rga_scheduler_t *schedule
 
 	if (test_bit(RGA_JOB_STATE_INTR_ERR, &job->state)) {
 		if (job->intr_status & m_RGA3_INT_RAG_MI_RD_BUS_ERR) {
-			rga_job_err(job, "DMA read bus error, please check size of the input_buffer or whether the buffer has been freed.\n");
+			rga_job_fault(job, "DMA read bus error, please check size of the input_buffer or whether the buffer has been freed.\n");
 			job->ret = -EFAULT;
 		} else if (job->intr_status & m_RGA3_INT_WIN0_FBCD_DEC_ERR) {
-			rga_job_err(job, "win0 FBC decoder error, please check the fbc image of the source.\n");
+			rga_job_fault(job, "win0 FBC decoder error, please check the fbc image of the source.\n");
 			job->ret = -EFAULT;
 		} else if (job->intr_status & m_RGA3_INT_WIN1_FBCD_DEC_ERR) {
-			rga_job_err(job, "win1 FBC decoder error, please check the fbc image of the source.\n");
+			rga_job_fault(job, "win1 FBC decoder error, please check the fbc image of the source.\n");
 			job->ret = -EFAULT;
 		} else if (job->intr_status & m_RGA3_INT_RGA_MI_WR_BUS_ERR) {
-			rga_job_err(job, "wr buss error, please check size of the output_buffer or whether the buffer has been freed.\n");
+			rga_job_fault(job, "wr buss error, please check size of the output_buffer or whether the buffer has been freed.\n");
 			job->ret = -EFAULT;
 		}
 
 		if (job->ret == 0) {
-			rga_job_err(job, "rga intr error[0x%x]!\n", job->intr_status);
+			rga_job_fault(job, "rga intr error[0x%x]!\n", job->intr_status);
 			job->ret = -EFAULT;
 		}
 	}

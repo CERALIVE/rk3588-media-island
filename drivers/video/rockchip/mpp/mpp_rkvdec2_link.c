@@ -1075,7 +1075,7 @@ static void rkvdec2_link_timeout_proc(struct work_struct *work_s)
 	dec = to_rkvdec2_dev(mpp);
 	atomic_inc(&dec->link_dec->task_timeout);
 
-	dev_err(mpp->dev, "session %d task %d state %#lx timeout, cnt %d\n",
+	mpp_fault(mpp, "session %d task %d state %#lx timeout, cnt %d\n",
 		session->index, task->task_index, task->state,
 		atomic_read(&dec->link_dec->task_timeout));
 
@@ -1101,13 +1101,11 @@ static int rkvdec2_link_iommu_fault_handle(struct iommu_domain *iommu,
 	if (mpp)
 		rockchip_iommu_mask_irq(mpp->dev);
 
-	dev_err(iommu_dev, "fault addr 0x%08lx status %x arg %p\n",
-		iova, status, arg);
-
 	if (!mpp) {
-		dev_err(iommu_dev, "pagefault without device to handle\n");
+		dev_err_ratelimited(iommu_dev, "pagefault without device to handle\n");
 		return 0;
 	}
+	mpp_fault(mpp, "fault addr 0x%08lx status %x arg %p\n", iova, status, arg);
 	queue = mpp->queue;
 	spin_lock_irqsave(&queue->running_lock, flags);
 	list_for_each_entry_safe(mpp_task, n, &queue->running_list, queue_link) {

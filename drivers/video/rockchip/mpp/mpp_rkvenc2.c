@@ -1996,7 +1996,7 @@ static int rkvenc_irq(struct mpp_dev *mpp)
 	if (irq_status & INT_STA_ERROR) {
 		mpp->irq_status = irq_status;
 
-		dev_err(mpp->dev, "found error status %08x\n", irq_status);
+		mpp_fault(mpp, "found error status %08x\n", irq_status);
 
 		ret = IRQ_WAKE_THREAD;
 	}
@@ -2023,7 +2023,7 @@ static int rkvenc_isr(struct mpp_dev *mpp)
 
 	/* FIXME use a spin lock here */
 	if (!mpp->cur_task) {
-		dev_err(mpp->dev, "no current task\n");
+		mpp_fault(mpp, "no current task\n");
 		return IRQ_HANDLED;
 	}
 
@@ -2032,7 +2032,7 @@ static int rkvenc_isr(struct mpp_dev *mpp)
 	mpp->cur_task = NULL;
 
 	if (mpp_task->mpp && mpp_task->mpp != mpp)
-		dev_err(mpp->dev, "mismatch core dev %p:%p\n", mpp_task->mpp, mpp);
+		mpp_fault(mpp, "mismatch core dev %p:%p\n", mpp_task->mpp, mpp);
 
 	task = to_rkvenc_task(mpp_task);
 	task->irq_status = mpp->irq_status;
@@ -2687,7 +2687,7 @@ static int rkvenc_soft_reset(struct mpp_dev *mpp)
 					 rst_status & RKVENC_SCLR_DONE_STA,
 					 0, 1000);
 	if (ret)
-		mpp_err("safe reset failed\n");
+		mpp_fault(mpp, "safe reset failed\n");
 	mpp_write(mpp, hw->enc_clr_base, 0x3);
 	udelay(5);
 	mpp_write(mpp, hw->enc_clr_base, 0);
@@ -2717,7 +2717,7 @@ static int rkvenc_reset(struct mpp_dev *mpp)
 
 	/* cru reset */
 	if (ret && enc->rst_a && enc->rst_h && enc->rst_core) {
-		mpp_err("soft reset timeout, use cru reset\n");
+		mpp_fault(mpp, "soft reset timeout, use cru reset\n");
 		mpp_pmu_idle_request(mpp, true);
 		mpp_safe_reset(enc->rst_a);
 		mpp_safe_reset(enc->rst_h);
@@ -3564,7 +3564,7 @@ static int rkvenc2_iommu_fault_handle(struct iommu_domain *iommu,
 			}
 		}
 		if (!found) {
-			dev_err(mpp->dev, "page fault from unknown RKVENC IOMMU device %s\n",
+			mpp_fault(mpp, "page fault from unknown RKVENC IOMMU device %s\n",
 				dev_name(iommu_dev));
 			rcu_read_unlock();
 			return -ENODEV;
@@ -3578,7 +3578,7 @@ static int rkvenc2_iommu_fault_handle(struct iommu_domain *iommu,
 
 		spin_lock_irqsave(&mpp->queue->running_lock, flags);
 		mpp_task = mpp->cur_task;
-		dev_info(mpp->dev, "core %d page fault found dchs %08x\n",
+		mpp_fault(mpp, "core %d page fault found dchs %08x\n",
 			 mpp->core_id,
 			 mpp_read_relaxed(&fault_enc->mpp, DCHS_REG_OFFSET));
 
@@ -3598,7 +3598,7 @@ static int rkvenc2_iommu_fault_handle(struct iommu_domain *iommu,
 
 	spin_lock_irqsave(&mpp->queue->running_lock, flags);
 	mpp_task = mpp->cur_task;
-	dev_info(mpp->dev, "core %d page fault found dchs %08x\n",
+	mpp_fault(mpp, "core %d page fault found dchs %08x\n",
 		 mpp->core_id, mpp_read_relaxed(&fault_enc->mpp, DCHS_REG_OFFSET));
 
 	if (mpp_task)

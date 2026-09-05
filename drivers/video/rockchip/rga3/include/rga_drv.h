@@ -46,6 +46,7 @@
 #include <linux/sched/mm.h>
 #include <linux/sizes.h>
 #include <linux/string_helpers.h>
+#include "../../mpp/media_fault.h"
 
 #include <asm/cacheflush.h>
 
@@ -426,6 +427,7 @@ struct rga_timer {
 
 struct rga_scheduler_t {
 	struct device *dev;
+	struct ratelimit_state fault_limit;
 	void __iomem *rga_base;
 	struct rga_iommu_info *iommu_info;
 

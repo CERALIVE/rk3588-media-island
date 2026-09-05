@@ -704,12 +704,12 @@ static void mpp_task_timeout_work(struct work_struct *work_s)
 	}
 	disable_irq(mpp->irq);
 	if (!mpp_task_recovery_claim(&task->state, MPP_TASK_RECOVERY_TIMEOUT)) {
-		mpp_err("session %d:%d task %d has been handled\n",
+		mpp_fault(mpp, "session %d:%d task %d has been handled\n",
 			session->device_type, session->index, task->task_index);
 		enable_irq(mpp->irq);
 		return;
 	}
-	mpp_err("session %d:%d task %d processing time out!\n",
+	mpp_fault(mpp, "session %d:%d task %d processing time out!\n",
 		session->device_type, session->index, task->task_index);
 
 	mpp_task_dump_timing(task, ktime_us_delta(ktime_get(), task->on_create));
@@ -864,7 +864,7 @@ int mpp_dev_reset(struct mpp_dev *mpp)
 	if (!reason)
 		return 0;
 
-	dev_info(mpp->dev, "resetting...\n");
+	mpp_fault(mpp, "resetting...\n");
 
 	disable_irq(mpp->irq);
 	if (mpp->iommu_info && mpp->iommu_info->got_irq)
@@ -897,7 +897,7 @@ int mpp_dev_reset(struct mpp_dev *mpp)
 	 */
 	ret = mpp_iommu_refresh(mpp->iommu_info, mpp->dev);
 	if (ret)
-		dev_err(mpp->dev, "failed to refresh iommu: %d\n", ret);
+		mpp_fault(mpp, "failed to refresh iommu: %d\n", ret);
 
 	mpp_reset_up_write(mpp->reset_group);
 	mpp_iommu_up_write(mpp->iommu_info);
@@ -906,7 +906,7 @@ int mpp_dev_reset(struct mpp_dev *mpp)
 	if (mpp->iommu_info && mpp->iommu_info->got_irq)
 		enable_irq(mpp->iommu_info->irq);
 
-	dev_info(mpp->dev, "reset done\n");
+	mpp_fault(mpp, "reset done\n");
 
 	if (reset_ret)
 		return reset_ret;
@@ -2668,7 +2668,7 @@ int mpp_task_finish(struct mpp_session *session,
 	if (mpp->dev_ops->finish)
 		ret = mpp->dev_ops->finish(mpp, task);
 	if (ret) {
-		dev_err(mpp->dev, "task finish failed: %d\n", ret);
+		mpp_fault(mpp, "task finish failed: %d\n", ret);
 		set_bit(TASK_STATE_ABORT, &task->state);
 	}
 	if (ret || atomic_read(&mpp->reset_request) > 0)
@@ -2689,7 +2689,7 @@ int mpp_task_finish(struct mpp_session *session,
 	if (atomic_read(&mpp->reset_request) > 0) {
 		reset_ret = mpp_dev_reset(mpp);
 		if (reset_ret) {
-			dev_err(mpp->dev, "reset recovery failed: %d\n", reset_ret);
+			mpp_fault(mpp, "reset recovery failed: %d\n", reset_ret);
 			set_bit(TASK_STATE_ABORT, &task->state);
 			if (!ret)
 				ret = reset_ret;
@@ -2747,16 +2747,16 @@ int mpp_task_dump_mem_region(struct mpp_dev *mpp,
 	if (!task)
 		return -EIO;
 
-	mpp_err("--- dump task %d mem region ---\n", task->task_index);
+	mpp_fault(mpp, "--- dump task %d mem region ---\n", task->task_index);
 	if (!list_empty(&task->mem_region_list)) {
 		list_for_each_entry_safe(mem, n,
 					 &task->mem_region_list,
 					 reg_link) {
-			mpp_err("reg[%3d]: %pad, size %lx\n",
+			mpp_fault(mpp, "reg[%3d]: %pad, size %lx\n",
 				mem->reg_idx, &mem->iova, mem->len);
 		}
 	} else {
-		dev_err(mpp->dev, "no memory region mapped\n");
+		mpp_fault(mpp, "no memory region mapped\n");
 	}
 
 	return 0;
@@ -2769,7 +2769,7 @@ int mpp_task_dump_reg(struct mpp_dev *mpp,
 		return -EIO;
 
 	if (mpp_debug_unlikely(DEBUG_DUMP_ERR_REG)) {
-		mpp_err("--- dump task register ---\n");
+		mpp_fault(mpp, "--- dump task register ---\n");
 		if (task->reg) {
 			u32 i;
 			u32 s = task->hw_info->reg_start;
@@ -2778,7 +2778,7 @@ int mpp_task_dump_reg(struct mpp_dev *mpp,
 			for (i = s; i <= e; i++) {
 				u32 reg = i * sizeof(u32);
 
-				mpp_err("reg[%03d]: %04x: 0x%08x\n",
+				mpp_fault(mpp, "reg[%03d]: %04x: 0x%08x\n",
 					i, reg, task->reg[i]);
 			}
 		}
@@ -2793,11 +2793,11 @@ int mpp_task_dump_hw_reg(struct mpp_dev *mpp)
 	u32 s = mpp->var->hw_info->reg_start;
 	u32 e = mpp->var->hw_info->reg_end;
 
-	mpp_err("--- dump hardware register ---\n");
+	mpp_fault(mpp, "--- dump hardware register ---\n");
 	for (i = s; i <= e; i++) {
 		u32 reg = i * sizeof(u32);
 
-		mpp_err("reg[%03d]: %04x: 0x%08x\n",
+		mpp_fault(mpp, "reg[%03d]: %04x: 0x%08x\n",
 				i, reg, readl_relaxed(mpp->reg_base + reg));
 	}
 
@@ -2809,7 +2809,7 @@ void mpp_reg_show(struct mpp_dev *mpp, u32 offset)
 	if (!mpp)
 		return;
 
-	dev_err(mpp->dev, "reg[%03d]: %04x: 0x%08x\n",
+	mpp_fault(mpp, "reg[%03d]: %04x: 0x%08x\n",
 		offset >> 2, offset, mpp_read_relaxed(mpp, offset));
 }
 
@@ -2848,6 +2848,7 @@ int mpp_dev_probe(struct mpp_dev *mpp,
 		mpp->task_capacity = 1;
 
 	mpp->dev = dev;
+	media_fault_init(&mpp->fault_limit);
 	mpp->hw_ops = mpp->var->hw_ops;
 	mpp->dev_ops = mpp->var->dev_ops;
 	ret = dma_set_mask_and_coherent(dev,

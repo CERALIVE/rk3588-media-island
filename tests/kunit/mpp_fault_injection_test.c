@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
 #include "../mpp/mpp_rkvenc_test.h"
+#include "../mpp/media_fault.h"
 
 static void mpp_fault_flag_is_one_shot_test(struct kunit *test)
 {
@@ -30,7 +31,21 @@ static void mpp_fault_delay_is_one_shot_test(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, atomic_read(&knob.consumed), 1);
 }
 
+static void media_fault_storm_test(struct kunit *test)
+{
+	struct ratelimit_state state;
+	struct device dev = { .init_name = "media-fault-kunit" };
+	unsigned int emitted = 0;
+	int i;
+
+	media_fault_init(&state);
+	for (i = 0; i < 1000; i++)
+		emitted += media_fault_report(&dev, &state, "injected fault %d\n", i);
+	KUNIT_EXPECT_EQ(test, emitted, 10u);
+}
+
 static struct kunit_case mpp_fault_injection_cases[] = {
+	KUNIT_CASE(media_fault_storm_test),
 	KUNIT_CASE(mpp_fault_flag_is_one_shot_test),
 	KUNIT_CASE(mpp_fault_delay_is_one_shot_test),
 	{}

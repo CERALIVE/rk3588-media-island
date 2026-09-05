@@ -5,7 +5,7 @@ Subject: [PATCH 1/9] video: rockchip: add the CeraLive RK3588 media island
 
 The Rockchip MPP service with its three compiled clients (RKVENC2, RKVDEC2, JPGDEC), the multi_rga 2D engine driver, and the UAPI headers they publish.
 
-80 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
+81 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
 
 GENERATED from the rk3588-media-island source tree by scripts/build-series.py. The source is the truth and this series is its output; per-file provenance is docs/PROVENANCE.md and the originating commits' Origin: trailers, never this mailbox header.
 
@@ -2008,6 +2008,41 @@ index 0000000000000000000000000000000000000000..a200d63a678877fb2faab04e15bcf558
 +
 +	rkvdec2_3568_hack_link[125] = iova + PAGE_SIZE;
 +}
+diff --git a/drivers/video/rockchip/mpp/media_fault.h b/drivers/video/rockchip/mpp/media_fault.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..4642718e050a6052c7bb37fb6c78e027b2459774
+--- /dev/null
++++ b/drivers/video/rockchip/mpp/media_fault.h
+@@ -0,0 +1,29 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef ROCKCHIP_MEDIA_FAULT_H
++#define ROCKCHIP_MEDIA_FAULT_H
++
++#include <linux/device.h>
++#include <linux/ratelimit.h>
++
++static inline void media_fault_init(struct ratelimit_state *state)
++{
++	ratelimit_state_init(state, 5 * HZ, 10);
++	/* Suppression summaries must not bypass the device's line budget. */
++	ratelimit_set_flags(state, RATELIMIT_MSG_ON_RELEASE);
++}
++
++#define media_fault_report(dev, state, fmt, ...) ({ \
++	bool emitted = __ratelimit(state); \
++	if (emitted) \
++		dev_err_ratelimited(dev, fmt, ##__VA_ARGS__); \
++	emitted; \
++})
++
++#define mpp_fault(mpp, fmt, ...) \
++	media_fault_report((mpp)->dev, &(mpp)->fault_limit, fmt, ##__VA_ARGS__)
++#define rga_fault(sched, fmt, ...) \
++	media_fault_report((sched)->dev, &(sched)->fault_limit, fmt, ##__VA_ARGS__)
++#define rga_job_fault(job, fmt, ...) \
++	rga_fault((job)->scheduler, "task %d: " fmt, (job)->request_id, ##__VA_ARGS__)
++
++#endif
 diff --git a/drivers/video/rockchip/mpp/media_map.h b/drivers/video/rockchip/mpp/media_map.h
 new file mode 100644
 index 0000000000000000000000000000000000000000..8d8b1de0c733e4089d3a3b6bd4f3e37e4866fd48
@@ -3276,10 +3311,10 @@ index 0000000000000000000000000000000000000000..3ebeecc5719d09a0ff436a9d035d6cf9
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_common.c b/drivers/video/rockchip/mpp/mpp_common.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..7422052f2a9bc042babed2cd0d47f3bc73c71ea7
+index 0000000000000000000000000000000000000000..7528a226229dd63bec51c1d1af8532a2c94d6280
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_common.c
-@@ -0,0 +1,3416 @@
+@@ -0,0 +1,3417 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -3986,12 +4021,12 @@ index 0000000000000000000000000000000000000000..7422052f2a9bc042babed2cd0d47f3bc
 +	}
 +	disable_irq(mpp->irq);
 +	if (!mpp_task_recovery_claim(&task->state, MPP_TASK_RECOVERY_TIMEOUT)) {
-+		mpp_err("session %d:%d task %d has been handled\n",
++		mpp_fault(mpp, "session %d:%d task %d has been handled\n",
 +			session->device_type, session->index, task->task_index);
 +		enable_irq(mpp->irq);
 +		return;
 +	}
-+	mpp_err("session %d:%d task %d processing time out!\n",
++	mpp_fault(mpp, "session %d:%d task %d processing time out!\n",
 +		session->device_type, session->index, task->task_index);
 +
 +	mpp_task_dump_timing(task, ktime_us_delta(ktime_get(), task->on_create));
@@ -4146,7 +4181,7 @@ index 0000000000000000000000000000000000000000..7422052f2a9bc042babed2cd0d47f3bc
 +	if (!reason)
 +		return 0;
 +
-+	dev_info(mpp->dev, "resetting...\n");
++	mpp_fault(mpp, "resetting...\n");
 +
 +	disable_irq(mpp->irq);
 +	if (mpp->iommu_info && mpp->iommu_info->got_irq)
@@ -4179,7 +4214,7 @@ index 0000000000000000000000000000000000000000..7422052f2a9bc042babed2cd0d47f3bc
 +	 */
 +	ret = mpp_iommu_refresh(mpp->iommu_info, mpp->dev);
 +	if (ret)
-+		dev_err(mpp->dev, "failed to refresh iommu: %d\n", ret);
++		mpp_fault(mpp, "failed to refresh iommu: %d\n", ret);
 +
 +	mpp_reset_up_write(mpp->reset_group);
 +	mpp_iommu_up_write(mpp->iommu_info);
@@ -4188,7 +4223,7 @@ index 0000000000000000000000000000000000000000..7422052f2a9bc042babed2cd0d47f3bc
 +	if (mpp->iommu_info && mpp->iommu_info->got_irq)
 +		enable_irq(mpp->iommu_info->irq);
 +
-+	dev_info(mpp->dev, "reset done\n");
++	mpp_fault(mpp, "reset done\n");
 +
 +	if (reset_ret)
 +		return reset_ret;
@@ -5950,7 +5985,7 @@ index 0000000000000000000000000000000000000000..7422052f2a9bc042babed2cd0d47f3bc
 +	if (mpp->dev_ops->finish)
 +		ret = mpp->dev_ops->finish(mpp, task);
 +	if (ret) {
-+		dev_err(mpp->dev, "task finish failed: %d\n", ret);
++		mpp_fault(mpp, "task finish failed: %d\n", ret);
 +		set_bit(TASK_STATE_ABORT, &task->state);
 +	}
 +	if (ret || atomic_read(&mpp->reset_request) > 0)
@@ -5971,7 +6006,7 @@ index 0000000000000000000000000000000000000000..7422052f2a9bc042babed2cd0d47f3bc
 +	if (atomic_read(&mpp->reset_request) > 0) {
 +		reset_ret = mpp_dev_reset(mpp);
 +		if (reset_ret) {
-+			dev_err(mpp->dev, "reset recovery failed: %d\n", reset_ret);
++			mpp_fault(mpp, "reset recovery failed: %d\n", reset_ret);
 +			set_bit(TASK_STATE_ABORT, &task->state);
 +			if (!ret)
 +				ret = reset_ret;
@@ -6029,16 +6064,16 @@ index 0000000000000000000000000000000000000000..7422052f2a9bc042babed2cd0d47f3bc
 +	if (!task)
 +		return -EIO;
 +
-+	mpp_err("--- dump task %d mem region ---\n", task->task_index);
++	mpp_fault(mpp, "--- dump task %d mem region ---\n", task->task_index);
 +	if (!list_empty(&task->mem_region_list)) {
 +		list_for_each_entry_safe(mem, n,
 +					 &task->mem_region_list,
 +					 reg_link) {
-+			mpp_err("reg[%3d]: %pad, size %lx\n",
++			mpp_fault(mpp, "reg[%3d]: %pad, size %lx\n",
 +				mem->reg_idx, &mem->iova, mem->len);
 +		}
 +	} else {
-+		dev_err(mpp->dev, "no memory region mapped\n");
++		mpp_fault(mpp, "no memory region mapped\n");
 +	}
 +
 +	return 0;
@@ -6051,7 +6086,7 @@ index 0000000000000000000000000000000000000000..7422052f2a9bc042babed2cd0d47f3bc
 +		return -EIO;
 +
 +	if (mpp_debug_unlikely(DEBUG_DUMP_ERR_REG)) {
-+		mpp_err("--- dump task register ---\n");
++		mpp_fault(mpp, "--- dump task register ---\n");
 +		if (task->reg) {
 +			u32 i;
 +			u32 s = task->hw_info->reg_start;
@@ -6060,7 +6095,7 @@ index 0000000000000000000000000000000000000000..7422052f2a9bc042babed2cd0d47f3bc
 +			for (i = s; i <= e; i++) {
 +				u32 reg = i * sizeof(u32);
 +
-+				mpp_err("reg[%03d]: %04x: 0x%08x\n",
++				mpp_fault(mpp, "reg[%03d]: %04x: 0x%08x\n",
 +					i, reg, task->reg[i]);
 +			}
 +		}
@@ -6075,11 +6110,11 @@ index 0000000000000000000000000000000000000000..7422052f2a9bc042babed2cd0d47f3bc
 +	u32 s = mpp->var->hw_info->reg_start;
 +	u32 e = mpp->var->hw_info->reg_end;
 +
-+	mpp_err("--- dump hardware register ---\n");
++	mpp_fault(mpp, "--- dump hardware register ---\n");
 +	for (i = s; i <= e; i++) {
 +		u32 reg = i * sizeof(u32);
 +
-+		mpp_err("reg[%03d]: %04x: 0x%08x\n",
++		mpp_fault(mpp, "reg[%03d]: %04x: 0x%08x\n",
 +				i, reg, readl_relaxed(mpp->reg_base + reg));
 +	}
 +
@@ -6091,7 +6126,7 @@ index 0000000000000000000000000000000000000000..7422052f2a9bc042babed2cd0d47f3bc
 +	if (!mpp)
 +		return;
 +
-+	dev_err(mpp->dev, "reg[%03d]: %04x: 0x%08x\n",
++	mpp_fault(mpp, "reg[%03d]: %04x: 0x%08x\n",
 +		offset >> 2, offset, mpp_read_relaxed(mpp, offset));
 +}
 +
@@ -6130,6 +6165,7 @@ index 0000000000000000000000000000000000000000..7422052f2a9bc042babed2cd0d47f3bc
 +		mpp->task_capacity = 1;
 +
 +	mpp->dev = dev;
++	media_fault_init(&mpp->fault_limit);
 +	mpp->hw_ops = mpp->var->hw_ops;
 +	mpp->dev_ops = mpp->var->dev_ops;
 +	ret = dma_set_mask_and_coherent(dev,
@@ -6698,10 +6734,10 @@ index 0000000000000000000000000000000000000000..7422052f2a9bc042babed2cd0d47f3bc
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_common.h b/drivers/video/rockchip/mpp/mpp_common.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..79c391ba6a411baaeaf185d624e1c60b639c2d4d
+index 0000000000000000000000000000000000000000..c7bb36ed3339d752601627102257da27eeb1a36c
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_common.h
-@@ -0,0 +1,896 @@
+@@ -0,0 +1,898 @@
 +/* SPDX-License-Identifier: (GPL-2.0+ OR MIT) */
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -6733,6 +6769,7 @@ index 0000000000000000000000000000000000000000..79c391ba6a411baaeaf185d624e1c60b
 + * the mpp_pmu_idle_request() inline below); supply a no-op stub. */
 +#include "compat/rockchip_pmu_idle.h"
 +#include "mpp_recovery_state.h"
++#include "media_fault.h"
 +#include <uapi/linux/rk-mpp.h>
 +
 +#define MHZ				(1000 * 1000)
@@ -7000,6 +7037,7 @@ index 0000000000000000000000000000000000000000..79c391ba6a411baaeaf185d624e1c60b
 +
 +struct mpp_dev {
 +	struct device *dev;
++	struct ratelimit_state fault_limit;
 +	const struct mpp_dev_var *var;
 +	struct mpp_hw_ops *hw_ops;
 +	struct mpp_dev_ops *dev_ops;
@@ -9219,10 +9257,10 @@ index 0000000000000000000000000000000000000000..97f3d74b127425838f2efa61e2cd7db6
 +EXPORT_SYMBOL(rockchip_iep2_driver);
 diff --git a/drivers/video/rockchip/mpp/mpp_iommu.c b/drivers/video/rockchip/mpp/mpp_iommu.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..1da1425d361e566b2197f77e9c9877e9a99928d9
+index 0000000000000000000000000000000000000000..a35b92d93276de5e38d55f2ad99589989763d31e
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_iommu.c
-@@ -0,0 +1,1471 @@
+@@ -0,0 +1,1469 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -10180,13 +10218,11 @@ index 0000000000000000000000000000000000000000..1da1425d361e566b2197f77e9c9877e9
 +		vsi_iommu_mask_irq(mpp->dev);
 +	}
 +
-+	dev_err(iommu_dev, "fault addr 0x%08lx status %x arg %p\n",
-+		iova, status, arg);
-+
 +	if (!mpp) {
-+		dev_err(iommu_dev, "pagefault without device to handle\n");
++		dev_err_ratelimited(iommu_dev, "pagefault without device to handle\n");
 +		return 0;
 +	}
++	mpp_fault(mpp, "fault addr 0x%08lx status %x arg %p\n", iova, status, arg);
 +
 +	spin_lock_irqsave(&mpp->queue->running_lock, flags);
 +	if (mpp->cur_task)
@@ -10968,7 +11004,7 @@ index 0000000000000000000000000000000000000000..c4f661cb313b82975cce93e705158f13
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_jpgdec.c b/drivers/video/rockchip/mpp/mpp_jpgdec.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..eb7562c57483a2dcc95bba4d86422ba8161aac7c
+index 0000000000000000000000000000000000000000..c4d6279150749a490054e7d322f5a08a48541309
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_jpgdec.c
 @@ -0,0 +1,672 @@
@@ -11234,7 +11270,7 @@ index 0000000000000000000000000000000000000000..eb7562c57483a2dcc95bba4d86422ba8
 +					0, 10);
 +
 +	if (ret)
-+		mpp_err("soft reset failed.");
++		mpp_fault(mpp, "soft reset failed.\n");
 +
 +	return ret;
 +}
@@ -11489,7 +11525,7 @@ index 0000000000000000000000000000000000000000..eb7562c57483a2dcc95bba4d86422ba8
 +
 +	/* FIXME use a spin lock here */
 +	if (!mpp_task) {
-+		dev_err(mpp->dev, "no current task\n");
++		mpp_fault(mpp, "no current task\n");
 +		return IRQ_HANDLED;
 +	}
 +	mpp_task->hw_cycles = mpp_read(mpp, JPGDEC_REG_PERF_WORKING_CNT);
@@ -14545,7 +14581,7 @@ index 0000000000000000000000000000000000000000..f02af64d28642a6231668ad5f8dfb280
 +EXPORT_SYMBOL(rockchip_rkvdec_driver);
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvdec2.c b/drivers/video/rockchip/mpp/mpp_rkvdec2.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..9092a431cd1b5f427fc90a0ed10c2449739b46fb
+index 0000000000000000000000000000000000000000..bf2a57ddcc67062c9551d95ae76969cc4fe004f5
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvdec2.c
 @@ -0,0 +1,2338 @@
@@ -15206,7 +15242,7 @@ index 0000000000000000000000000000000000000000..9092a431cd1b5f427fc90a0ed10c2449
 +
 +	/* FIXME use a spin lock here */
 +	if (!mpp_task) {
-+		dev_err(mpp->dev, "no current task\n");
++		mpp_fault(mpp, "no current task\n");
 +		return IRQ_HANDLED;
 +	}
 +	mpp_task->hw_cycles = mpp_read(mpp, RKVDEC_PERF_WORKING_CNT);
@@ -15240,7 +15276,7 @@ index 0000000000000000000000000000000000000000..9092a431cd1b5f427fc90a0ed10c2449
 +
 +	/* FIXME use a spin lock here */
 +	if (!mpp_task) {
-+		dev_err(mpp->dev, "no current task\n");
++		mpp_fault(mpp, "no current task\n");
 +		return IRQ_HANDLED;
 +	}
 +	mpp_task->hw_cycles = mpp_read(mpp, RKVDEC_PERF_WORKING_CNT);
@@ -16084,7 +16120,7 @@ index 0000000000000000000000000000000000000000..9092a431cd1b5f427fc90a0ed10c2449
 +					 irq_status & 0x800,
 +					 0, 200);
 +	if (ret)
-+		dev_err(mpp->dev, "reset timeout\n");
++		mpp_fault(mpp, "reset timeout\n");
 +	/* clear reset ready status bit */
 +	writel(link->info->ip_reset_mask, link->reg_base + link->info->status_base);
 +
@@ -17131,10 +17167,10 @@ index 0000000000000000000000000000000000000000..dda9d19efc636f4300818f79bf46fb24
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvdec2_link.c b/drivers/video/rockchip/mpp/mpp_rkvdec2_link.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..1114d863418a47ab737fc0e1137cccfe50c42f6f
+index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf4142f666da2
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvdec2_link.c
-@@ -0,0 +1,3129 @@
+@@ -0,0 +1,3127 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
@@ -18212,7 +18248,7 @@ index 0000000000000000000000000000000000000000..1114d863418a47ab737fc0e1137cccfe
 +	dec = to_rkvdec2_dev(mpp);
 +	atomic_inc(&dec->link_dec->task_timeout);
 +
-+	dev_err(mpp->dev, "session %d task %d state %#lx timeout, cnt %d\n",
++	mpp_fault(mpp, "session %d task %d state %#lx timeout, cnt %d\n",
 +		session->index, task->task_index, task->state,
 +		atomic_read(&dec->link_dec->task_timeout));
 +
@@ -18238,13 +18274,11 @@ index 0000000000000000000000000000000000000000..1114d863418a47ab737fc0e1137cccfe
 +	if (mpp)
 +		rockchip_iommu_mask_irq(mpp->dev);
 +
-+	dev_err(iommu_dev, "fault addr 0x%08lx status %x arg %p\n",
-+		iova, status, arg);
-+
 +	if (!mpp) {
-+		dev_err(iommu_dev, "pagefault without device to handle\n");
++		dev_err_ratelimited(iommu_dev, "pagefault without device to handle\n");
 +		return 0;
 +	}
++	mpp_fault(mpp, "fault addr 0x%08lx status %x arg %p\n", iova, status, arg);
 +	queue = mpp->queue;
 +	spin_lock_irqsave(&queue->running_lock, flags);
 +	list_for_each_entry_safe(mpp_task, n, &queue->running_list, queue_link) {
@@ -22008,7 +22042,7 @@ index 0000000000000000000000000000000000000000..039752db69c71b3befeade39a91d81bf
 +};
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc2.c b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..1f07b57c76110252901dc51a1ddfbf3aaf6cd7bb
+index 0000000000000000000000000000000000000000..0468bb9ff631b38f846a89e61cdcb0f924c58731
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
 @@ -0,0 +1,3855 @@
@@ -24010,7 +24044,7 @@ index 0000000000000000000000000000000000000000..1f07b57c76110252901dc51a1ddfbf3a
 +	if (irq_status & INT_STA_ERROR) {
 +		mpp->irq_status = irq_status;
 +
-+		dev_err(mpp->dev, "found error status %08x\n", irq_status);
++		mpp_fault(mpp, "found error status %08x\n", irq_status);
 +
 +		ret = IRQ_WAKE_THREAD;
 +	}
@@ -24037,7 +24071,7 @@ index 0000000000000000000000000000000000000000..1f07b57c76110252901dc51a1ddfbf3a
 +
 +	/* FIXME use a spin lock here */
 +	if (!mpp->cur_task) {
-+		dev_err(mpp->dev, "no current task\n");
++		mpp_fault(mpp, "no current task\n");
 +		return IRQ_HANDLED;
 +	}
 +
@@ -24046,7 +24080,7 @@ index 0000000000000000000000000000000000000000..1f07b57c76110252901dc51a1ddfbf3a
 +	mpp->cur_task = NULL;
 +
 +	if (mpp_task->mpp && mpp_task->mpp != mpp)
-+		dev_err(mpp->dev, "mismatch core dev %p:%p\n", mpp_task->mpp, mpp);
++		mpp_fault(mpp, "mismatch core dev %p:%p\n", mpp_task->mpp, mpp);
 +
 +	task = to_rkvenc_task(mpp_task);
 +	task->irq_status = mpp->irq_status;
@@ -24701,7 +24735,7 @@ index 0000000000000000000000000000000000000000..1f07b57c76110252901dc51a1ddfbf3a
 +					 rst_status & RKVENC_SCLR_DONE_STA,
 +					 0, 1000);
 +	if (ret)
-+		mpp_err("safe reset failed\n");
++		mpp_fault(mpp, "safe reset failed\n");
 +	mpp_write(mpp, hw->enc_clr_base, 0x3);
 +	udelay(5);
 +	mpp_write(mpp, hw->enc_clr_base, 0);
@@ -24731,7 +24765,7 @@ index 0000000000000000000000000000000000000000..1f07b57c76110252901dc51a1ddfbf3a
 +
 +	/* cru reset */
 +	if (ret && enc->rst_a && enc->rst_h && enc->rst_core) {
-+		mpp_err("soft reset timeout, use cru reset\n");
++		mpp_fault(mpp, "soft reset timeout, use cru reset\n");
 +		mpp_pmu_idle_request(mpp, true);
 +		mpp_safe_reset(enc->rst_a);
 +		mpp_safe_reset(enc->rst_h);
@@ -25578,7 +25612,7 @@ index 0000000000000000000000000000000000000000..1f07b57c76110252901dc51a1ddfbf3a
 +			}
 +		}
 +		if (!found) {
-+			dev_err(mpp->dev, "page fault from unknown RKVENC IOMMU device %s\n",
++			mpp_fault(mpp, "page fault from unknown RKVENC IOMMU device %s\n",
 +				dev_name(iommu_dev));
 +			rcu_read_unlock();
 +			return -ENODEV;
@@ -25592,7 +25626,7 @@ index 0000000000000000000000000000000000000000..1f07b57c76110252901dc51a1ddfbf3a
 +
 +		spin_lock_irqsave(&mpp->queue->running_lock, flags);
 +		mpp_task = mpp->cur_task;
-+		dev_info(mpp->dev, "core %d page fault found dchs %08x\n",
++		mpp_fault(mpp, "core %d page fault found dchs %08x\n",
 +			 mpp->core_id,
 +			 mpp_read_relaxed(&fault_enc->mpp, DCHS_REG_OFFSET));
 +
@@ -25612,7 +25646,7 @@ index 0000000000000000000000000000000000000000..1f07b57c76110252901dc51a1ddfbf3a
 +
 +	spin_lock_irqsave(&mpp->queue->running_lock, flags);
 +	mpp_task = mpp->cur_task;
-+	dev_info(mpp->dev, "core %d page fault found dchs %08x\n",
++	mpp_fault(mpp, "core %d page fault found dchs %08x\n",
 +		 mpp->core_id, mpp_read_relaxed(&fault_enc->mpp, DCHS_REG_OFFSET));
 +
 +	if (mpp_task)
@@ -34667,10 +34701,10 @@ index 0000000000000000000000000000000000000000..b9fcfa507997d60325220f6edb59a73d
 +#endif
 diff --git a/drivers/video/rockchip/rga3/include/rga_drv.h b/drivers/video/rockchip/rga3/include/rga_drv.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..83eaf7cc76c6f595fa6150c9bcfeca0afe56fd77
+index 0000000000000000000000000000000000000000..07a5786bda3cd1e96e7905f98aa45efab7902069
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/include/rga_drv.h
-@@ -0,0 +1,604 @@
+@@ -0,0 +1,606 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -34719,6 +34753,7 @@ index 0000000000000000000000000000000000000000..83eaf7cc76c6f595fa6150c9bcfeca0a
 +#include <linux/sched/mm.h>
 +#include <linux/sizes.h>
 +#include <linux/string_helpers.h>
++#include "../../mpp/media_fault.h"
 +
 +#include <asm/cacheflush.h>
 +
@@ -35099,6 +35134,7 @@ index 0000000000000000000000000000000000000000..83eaf7cc76c6f595fa6150c9bcfeca0a
 +
 +struct rga_scheduler_t {
 +	struct device *dev;
++	struct ratelimit_state fault_limit;
 +	void __iomem *rga_base;
 +	struct rga_iommu_info *iommu_info;
 +
@@ -35810,7 +35846,7 @@ index 0000000000000000000000000000000000000000..1d29e9cafd1e3517988ecd89f193bdb0
 +#endif
 diff --git a/drivers/video/rockchip/rga3/rga2_reg_info.c b/drivers/video/rockchip/rga3/rga2_reg_info.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..7bea428db25bb84fcf6ad98b9794d6c8dc9f55d5
+index 0000000000000000000000000000000000000000..3808444d99140ef58360a307b8660cb464ba0d50
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga2_reg_info.c
 @@ -0,0 +1,3550 @@
@@ -38579,7 +38615,7 @@ index 0000000000000000000000000000000000000000..7bea428db25bb84fcf6ad98b9794d6c8
 +	}
 +
 +	if (i == RGA_RESET_TIMEOUT)
-+		rga_err("%s[%#x] soft reset timeout.\n",
++		rga_fault(scheduler, "%s[%#x] soft reset timeout.\n",
 +			rga_get_core_name(scheduler->core), scheduler->core);
 +}
 +
@@ -39220,7 +39256,7 @@ index 0000000000000000000000000000000000000000..7bea428db25bb84fcf6ad98b9794d6c8
 +	/* The hardware interrupt top-half don't need to lock the scheduler. */
 +	if (job == NULL) {
 +		rga2_clear_intr(scheduler);
-+		rga_err("core[%d], invalid job, INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x], WORK_CYCLE[0x%x(%d)]\n",
++		rga_fault(scheduler, "core[%d], invalid job, INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x], WORK_CYCLE[0x%x(%d)]\n",
 +			scheduler->core, rga_read(RGA2_INT, scheduler),
 +			rga_read(RGA2_STATUS2, scheduler), rga_read(RGA2_STATUS1, scheduler),
 +			rga_read(RGA2_WORK_CNT, scheduler), rga_read(RGA2_WORK_CNT, scheduler));
@@ -39252,7 +39288,7 @@ index 0000000000000000000000000000000000000000..7bea428db25bb84fcf6ad98b9794d6c8
 +		set_bit(RGA_JOB_STATE_INTR_ERR, &job->state);
 +		job->finished_count = cmd_cur_num > 0 ? cmd_cur_num - 1 : 0;
 +
-+		rga_job_err(job, "irq handler err! INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x], WORK_CYCLE[0x%x(%d)]\n",
++		rga_job_fault(job, "irq handler err! INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x], WORK_CYCLE[0x%x(%d)]\n",
 +			job->intr_status, job->hw_status, job->cmd_status,
 +			job->work_cycle, job->work_cycle);
 +
@@ -39316,37 +39352,37 @@ index 0000000000000000000000000000000000000000..7bea428db25bb84fcf6ad98b9794d6c8
 +
 +	if (test_bit(RGA_JOB_STATE_INTR_ERR, &job->state)) {
 +		if (job->hw_status & m_RGA2_STATUS2_RPP_ERROR)
-+			rga_job_err(job, "RGA current status: rpp error!\n");
++			rga_job_fault(job, "RGA current status: rpp error!\n");
 +		if (job->hw_status & m_RGA2_STATUS2_BUS_ERROR)
-+			rga_job_err(job, "RGA current status: bus error!\n");
++			rga_job_fault(job, "RGA current status: bus error!\n");
 +
 +		if (job->intr_status & m_RGA2_INT_ERROR_INT_FLAG) {
-+			rga_job_err(job, "RGA bus error intr, please check your configuration and buffer.\n");
++			rga_job_fault(job, "RGA bus error intr, please check your configuration and buffer.\n");
 +			job->ret = -EFAULT;
 +		} else if (job->intr_status & m_RGA2_INT_MMU_INT_FLAG) {
-+			rga_job_err(job, "mmu failed, please check size of the buffer or whether the buffer has been freed.\n");
++			rga_job_fault(job, "mmu failed, please check size of the buffer or whether the buffer has been freed.\n");
 +			job->ret = -EACCES;
 +		} else if (job->intr_status & m_RGA2_INT_SCL_ERROR_INTR) {
-+			rga_job_err(job, "scale failed, check scale config or formula.\n");
++			rga_job_fault(job, "scale failed, check scale config or formula.\n");
 +			job->ret = -EACCES;
 +		} else if (job->intr_status & m_RGA2_INT_FBCIN_DEC_ERROR) {
-+			rga_job_err(job, "FBC decode failed, please check if the source data is FBC data.\n");
++			rga_job_fault(job, "FBC decode failed, please check if the source data is FBC data.\n");
 +			job->ret = -EACCES;
 +		} else if (job->intr_status & m_RGA2_INT_CONFIG_ERR) {
-+			rga_job_err(job, "reg config error. status[%#x]\n", job->intr_status2);
++			rga_job_fault(job, "reg config error. status[%#x]\n", job->intr_status2);
 +			if (job->intr_status2 & m_RGA2_INTR_STATUS2_SRC_DST_RECT_NOT_EQUAL)
-+				rga_job_err(job, "reg config error: src_rect != dst_rect.\n");
++				rga_job_fault(job, "reg config error: src_rect != dst_rect.\n");
 +			if (job->intr_status2 & m_RGA2_INTR_STATUS2_SRC1_HORI_BND_ERR)
-+				rga_job_err(job, "reg config error: src1 horizontal beyond the boundary in overlay.\n");
++				rga_job_fault(job, "reg config error: src1 horizontal beyond the boundary in overlay.\n");
 +			if (job->intr_status2 & m_RGA2_INTR_STATUS2_SRC1_VERT_BND_ERR)
-+				rga_job_err(job, "reg config error: src1 vertical beyond the boundary in overlay.\n");
++				rga_job_fault(job, "reg config error: src1 vertical beyond the boundary in overlay.\n");
 +			if (job->intr_status2 & m_RGA2_INTR_STATUS2_SRC1_ODD_VIOLATION)
-+				rga_job_err(job, "reg config error: src1 odd violation in overlay.\n");
++				rga_job_fault(job, "reg config error: src1 odd violation in overlay.\n");
 +			job->ret = -EACCES;
 +		}
 +
 +		if (job->ret == 0) {
-+			rga_job_err(job, "rga intr error[0x%x]!\n", job->intr_status);
++			rga_job_fault(job, "rga intr error[0x%x]!\n", job->intr_status);
 +			job->ret = -EFAULT;
 +		}
 +	}
@@ -39366,7 +39402,7 @@ index 0000000000000000000000000000000000000000..7bea428db25bb84fcf6ad98b9794d6c8
 +};
 diff --git a/drivers/video/rockchip/rga3/rga3_reg_info.c b/drivers/video/rockchip/rga3/rga3_reg_info.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..4548133c0a147e9e2cfe9a3a13b0be999c40b501
+index 0000000000000000000000000000000000000000..1511ae7f4161b65604fd622308f66b58bb6517db
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga3_reg_info.c
 @@ -0,0 +1,2397 @@
@@ -41163,12 +41199,12 @@ index 0000000000000000000000000000000000000000..4548133c0a147e9e2cfe9a3a13b0be99
 +	}
 +
 +	if (i == RGA_RESET_TIMEOUT)
-+		rga_err("%s[%#x] soft reset timeout. SYS_CTRL[0x%x], RO_SRST[0x%x]\n",
++		rga_fault(scheduler, "%s[%#x] soft reset timeout. SYS_CTRL[0x%x], RO_SRST[0x%x]\n",
 +			rga_get_core_name(scheduler->core), scheduler->core,
 +			rga_read(RGA3_SYS_CTRL, scheduler),
 +			rga_read(RGA3_RO_SRST, scheduler));
 +	else
-+		rga_log("%s[%#x] soft reset complete.\n",
++		rga_fault(scheduler, "%s[%#x] soft reset complete.\n",
 +			rga_get_core_name(scheduler->core), scheduler->core);
 +}
 +
@@ -41659,7 +41695,7 @@ index 0000000000000000000000000000000000000000..4548133c0a147e9e2cfe9a3a13b0be99
 +
 +	if (job == NULL) {
 +		rga3_clear_intr(scheduler);
-+		rga_err("core[%d], invalid job, INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x]\n",
++		rga_fault(scheduler, "core[%d], invalid job, INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x]\n",
 +			scheduler->core, rga_read(RGA3_INT_RAW, scheduler),
 +			rga_read(RGA3_STATUS0, scheduler), rga_read(RGA3_CMD_STATE, scheduler));
 +
@@ -41687,7 +41723,7 @@ index 0000000000000000000000000000000000000000..4548133c0a147e9e2cfe9a3a13b0be99
 +		set_bit(RGA_JOB_STATE_INTR_ERR, &job->state);
 +		job->finished_count = cmd_cur_num > 0 ? cmd_cur_num - 1 : 0;
 +
-+		rga_job_err(job, "irq handler err! INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x]\n",
++		rga_job_fault(job, "irq handler err! INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x]\n",
 +		       job->intr_status, job->hw_status, job->cmd_status);
 +
 +		rga_telemetry_reset(scheduler, -EIO,
@@ -41735,21 +41771,21 @@ index 0000000000000000000000000000000000000000..4548133c0a147e9e2cfe9a3a13b0be99
 +
 +	if (test_bit(RGA_JOB_STATE_INTR_ERR, &job->state)) {
 +		if (job->intr_status & m_RGA3_INT_RAG_MI_RD_BUS_ERR) {
-+			rga_job_err(job, "DMA read bus error, please check size of the input_buffer or whether the buffer has been freed.\n");
++			rga_job_fault(job, "DMA read bus error, please check size of the input_buffer or whether the buffer has been freed.\n");
 +			job->ret = -EFAULT;
 +		} else if (job->intr_status & m_RGA3_INT_WIN0_FBCD_DEC_ERR) {
-+			rga_job_err(job, "win0 FBC decoder error, please check the fbc image of the source.\n");
++			rga_job_fault(job, "win0 FBC decoder error, please check the fbc image of the source.\n");
 +			job->ret = -EFAULT;
 +		} else if (job->intr_status & m_RGA3_INT_WIN1_FBCD_DEC_ERR) {
-+			rga_job_err(job, "win1 FBC decoder error, please check the fbc image of the source.\n");
++			rga_job_fault(job, "win1 FBC decoder error, please check the fbc image of the source.\n");
 +			job->ret = -EFAULT;
 +		} else if (job->intr_status & m_RGA3_INT_RGA_MI_WR_BUS_ERR) {
-+			rga_job_err(job, "wr buss error, please check size of the output_buffer or whether the buffer has been freed.\n");
++			rga_job_fault(job, "wr buss error, please check size of the output_buffer or whether the buffer has been freed.\n");
 +			job->ret = -EFAULT;
 +		}
 +
 +		if (job->ret == 0) {
-+			rga_job_err(job, "rga intr error[0x%x]!\n", job->intr_status);
++			rga_job_fault(job, "rga intr error[0x%x]!\n", job->intr_status);
 +			job->ret = -EFAULT;
 +		}
 +	}
@@ -45075,10 +45111,10 @@ index 0000000000000000000000000000000000000000..2eabff20024a5b2cea7138a428b2daf7
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_drv.c b/drivers/video/rockchip/rga3/rga_drv.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..79aac71a1e83d24bf3c6f8b60eac15457582215c
+index 0000000000000000000000000000000000000000..938ea8a4a877395afea8b8f6e6e0cf75300b75b8
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_drv.c
-@@ -0,0 +1,2010 @@
+@@ -0,0 +1,2011 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -46644,6 +46680,7 @@ index 0000000000000000000000000000000000000000..79aac71a1e83d24bf3c6f8b60eac1545
 +scheduler_ready:
 +	scheduler->ops = match_data->ops;
 +	scheduler->dev = dev;
++	media_fault_init(&scheduler->fault_limit);
 +
 +	mutex_init(&scheduler->job_mutex);
 +	scheduler->shutdown = false;
@@ -48016,7 +48053,7 @@ index 0000000000000000000000000000000000000000..6fe05d4e879927175aed9392b6959628
 +};
 diff --git a/drivers/video/rockchip/rga3/rga_iommu.c b/drivers/video/rockchip/rga3/rga_iommu.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..377e502d7d5c3666496b570e6390452effa004c1
+index 0000000000000000000000000000000000000000..aeace228cdddeaed86017ed0dca1d8c17b376253
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_iommu.c
 @@ -0,0 +1,544 @@
@@ -48297,7 +48334,7 @@ index 0000000000000000000000000000000000000000..377e502d7d5c3666496b570e6390452e
 +		return 0;
 +	}
 +
-+	rga_job_err(job,
++	rga_job_fault(job,
 +		    "IOMMU fault on scheduler[%d], IOVA[0x%lx], STATUS[0x%x]\n",
 +		    scheduler->core, iova, status);
 +	if (scheduler->ops->irq)
@@ -48311,13 +48348,13 @@ index 0000000000000000000000000000000000000000..377e502d7d5c3666496b570e6390452e
 +	}
 +
 +	if (status & (ROCKCHIP_IOMMU_FAULT_BUS_ERROR | RGA_IOMMU_IRQ_BUS_ERROR)) {
-+		rga_err("RGA IOMMU: bus error! Please check if the memory is invalid or has been freed.\n");
++		rga_fault(scheduler, "RGA IOMMU: bus error! Please check if the memory is invalid or has been freed.\n");
 +		job->ret = -EACCES;
 +	} else if (status == IOMMU_FAULT_WRITE) {
-+		rga_err("RGA IOMMU: write fault! Please check the memory size.\n");
++		rga_fault(scheduler, "RGA IOMMU: write fault! Please check the memory size.\n");
 +		job->ret = -EACCES;
 +	} else {
-+		rga_err("RGA IOMMU: read fault! Please check the memory size.\n");
++		rga_fault(scheduler, "RGA IOMMU: read fault! Please check the memory size.\n");
 +		job->ret = -EACCES;
 +	}
 +
@@ -48566,7 +48603,7 @@ index 0000000000000000000000000000000000000000..377e502d7d5c3666496b570e6390452e
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_job.c b/drivers/video/rockchip/rga3/rga_job.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..13890532117973c96386507cead60a2a859a85bf
+index 0000000000000000000000000000000000000000..f50b9f4c55be5fde73d02e62859c1029d00d4424
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_job.c
 @@ -0,0 +1,2046 @@
@@ -48968,12 +49005,12 @@ index 0000000000000000000000000000000000000000..13890532117973c96386507cead60a2a
 +		return orig_ret;
 +	} else if (!test_bit(RGA_JOB_STATE_DONE, &job->state) &&
 +		   test_bit(RGA_JOB_STATE_FINISH, &job->state)) {
-+		rga_job_err(job, "job hardware has finished, but the software has timeout!\n");
++		rga_job_fault(job, "job hardware has finished, but the software has timeout!\n");
 +
 +		ret = -EBUSY;
 +	} else if (!test_bit(RGA_JOB_STATE_DONE, &job->state) &&
 +		   !test_bit(RGA_JOB_STATE_FINISH, &job->state)) {
-+		rga_job_err(job, "job hardware has timeout.\n");
++		rga_job_fault(job, "job hardware has timeout.\n");
 +
 +		if (scheduler->ops->read_status)
 +			scheduler->ops->read_status(job, scheduler);
@@ -48981,7 +49018,7 @@ index 0000000000000000000000000000000000000000..13890532117973c96386507cead60a2a
 +		ret = -EBUSY;
 +	}
 +
-+	rga_job_err(job, "timeout core[%d]: INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x], WORK_CYCLE[0x%x(%d)]\n",
++	rga_job_fault(job, "timeout core[%d]: INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x], WORK_CYCLE[0x%x(%d)]\n",
 +		    scheduler->core,
 +		    job->intr_status, job->hw_status, job->cmd_status,
 +		    job->work_cycle, job->work_cycle);

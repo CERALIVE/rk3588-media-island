@@ -143,6 +143,7 @@ to name the donor directly.
 | `drivers/video/rockchip/mpp/mpp_jpgenc.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_rkvdec.c` | donor | same | REBASED | Reservation-protected iosys_map PPS access. | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/media_map.h` | CeraLive | same | FIRST-PARTY | Bounded iosys reads and raw-vmap ownership cleanup. | `GPL-2.0-only` |
+| `drivers/video/rockchip/mpp/media_fault.h` | CeraLive | same | FIRST-PARTY | Shared per-device rate limit for runtime fault diagnostics. | `GPL-2.0-only` |
 | `drivers/video/rockchip/mpp/mpp_rkvdec2.c` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_rkvdec2.h` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_rkvdec2_link.c` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |

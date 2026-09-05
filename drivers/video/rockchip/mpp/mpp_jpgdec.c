@@ -260,7 +260,7 @@ static int jpgdec_soft_reset(struct mpp_dev *mpp)
 					0, 10);
 
 	if (ret)
-		mpp_err("soft reset failed.");
+		mpp_fault(mpp, "soft reset failed.\n");
 
 	return ret;
 }
@@ -515,7 +515,7 @@ static int jpgdec_isr(struct mpp_dev *mpp)
 
 	/* FIXME use a spin lock here */
 	if (!mpp_task) {
-		dev_err(mpp->dev, "no current task\n");
+		mpp_fault(mpp, "no current task\n");
 		return IRQ_HANDLED;
 	}
 	mpp_task->hw_cycles = mpp_read(mpp, JPGDEC_REG_PERF_WORKING_CNT);

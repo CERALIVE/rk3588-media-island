@@ -6,7 +6,7 @@ drills, not part of this source series.
 
 | Item | Source status | Proof |
 |---|---|---|
-| (a) Fault logging | Pending | Pending |
+| (a) Fault logging | Shared per-device budget on the common MPP, selected-client IRQ/reset, and RGA fault paths | `media_fault_storm_test`: 1,000 direct log calls admit 10 lines in the five-second burst window; UML 57/57. Probe diagnostics are not rate limited |
 | (b) Wedge snapshots | Pending | Pending |
 | (c) Recovery epochs / bulk resets | Pending | Pending |
 | (d) Deferred resource diagnostics | Pending | Pending |
@@ -15,6 +15,12 @@ drills, not part of this source series.
 | (g) Mapping cost decision | Pending measurement record | No mapping change authorized without a measured ≥5% fraction |
 
 ## Request sizing
+
+Runtime fault macros use `dev_err_ratelimited` behind a shared device limiter,
+including register-dump lines. This avoids multiplying the burst by the number
+of register addresses or fault call sites. Explicit operator-enabled debug
+tracing remains separate. The first 10 diagnostic lines are retained; structured
+wedge snapshots are the intended source of complete register evidence.
 
 MPP consumes individual fixed-sized messages, not a count-sized message allocation.
 Its register-offset array copy now uses the same checked size helper as RGA's pool

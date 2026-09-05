@@ -655,7 +655,7 @@ static int rkvdec2_isr(struct mpp_dev *mpp)
 
 	/* FIXME use a spin lock here */
 	if (!mpp_task) {
-		dev_err(mpp->dev, "no current task\n");
+		mpp_fault(mpp, "no current task\n");
 		return IRQ_HANDLED;
 	}
 	mpp_task->hw_cycles = mpp_read(mpp, RKVDEC_PERF_WORKING_CNT);
@@ -689,7 +689,7 @@ static int rkvdec_vdpu383_isr(struct mpp_dev *mpp)
 
 	/* FIXME use a spin lock here */
 	if (!mpp_task) {
-		dev_err(mpp->dev, "no current task\n");
+		mpp_fault(mpp, "no current task\n");
 		return IRQ_HANDLED;
 	}
 	mpp_task->hw_cycles = mpp_read(mpp, RKVDEC_PERF_WORKING_CNT);
@@ -1533,7 +1533,7 @@ static int rkvdec_vdpu383_reset(struct mpp_dev *mpp)
 					 irq_status & 0x800,
 					 0, 200);
 	if (ret)
-		dev_err(mpp->dev, "reset timeout\n");
+		mpp_fault(mpp, "reset timeout\n");
 	/* clear reset ready status bit */
 	writel(link->info->ip_reset_mask, link->reg_base + link->info->status_base);
 

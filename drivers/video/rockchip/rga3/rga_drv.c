@@ -1563,6 +1563,7 @@ static int init_scheduler(struct rga_scheduler_t *scheduler,
 scheduler_ready:
 	scheduler->ops = match_data->ops;
 	scheduler->dev = dev;
+	media_fault_init(&scheduler->fault_limit);
 
 	mutex_init(&scheduler->job_mutex);
 	scheduler->shutdown = false;

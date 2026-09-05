@@ -955,13 +955,11 @@ static int mpp_iommu_handle(struct iommu_domain *iommu,
 		vsi_iommu_mask_irq(mpp->dev);
 	}
 
-	dev_err(iommu_dev, "fault addr 0x%08lx status %x arg %p\n",
-		iova, status, arg);
-
 	if (!mpp) {
-		dev_err(iommu_dev, "pagefault without device to handle\n");
+		dev_err_ratelimited(iommu_dev, "pagefault without device to handle\n");
 		return 0;
 	}
+	mpp_fault(mpp, "fault addr 0x%08lx status %x arg %p\n", iova, status, arg);
 
 	spin_lock_irqsave(&mpp->queue->running_lock, flags);
 	if (mpp->cur_task)
