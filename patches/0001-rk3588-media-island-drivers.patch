@@ -5,7 +5,7 @@ Subject: [PATCH 1/9] video: rockchip: add the CeraLive RK3588 media island
 
 The Rockchip MPP service with its three compiled clients (RKVENC2, RKVDEC2, JPGDEC), the multi_rga 2D engine driver, and the UAPI headers they publish.
 
-79 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
+80 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
 
 GENERATED from the rk3588-media-island source tree by scripts/build-series.py. The source is the truth and this series is its output; per-file provenance is docs/PROVENANCE.md and the originating commits' Origin: trailers, never this mailbox header.
 
@@ -2008,6 +2008,38 @@ index 0000000000000000000000000000000000000000..a200d63a678877fb2faab04e15bcf558
 +
 +	rkvdec2_3568_hack_link[125] = iova + PAGE_SIZE;
 +}
+diff --git a/drivers/video/rockchip/mpp/media_map.h b/drivers/video/rockchip/mpp/media_map.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..8d8b1de0c733e4089d3a3b6bd4f3e37e4866fd48
+--- /dev/null
++++ b/drivers/video/rockchip/mpp/media_map.h
+@@ -0,0 +1,26 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef ROCKCHIP_MEDIA_MAP_H
++#define ROCKCHIP_MEDIA_MAP_H
++
++#include <linux/errno.h>
++#include <linux/iosys-map.h>
++#include <linux/vmalloc.h>
++
++static inline int media_map_read(void *dst, const struct iosys_map *map,
++				size_t span, size_t offset, size_t bytes)
++{
++	if (iosys_map_is_null(map) || offset > span || bytes > span - offset)
++		return -EINVAL;
++	iosys_map_memcpy_from(dst, map, offset, bytes);
++	return 0;
++}
++
++/* Only for RAM mappings created by vmap(), not exporter-owned dma-buf maps. */
++static inline void media_vunmap(struct iosys_map *map)
++{
++	if (iosys_map_is_set(map))
++		vunmap(map->vaddr);
++	iosys_map_clear(map);
++}
++
++#endif
 diff --git a/drivers/video/rockchip/mpp/media_request_size.h b/drivers/video/rockchip/mpp/media_request_size.h
 new file mode 100644
 index 0000000000000000000000000000000000000000..66bc2bda14f010734b0a85169fc4d4f871165e50
@@ -12571,10 +12603,10 @@ index 0000000000000000000000000000000000000000..9153a0da20553ced13bf5ba30ba05a77
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvdec.c b/drivers/video/rockchip/mpp/mpp_rkvdec.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..89214c2c7e5b3bca2d4f3a62d06b69958e02653d
+index 0000000000000000000000000000000000000000..f02af64d28642a6231668ad5f8dfb280b5c08ca4
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvdec.c
-@@ -0,0 +1,1928 @@
+@@ -0,0 +1,1936 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -12592,6 +12624,8 @@ index 0000000000000000000000000000000000000000..89214c2c7e5b3bca2d4f3a62d06b6995
 +#include <linux/gfp.h>
 +#include <linux/interrupt.h>
 +#include <linux/iopoll.h>
++#include <linux/iosys-map.h>
++#include <linux/overflow.h>
 +#include <linux/module.h>
 +#include <linux/types.h>
 +#include <linux/of_platform.h>
@@ -13036,11 +13070,11 @@ index 0000000000000000000000000000000000000000..89214c2c7e5b3bca2d4f3a62d06b6995
 +				 int pps_info_size, int sub_addr_offset)
 +{
 +	struct dma_buf *dmabuf = NULL;
-+	struct iosys_map map;
-+	u8 *pps = NULL;
++	struct iosys_map map = IOSYS_MAP_INIT_VADDR(NULL);
 +	u32 scaling_fd = 0;
 +	int ret = 0;
 +	u32 base = sub_addr_offset;
++	size_t end;
 +
 +	dmabuf = dma_buf_get(fd);
 +	if (IS_ERR_OR_NULL(dmabuf)) {
@@ -13048,20 +13082,26 @@ index 0000000000000000000000000000000000000000..89214c2c7e5b3bca2d4f3a62d06b6995
 +		return -ENOENT;
 +	}
 +
-+	ret = dma_buf_begin_cpu_access(dmabuf, DMA_FROM_DEVICE);
++	if (offset < 0 || count <= 0 || pps_info_size <= 0 || sub_addr_offset < 0 ||
++	    check_mul_overflow((size_t)(count - 1), (size_t)pps_info_size, &end) ||
++	    check_add_overflow(end, (size_t)offset + sub_addr_offset, &end) ||
++	    end > dmabuf->size || sizeof(u32) > dmabuf->size - end) {
++		ret = -EINVAL;
++		goto access_failed;
++	}
++	ret = dma_buf_begin_cpu_access(dmabuf, DMA_BIDIRECTIONAL);
 +	if (ret) {
 +		mpp_err("can't access the pps buffer\n");
 +		goto access_failed;
 +	}
 +
-+	ret = dma_buf_vmap(dmabuf, &map);
++	ret = dma_buf_vmap_unlocked(dmabuf, &map);
 +	if (ret) {
 +		mpp_err("can't access the pps buffer\n");
 +		goto vmap_failed;
 +	}
-+	pps = map.vaddr + offset;
 +	/* NOTE: scaling buffer in pps, have no offset */
-+	memcpy(&scaling_fd, pps + base, sizeof(scaling_fd));
++	iosys_map_memcpy_from(&scaling_fd, &map, offset + base, sizeof(scaling_fd));
 +	scaling_fd = le32_to_cpu(scaling_fd);
 +	if (scaling_fd > 0) {
 +		struct mpp_mem_region *mem_region = NULL;
@@ -13079,18 +13119,18 @@ index 0000000000000000000000000000000000000000..89214c2c7e5b3bca2d4f3a62d06b6995
 +		tmp = mem_region->iova & 0xffffffff;
 +		tmp = cpu_to_le32(tmp);
 +		mpp_debug(DEBUG_PPS_FILL,
-+			  "pps at %p, scaling fd: %3d => %pad + offset %10d\n",
-+			  pps, scaling_fd, &mem_region->iova, offset);
++			  "scaling fd: %3d => %pad + offset %10d\n",
++			  scaling_fd, &mem_region->iova, offset);
 +
 +		/* Fill the scaling list address in each pps entries */
 +		for (i = 0; i < count; i++, base += pps_info_size)
-+			memcpy(pps + base, &tmp, sizeof(tmp));
++			iosys_map_memcpy_to(&map, offset + base, &tmp, sizeof(tmp));
 +	}
 +
 +task_fd_failed:
-+	dma_buf_vunmap(dmabuf, &map);
++	dma_buf_vunmap_unlocked(dmabuf, &map);
 +vmap_failed:
-+	dma_buf_end_cpu_access(dmabuf, DMA_FROM_DEVICE);
++	dma_buf_end_cpu_access(dmabuf, DMA_BIDIRECTIONAL);
 +access_failed:
 +	dma_buf_put(dmabuf);
 +
@@ -42876,10 +42916,10 @@ index 0000000000000000000000000000000000000000..084c931e7d1a82110a96807bddeae683
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_debugger.c b/drivers/video/rockchip/rga3/rga_debugger.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..f4dd4dd05474e33c0e82797b9e5920672dda8e34
+index 0000000000000000000000000000000000000000..fb55ba557ff6b9a1b35ac646f83eb41514796192
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_debugger.c
-@@ -0,0 +1,1283 @@
+@@ -0,0 +1,1275 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -43853,11 +43893,7 @@ index 0000000000000000000000000000000000000000..f4dd4dd05474e33c0e82797b9e592067
 +#ifdef CONFIG_ROCKCHIP_RGA_PROC_FS
 +static int rga_procfs_open(struct inode *inode, struct file *file)
 +{
-+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 +	struct rga_debugger_node *node = pde_data(inode);
-+#else
-+	struct rga_debugger_node *node = PDE_DATA(inode);
-+#endif
 +
 +	return single_open(file, node->info_ent->show, node);
 +}
@@ -44016,6 +44052,8 @@ index 0000000000000000000000000000000000000000..f4dd4dd05474e33c0e82797b9e592067
 +}
 +
 +#ifdef CONFIG_NO_GKI
++#include "../mpp/media_map.h"
++
 +static int rga_dump_image_to_file(struct rga_internal_buffer *dump_buffer,
 +				  const char *channel_name,
 +				  int task_index,
@@ -44024,14 +44062,15 @@ index 0000000000000000000000000000000000000000..f4dd4dd05474e33c0e82797b9e592067
 +{
 +	char file_name[100];
 +	struct file *file;
-+	size_t size = 0;
++	size_t size = dump_buffer->size;
++	size_t offset = 0;
 +	loff_t pos = 0;
-+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 +	int ret;
-+	struct iosys_map map;
-+#endif
-+	void *kvaddr = NULL;
-+	void *kvaddr_origin = NULL;
++	struct iosys_map map = IOSYS_MAP_INIT_VADDR(NULL);
++	struct dma_buf *dmabuf = NULL;
++
++	if (!size)
++		return -EINVAL;
 +
 +	switch (dump_buffer->type) {
 +	case RGA_DMA_BUFFER:
@@ -44042,50 +44081,37 @@ index 0000000000000000000000000000000000000000..f4dd4dd05474e33c0e82797b9e592067
 +			return -EINVAL;
 +		}
 +
-+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
-+		ret = dma_buf_vmap_unlocked(dump_buffer->dma_buffer->dma_buf, &map);
-+		kvaddr = ret ? NULL : map.vaddr;
-+#else
-+		kvaddr = dma_buf_vmap(dump_buffer->dma_buffer->dma_buf);
-+#endif
-+		if (!kvaddr) {
-+			pr_err("can't vmap the dma buffer!\n");
++		dmabuf = dump_buffer->dma_buffer->dma_buf;
++		offset = dump_buffer->dma_buffer->offset;
++		if (offset > dmabuf->size || size > dmabuf->size - offset)
 +			return -EINVAL;
++		ret = dma_buf_begin_cpu_access(dmabuf, DMA_FROM_DEVICE);
++		if (ret)
++			return ret;
++		ret = dma_buf_vmap_unlocked(dmabuf, &map);
++		if (ret) {
++			dma_buf_end_cpu_access(dmabuf, DMA_FROM_DEVICE);
++			return ret;
 +		}
-+
-+		kvaddr_origin = kvaddr;
-+		kvaddr += dump_buffer->dma_buffer->offset;
 +		break;
 +	case RGA_VIRTUAL_ADDRESS:
-+		kvaddr = vmap(dump_buffer->virt_addr->pages, dump_buffer->virt_addr->page_count,
-+			      VM_MAP, pgprot_writecombine(PAGE_KERNEL));
-+		if (!kvaddr) {
++		offset = dump_buffer->virt_addr->offset;
++		iosys_map_set_vaddr(&map,
++			vmap(dump_buffer->virt_addr->pages, dump_buffer->virt_addr->page_count,
++			     VM_MAP, pgprot_writecombine(PAGE_KERNEL)));
++		if (iosys_map_is_null(&map)) {
 +			pr_err("dump_vaddr vmap error!, 0x%lx\n",
 +			       (unsigned long)dump_buffer->virt_addr->addr);
 +			return -EFAULT;
 +		}
 +
-+		kvaddr_origin = kvaddr;
-+		kvaddr += dump_buffer->virt_addr->offset;
 +		break;
 +	case RGA_PHYSICAL_ADDRESS:
-+		kvaddr = phys_to_virt(dump_buffer->phys_addr);
++		iosys_map_set_vaddr(&map, phys_to_virt(dump_buffer->phys_addr));
 +		break;
 +	default:
 +		pr_err("unsupported memory type[%x]\n", dump_buffer->type);
 +		return -EINVAL;
-+	}
-+
-+	size = dump_buffer->size;
-+
-+	if (kvaddr == NULL) {
-+		pr_err("dump addr is NULL!\n");
-+		return -EFAULT;
-+	}
-+
-+	if (size <= 0) {
-+		pr_err("dump buffer size[%lx] is invalid!\n", (unsigned long)size);
-+		return -EFAULT;
 +	}
 +
 +	if (dump_buffer->memory_parm.width == 0 &&
@@ -44107,7 +44133,16 @@ index 0000000000000000000000000000000000000000..f4dd4dd05474e33c0e82797b9e592067
 +
 +	file = filp_open(file_name, O_RDWR | O_CREAT | O_TRUNC, 0600);
 +	if (!IS_ERR(file)) {
-+		kernel_write(file, kvaddr, size, &pos);
++		while (pos < size) {
++			u8 bytes[256];
++			size_t count = min_t(size_t, sizeof(bytes), size - pos);
++			ssize_t written;
++
++			iosys_map_memcpy_from(bytes, &map, offset + pos, count);
++			written = kernel_write(file, bytes, count, &pos);
++			if (written <= 0)
++				break;
++		}
 +		pr_info("dump image to: %s\n", file_name);
 +		fput(file);
 +	} else {
@@ -44117,14 +44152,11 @@ index 0000000000000000000000000000000000000000..f4dd4dd05474e33c0e82797b9e592067
 +	switch (dump_buffer->type) {
 +	case RGA_DMA_BUFFER:
 +	case RGA_DMA_BUFFER_PTR:
-+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
-+		dma_buf_vunmap_unlocked(dump_buffer->dma_buffer->dma_buf, &map);
-+#else
-+		dma_buf_vunmap(dump_buffer->dma_buffer->dma_buf, kvaddr_origin);
-+#endif
++		dma_buf_vunmap_unlocked(dmabuf, &map);
++		dma_buf_end_cpu_access(dmabuf, DMA_FROM_DEVICE);
 +		break;
 +	case RGA_VIRTUAL_ADDRESS:
-+		vunmap(kvaddr_origin);
++		media_vunmap(&map);
 +		break;
 +	}
 +
@@ -44165,10 +44197,10 @@ index 0000000000000000000000000000000000000000..f4dd4dd05474e33c0e82797b9e592067
 +#endif /* #ifdef CONFIG_NO_GKI */
 diff --git a/drivers/video/rockchip/rga3/rga_dma_buf.c b/drivers/video/rockchip/rga3/rga_dma_buf.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..27cdea2f7b70b6d3b26056d63df89ce86ca23f68
+index 0000000000000000000000000000000000000000..2eabff20024a5b2cea7138a428b2daf7477ca195
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_dma_buf.c
-@@ -0,0 +1,871 @@
+@@ -0,0 +1,872 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -44184,6 +44216,7 @@ index 0000000000000000000000000000000000000000..27cdea2f7b70b6d3b26056d63df89ce8
 +#include "rga_common.h"
 +#include "rga_job.h"
 +#include "rga_debugger.h"
++#include "../mpp/media_map.h"
 +
 +static int rga_dma_check_iova_span(dma_addr_t dma_addr, size_t size,
 +				   const char *source, bool log_errors)
@@ -44607,36 +44640,36 @@ index 0000000000000000000000000000000000000000..27cdea2f7b70b6d3b26056d63df89ce8
 +
 +int rga_dma_memory_check(struct rga_dma_buffer *rga_dma_buffer, struct rga_img_info_t *img)
 +{
-+	int ret = 0;
-+	void *vaddr;
-+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
-+	struct iosys_map map;
-+#endif
-+	struct dma_buf *dma_buf;
++	struct iosys_map map = IOSYS_MAP_INIT_VADDR(NULL);
++	struct dma_buf *buffer = rga_dma_buffer->dma_buf;
++	int bits = rga_get_format_bits(img->format);
++	int ret, end_ret;
++	size_t line, offset;
++	void *scratch;
 +
-+	dma_buf = rga_dma_buffer->dma_buf;
-+
-+	if (!IS_ERR_OR_NULL(dma_buf)) {
-+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
-+		ret = dma_buf_vmap_unlocked(dma_buf, &map);
-+		vaddr = ret ? NULL : map.vaddr;
-+#else
-+		vaddr = dma_buf_vmap(dma_buf);
-+#endif
-+		if (vaddr) {
-+			ret = rga_virtual_memory_check(vaddr, img->vir_w,
-+				img->vir_h, img->format, img->yrgb_addr);
-+		} else {
-+			rga_err("can't vmap the dma buffer!\n");
-+			return -EINVAL;
-+		}
-+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
-+		dma_buf_vunmap_unlocked(dma_buf, &map);
-+#else
-+		dma_buf_vunmap(dma_buf, vaddr);
-+#endif
++	if (IS_ERR_OR_NULL(buffer))
++		return 0;
++	if (bits < 0 || !img->vir_w || !img->vir_h)
++		return -EINVAL;
++	line = array_size(img->vir_w, bits) / 8;
++	if (check_mul_overflow(line, (size_t)(img->vir_h - 1), &offset))
++		return -EINVAL;
++	scratch = kvzalloc(line, GFP_KERNEL);
++	if (!scratch)
++		return -ENOMEM;
++	ret = dma_buf_begin_cpu_access(buffer, DMA_FROM_DEVICE);
++	if (ret)
++		goto out_free;
++	ret = dma_buf_vmap_unlocked(buffer, &map);
++	if (!ret) {
++		ret = media_map_read(scratch, &map, buffer->size, offset, line);
++		dma_buf_vunmap_unlocked(buffer, &map);
 +	}
-+
++	end_ret = dma_buf_end_cpu_access(buffer, DMA_FROM_DEVICE);
++	if (!ret)
++		ret = end_ret;
++out_free:
++	kvfree(scratch);
 +	return ret;
 +}
 +
@@ -50585,7 +50618,7 @@ index 0000000000000000000000000000000000000000..13890532117973c96386507cead60a2a
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_mm.c b/drivers/video/rockchip/rga3/rga_mm.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..2571babc2c993e1928bc8f7a7aff511689d961b8
+index 0000000000000000000000000000000000000000..565bc90acdafe5cf8177f90828f9753d7d6200fd
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_mm.c
 @@ -0,0 +1,4300 @@
@@ -50614,6 +50647,7 @@ index 0000000000000000000000000000000000000000..2571babc2c993e1928bc8f7a7aff5116
 +#include "rga_iommu.h"
 +#include "rga_hw_config.h"
 +#include "rga_debugger.h"
++#include "../mpp/media_map.h"
 +
 +/*
 + * RGA3 fetches a window base address on a 16-byte granularity (the low 4 bits
@@ -50630,7 +50664,7 @@ index 0000000000000000000000000000000000000000..2571babc2c993e1928bc8f7a7aff5116
 +	struct dma_buf *origin;
 +	struct page **pages;
 +	unsigned int page_count;
-+	void *vaddr;
++	struct iosys_map map;
 +	struct sg_table *sgt;
 +	struct rga_dma_buffer mapping;
 +	struct rga_session *session;
@@ -52594,7 +52628,7 @@ index 0000000000000000000000000000000000000000..2571babc2c993e1928bc8f7a7aff5116
 +
 +	ret = dma_buf_vmap_unlocked(stage->origin, &map);
 +	if (!ret) {
-+		iosys_map_memcpy_from(stage->vaddr, &map, 0, stage->size);
++		iosys_map_memcpy_from(stage->map.vaddr, &map, 0, stage->size);
 +		dma_buf_vunmap_unlocked(stage->origin, &map);
 +	}
 +
@@ -52626,7 +52660,7 @@ index 0000000000000000000000000000000000000000..2571babc2c993e1928bc8f7a7aff5116
 +
 +	ret = dma_buf_vmap_unlocked(stage->origin, &map);
 +	if (!ret) {
-+		iosys_map_memcpy_to(&map, 0, stage->vaddr, stage->size);
++		iosys_map_memcpy_to(&map, 0, stage->map.vaddr, stage->size);
 +		dma_buf_vunmap_unlocked(stage->origin, &map);
 +	}
 +
@@ -52695,8 +52729,7 @@ index 0000000000000000000000000000000000000000..2571babc2c993e1928bc8f7a7aff5116
 +		rga_dma_unmap_sgt(&stage->mapping);
 +	if (stage->sgt)
 +		rga_free_sgt(&stage->sgt);
-+	if (stage->vaddr)
-+		vunmap(stage->vaddr);
++	media_vunmap(&stage->map);
 +	if (stage->pages) {
 +		for (i = 0; i < stage->page_count; i++)
 +			if (stage->pages[i])
@@ -52772,9 +52805,9 @@ index 0000000000000000000000000000000000000000..2571babc2c993e1928bc8f7a7aff5116
 +		}
 +	}
 +
-+	stage->vaddr = vmap(stage->pages, stage->page_count, VM_MAP,
-+			    PAGE_KERNEL);
-+	if (!stage->vaddr) {
++	iosys_map_set_vaddr(&stage->map,
++		vmap(stage->pages, stage->page_count, VM_MAP, PAGE_KERNEL));
++	if (iosys_map_is_null(&stage->map)) {
 +		ret = -ENOMEM;
 +		goto err_free;
 +	}

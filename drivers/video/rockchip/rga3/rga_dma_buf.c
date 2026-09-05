@@ -13,6 +13,7 @@
 #include "rga_common.h"
 #include "rga_job.h"
 #include "rga_debugger.h"
+#include "../mpp/media_map.h"
 
 static int rga_dma_check_iova_span(dma_addr_t dma_addr, size_t size,
 				   const char *source, bool log_errors)
@@ -436,36 +437,36 @@ int rga_virtual_memory_check(void *vaddr, u32 w, u32 h, u32 format, int fd)
 
 int rga_dma_memory_check(struct rga_dma_buffer *rga_dma_buffer, struct rga_img_info_t *img)
 {
-	int ret = 0;
-	void *vaddr;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
-	struct iosys_map map;
-#endif
-	struct dma_buf *dma_buf;
+	struct iosys_map map = IOSYS_MAP_INIT_VADDR(NULL);
+	struct dma_buf *buffer = rga_dma_buffer->dma_buf;
+	int bits = rga_get_format_bits(img->format);
+	int ret, end_ret;
+	size_t line, offset;
+	void *scratch;
 
-	dma_buf = rga_dma_buffer->dma_buf;
-
-	if (!IS_ERR_OR_NULL(dma_buf)) {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
-		ret = dma_buf_vmap_unlocked(dma_buf, &map);
-		vaddr = ret ? NULL : map.vaddr;
-#else
-		vaddr = dma_buf_vmap(dma_buf);
-#endif
-		if (vaddr) {
-			ret = rga_virtual_memory_check(vaddr, img->vir_w,
-				img->vir_h, img->format, img->yrgb_addr);
-		} else {
-			rga_err("can't vmap the dma buffer!\n");
-			return -EINVAL;
-		}
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
-		dma_buf_vunmap_unlocked(dma_buf, &map);
-#else
-		dma_buf_vunmap(dma_buf, vaddr);
-#endif
+	if (IS_ERR_OR_NULL(buffer))
+		return 0;
+	if (bits < 0 || !img->vir_w || !img->vir_h)
+		return -EINVAL;
+	line = array_size(img->vir_w, bits) / 8;
+	if (check_mul_overflow(line, (size_t)(img->vir_h - 1), &offset))
+		return -EINVAL;
+	scratch = kvzalloc(line, GFP_KERNEL);
+	if (!scratch)
+		return -ENOMEM;
+	ret = dma_buf_begin_cpu_access(buffer, DMA_FROM_DEVICE);
+	if (ret)
+		goto out_free;
+	ret = dma_buf_vmap_unlocked(buffer, &map);
+	if (!ret) {
+		ret = media_map_read(scratch, &map, buffer->size, offset, line);
+		dma_buf_vunmap_unlocked(buffer, &map);
 	}
-
+	end_ret = dma_buf_end_cpu_access(buffer, DMA_FROM_DEVICE);
+	if (!ret)
+		ret = end_ret;
+out_free:
+	kvfree(scratch);
 	return ret;
 }
 

@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
+#include <asm/pgtable.h>
 
 #include "../mpp/mpp_request_bounds.h"
 #include "../mpp/media_request_size.h"
+#include "../mpp/media_map.h"
 
 #define RKVENC_V2_CLASS_BASE_S	0x0000
 #define RKVENC_V2_CLASS_BASE_E	0x0058
@@ -157,7 +159,31 @@ static void media_request_size_rejects_overflow_test(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, bytes, (size_t)65536);
 }
 
+static void media_map_lifetime_test(struct kunit *test)
+{
+	struct page *page = alloc_page(GFP_KERNEL | __GFP_ZERO);
+	struct iosys_map map = IOSYS_MAP_INIT_VADDR(NULL);
+	u32 value = 0x12345678, result = 0;
+
+	KUNIT_ASSERT_NOT_NULL(test, page);
+	iosys_map_set_vaddr(&map, vmap(&page, 1, VM_MAP, PAGE_KERNEL));
+	KUNIT_EXPECT_TRUE(test, iosys_map_is_set(&map));
+	if (iosys_map_is_set(&map)) {
+		iosys_map_memcpy_to(&map, 16, &value, sizeof(value));
+		KUNIT_EXPECT_EQ(test, media_map_read(&result, &map, PAGE_SIZE,
+						   16, sizeof(result)), 0);
+		KUNIT_EXPECT_EQ(test, result, value);
+		KUNIT_EXPECT_EQ(test, media_map_read(&result, &map, PAGE_SIZE,
+						   PAGE_SIZE - 1, sizeof(result)), -EINVAL);
+		media_vunmap(&map);
+		KUNIT_EXPECT_TRUE(test, iosys_map_is_null(&map));
+		media_vunmap(&map);
+	}
+	__free_page(page);
+}
+
 static struct kunit_case mpp_request_bounds_cases[] = {
+	KUNIT_CASE(media_map_lifetime_test),
 	KUNIT_CASE(media_request_size_rejects_overflow_test),
 	KUNIT_CASE(mpp_req_shape_rejects_wrap_test),
 	KUNIT_CASE(mpp_req_shape_rejects_short_word_test),

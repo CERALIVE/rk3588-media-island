@@ -11,7 +11,7 @@ drills, not part of this source series.
 | (c) Recovery epochs / bulk resets | Pending | Pending |
 | (d) Deferred resource diagnostics | Pending | Pending |
 | (e) Request sizing | Checked multiplication; variable-sized RGA request/pool/job arrays use kvzalloc with kvfree on every exit | `media_request_size_rejects_overflow_test`: SIZE_MAX / sizeof(u64) + 1 returns -EINVAL and clears the size; 64 KiB boundary accepted. UML: 55/55 passed |
-| (f) iosys_map | Pending | Pending |
+| (f) iosys_map | Raw mapping state replaced; legacy dma-buf vmap and PDE_DATA branches removed | `media_map_lifetime_test`: real page vmap, bounded read, unmap clears ownership, repeated cleanup safe. UML 56/56; selected MPP/RGA objects sparse C=2 with -Wsparse-error clean; raw-vmap/PDE_DATA grep empty |
 | (g) Mapping cost decision | Pending measurement record | No mapping change authorized without a measured ≥5% fraction |
 
 ## Request sizing
@@ -22,6 +22,18 @@ imports/releases and job copies. RGA request-array copies use `array_size`, whos
 overflow result cannot become a small allocation. Coherent command arrays retain
 the DMA allocator (vmalloc memory cannot replace coherent device memory); their
 nested products use `array_size`. No ioctl values or public structures changed.
+
+## Mapping ownership
+
+RGA staging retains its RAM-only map as an `iosys_map`; exporter maps use the
+reservation-locking `_unlocked` dma-buf wrappers. Debug reads and image dumps use
+iosys accessors rather than interpreting an I/O mapping as a normal pointer.
+Retained RKVDEC-v1 PPS access also uses the reservation-locking wrappers and
+iosys accessors. It is not a selected production client; the selected-object
+sparse result does not claim to compile that dormant client.
+
+The live sysfs and exporter hardware drills remain separate from UML ownership
+tests. No driver or KUnit test changes public structures or ioctl numbers.
 
 ## Cost gate
 

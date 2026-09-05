@@ -511,6 +511,7 @@ jobs:
           mkdir -p .work/linux/drivers/video/rockchip/mpp
           cp drivers/video/rockchip/mpp/mpp_request_bounds.h \
             drivers/video/rockchip/mpp/media_request_size.h \
+            drivers/video/rockchip/mpp/media_map.h \
             drivers/video/rockchip/mpp/mpp_rkvenc_test.h \
             drivers/video/rockchip/mpp/mpp_capabilities.h \
             drivers/video/rockchip/mpp/mpp_dma_policy.h \

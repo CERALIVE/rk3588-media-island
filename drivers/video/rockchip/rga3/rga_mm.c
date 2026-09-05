@@ -23,6 +23,7 @@
 #include "rga_iommu.h"
 #include "rga_hw_config.h"
 #include "rga_debugger.h"
+#include "../mpp/media_map.h"
 
 /*
  * RGA3 fetches a window base address on a 16-byte granularity (the low 4 bits
@@ -39,7 +40,7 @@ struct rga_rga2_stage {
 	struct dma_buf *origin;
 	struct page **pages;
 	unsigned int page_count;
-	void *vaddr;
+	struct iosys_map map;
 	struct sg_table *sgt;
 	struct rga_dma_buffer mapping;
 	struct rga_session *session;
@@ -2003,7 +2004,7 @@ static int rga2_stage_copy_from_origin(struct rga_rga2_stage *stage)
 
 	ret = dma_buf_vmap_unlocked(stage->origin, &map);
 	if (!ret) {
-		iosys_map_memcpy_from(stage->vaddr, &map, 0, stage->size);
+		iosys_map_memcpy_from(stage->map.vaddr, &map, 0, stage->size);
 		dma_buf_vunmap_unlocked(stage->origin, &map);
 	}
 
@@ -2035,7 +2036,7 @@ static int rga2_stage_copy_to_origin(struct rga_rga2_stage *stage)
 
 	ret = dma_buf_vmap_unlocked(stage->origin, &map);
 	if (!ret) {
-		iosys_map_memcpy_to(&map, 0, stage->vaddr, stage->size);
+		iosys_map_memcpy_to(&map, 0, stage->map.vaddr, stage->size);
 		dma_buf_vunmap_unlocked(stage->origin, &map);
 	}
 
@@ -2104,8 +2105,7 @@ static void rga2_stage_free(struct rga_rga2_stage *stage)
 		rga_dma_unmap_sgt(&stage->mapping);
 	if (stage->sgt)
 		rga_free_sgt(&stage->sgt);
-	if (stage->vaddr)
-		vunmap(stage->vaddr);
+	media_vunmap(&stage->map);
 	if (stage->pages) {
 		for (i = 0; i < stage->page_count; i++)
 			if (stage->pages[i])
@@ -2181,9 +2181,9 @@ rga2_stage_get(struct rga_job *job, struct rga_internal_buffer *buffer)
 		}
 	}
 
-	stage->vaddr = vmap(stage->pages, stage->page_count, VM_MAP,
-			    PAGE_KERNEL);
-	if (!stage->vaddr) {
+	iosys_map_set_vaddr(&stage->map,
+		vmap(stage->pages, stage->page_count, VM_MAP, PAGE_KERNEL));
+	if (iosys_map_is_null(&stage->map)) {
 		ret = -ENOMEM;
 		goto err_free;
 	}
