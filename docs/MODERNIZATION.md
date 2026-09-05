@@ -12,9 +12,9 @@ drills, not part of this source series.
 | (d) Deferred resource diagnostics | Named probe errors for clocks, interrupts, IOMMU and power domains; provider deferrals propagated | `media_probe_names_deferred_resource_test` checks the kernel's stored deferred-probe reason names iommus provider and aclk_vcodec, retaining -EPROBE_DEFER; UML 61/61 |
 | (e) Request sizing | Checked multiplication; variable-sized RGA request/pool/job arrays use kvzalloc with kvfree on every exit | `media_request_size_rejects_overflow_test`: SIZE_MAX / sizeof(u64) + 1 returns -EINVAL and clears the size; 64 KiB boundary accepted. UML: 55/55 passed |
 | (f) iosys_map | Raw mapping state replaced; legacy dma-buf vmap and PDE_DATA branches removed | `media_map_lifetime_test`: real page vmap, bounded read, unmap clears ownership, repeated cleanup safe. UML 56/56; selected MPP/RGA objects sparse C=2 with -Wsparse-error clean; raw-vmap/PDE_DATA grep empty |
-| (g) Mapping cost decision | Pending measurement record | No mapping change authorized without a measured ≥5% fraction |
+| (g) Mapping cost decision | UNMEASURABLE ON THIS BOARD: no perf binary; Rock also lacks exposed trace events and an available hardware encoder | [Baseline transcript](MODERNIZATION-BASELINE.md). No percentage inferred; no iommu_map_sg change made, and NOT-WORTH-IT is not claimed |
 
-## Request sizing
+## Fault logging
 
 Runtime fault macros use `dev_err_ratelimited` behind a shared device limiter,
 including register-dump lines. This avoids multiplying the burst by the number
@@ -22,14 +22,14 @@ of register addresses or fault call sites. Explicit operator-enabled debug
 tracing remains separate. The first 10 diagnostic lines are retained; structured
 wedge snapshots are the intended source of complete register evidence.
 
+## Request sizing
+
 MPP consumes individual fixed-sized messages, not a count-sized message allocation.
 Its register-offset array copy now uses the same checked size helper as RGA's pool
 imports/releases and job copies. RGA request-array copies use `array_size`, whose
 overflow result cannot become a small allocation. Coherent command arrays retain
 the DMA allocator (vmalloc memory cannot replace coherent device memory); their
 nested products use `array_size`. No ioctl values or public structures changed.
-
-## Mapping ownership
 
 ## Wedge evidence and image requirement
 
@@ -51,6 +51,8 @@ The live timeout → `/sys/class/devcoredump/devcd*/data` → five-minute kernel
 expiry drill is **deferred until a modified kernel is deployed**. UML tests
 submission/ownership and the sysfs link, not the board timeout or expiry timer.
 
+## Mapping ownership
+
 RGA staging retains its RAM-only map as an `iosys_map`; exporter maps use the
 reservation-locking `_unlocked` dma-buf wrappers. Debug reads and image dumps use
 iosys accessors rather than interpreting an I/O mapping as a normal pointer.
@@ -61,10 +63,6 @@ sparse result does not claim to compile that dormant client.
 The live sysfs and exporter hardware drills remain separate from UML ownership
 tests. No driver or KUnit test changes public structures or ioctl numbers.
 
-## Cost gate
-
-## Recovery ordering
-
 ## Probe diagnostics
 
 The shared probe helper routes errors through `dev_err_probe`. The UML test
@@ -74,6 +72,8 @@ deferred must defer the decoder/JPEG probe instead of silently continuing with
 a NULL clock. A missing IOMMU provider device and deferred provider IRQ also
 retain their deferral. Invalid/missing IOMMU phandles remain configuration errors.
 The deliberately dangling-phandle board drill remains a post-flash exercise.
+
+## Recovery ordering
 
 MPP acquires its device-local reset list in one managed bulk operation. Shared
 reset-group controls deliberately retain their existing group owner. The three
@@ -93,4 +93,19 @@ repeated faults in that epoch cannot trigger another reset sequence.
 These unit proofs exercise recovery ownership, not silicon reset efficacy. The
 post-flash reset/fault drill must still establish the latter.
 
-Pending baseline record. No after-change comparison has been taken.
+## Cost gate — PARTIAL
+
+On 2026-09-05 the live Rock 5B+ was reachable at its corrected address, but had
+no `/dev/mpp_service`, no loaded island modules, and no `mpph264enc` factory.
+No module was loaded and no board state was changed to make a measurement work.
+
+Orange Pi 5+ did complete a real, pre-change 1080p60 H.264 encode: 1,200 source
+buffers, EOS, **20.430 s elapsed, 6.322 s user CPU, 5.402 s system CPU**.
+This uses Bash's `time` resource accounting because `perf` is absent. The exact
+command, kernel identity, output and limits are in [MODERNIZATION-BASELINE.md](MODERNIZATION-BASELINE.md).
+
+**PARTIAL: baseline measured; after-change comparison deferred to a future
+board-flash drill.** No modified module or kernel was deployed. There is no
+measured delta and no ≤1% acceptance claim. This single run is not a variance
+study and cannot attribute an iommu_map fraction; a controlled before/after
+campaign on the same board and kernel configuration remains required.
