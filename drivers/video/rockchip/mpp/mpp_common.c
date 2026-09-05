@@ -45,6 +45,7 @@
 #include "mpp_dma_policy.h"
 #include "mpp_iommu.h"
 #include "mpp_request_bounds.h"
+#include "media_request_size.h"
 #include "mpp_rkvenc_test.h"
 
 /* input parmater structure for version 1 */
@@ -2568,7 +2569,10 @@ int mpp_extract_reg_offset_info(struct reg_offset_info *off_inf,
 {
 	int max_size = ARRAY_SIZE(off_inf->elem);
 	int cnt = req->size / sizeof(off_inf->elem[0]);
-	u32 size = cnt * sizeof(off_inf->elem[0]);
+	size_t size;
+
+	if (media_request_size(cnt, sizeof(off_inf->elem[0]), &size))
+		return -EINVAL;
 
 	/*
 	 * Reject a byte count that is not a whole number of elements: the

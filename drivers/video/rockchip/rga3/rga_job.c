@@ -14,6 +14,7 @@
 #include "rga_common.h"
 #include "rga_request_validation.h"
 #include "rga_trace.h"
+#include "../mpp/media_request_size.h"
 
 enum rga_acquire_fence_state {
 	RGA_ACQUIRE_FENCE_NONE,
@@ -37,9 +38,9 @@ static void rga_job_free(struct rga_job *job)
 		job->cmd_buf = NULL;
 	}
 
-	kfree(job->task_buffers);
+	kvfree(job->task_buffers);
 	job->task_buffers = NULL;
-	kfree(job->task_list);
+	kvfree(job->task_list);
 	job->task_list = NULL;
 
 	/*
@@ -187,8 +188,11 @@ static struct rga_job *rga_job_alloc(struct rga_req *task_list, size_t task_coun
 				     struct rga_session *session)
 {
 	int i;
+	size_t bytes;
 	struct rga_job *job = NULL;
 
+	if (media_request_size(task_count, sizeof(*task_list), &bytes))
+		return NULL;
 	job = kzalloc(sizeof(*job), GFP_KERNEL);
 	if (!job)
 		return NULL;
@@ -202,13 +206,13 @@ static struct rga_job *rga_job_alloc(struct rga_req *task_list, size_t task_coun
 	job->timestamp.init = ktime_get();
 	job->pid = current->pid;
 
-	job->task_list = kmemdup_array(task_list, task_count,
-				       sizeof(*task_list), GFP_KERNEL);
+	job->task_list = kvzalloc(bytes, GFP_KERNEL);
 	if (!job->task_list) {
 		rga_job_free(job);
 		return NULL;
 	}
 	job->task_count = task_count;
+	memcpy(job->task_list, task_list, bytes);
 
 	for (i = 0; i < task_count; i++) {
 		if (job->task_list[i].priority > 0) {
@@ -581,7 +585,8 @@ int rga_job_commit(struct rga_req *task_list, size_t task_count,
 
 	if (job->task_count > 1) {
 		job->cmd_buf = rga_dma_alloc_coherent(job->scheduler,
-			job->task_count * scheduler->data->cmd_reg_size * sizeof(uint32_t));
+			array_size(job->task_count,
+				   array_size(scheduler->data->cmd_reg_size, sizeof(uint32_t))));
 		if (job->cmd_buf == NULL) {
 			rga_job_err(job, "Failed to allocate coherent memory for multi-task.\n");
 			ret = -ENOMEM;
@@ -597,7 +602,7 @@ int rga_job_commit(struct rga_req *task_list, size_t task_count,
 	}
 
 	job->task_buffers =
-		kzalloc(sizeof(struct rga_job_task_buffers) * job->task_count, GFP_KERNEL);
+		kvzalloc(array_size(job->task_count, sizeof(*job->task_buffers)), GFP_KERNEL);
 	if (!job->task_buffers) {
 		rga_job_err(job, "Failed to allocate memory for channel buffers.\n");
 		ret = -ENOMEM;
@@ -620,7 +625,7 @@ int rga_job_commit(struct rga_req *task_list, size_t task_count,
 	if (ret)
 		goto err_unmap_job_info;
 
-	job->bytes = job->task_count * sizeof(*job->task_list);
+	job->bytes = array_size(job->task_count, sizeof(*job->task_list));
 	atomic64_inc(&job->session->telemetry.tasks);
 	atomic64_add(job->bytes, &job->session->telemetry.bytes);
 	trace_rga_req_queued(job->session->id, job->request_id, job->task_count);
@@ -1505,7 +1510,7 @@ rga_request_config_locked(struct rga_user_request *user_request,
 	rga_request_get(request);
 	mutex_unlock(&request_manager->lock);
 
-	task_list = kmalloc_array(user_request->task_num, sizeof(struct rga_req), GFP_KERNEL);
+	task_list = kvzalloc(array_size(user_request->task_num, sizeof(*task_list)), GFP_KERNEL);
 	if (task_list == NULL) {
 		rga_req_err(request, "task_req list alloc error!\n");
 		ret = -ENOMEM;
@@ -1513,7 +1518,7 @@ rga_request_config_locked(struct rga_user_request *user_request,
 	}
 
 	if (unlikely(copy_from_user(task_list, u64_to_user_ptr(user_request->task_ptr),
-				    sizeof(struct rga_req) * user_request->task_num))) {
+				    array_size(user_request->task_num, sizeof(*task_list))))) {
 		rga_req_err(request, "rga_user_request task list copy_from_user failed\n");
 		ret = -EFAULT;
 		goto err_free_task_list;
@@ -1540,13 +1545,13 @@ rga_request_config_locked(struct rga_user_request *user_request,
 	request->feature = task_list[0].feature;
 
 	spin_unlock_irqrestore(&request->lock, flags);
-	kfree(old_task_list);
+	kvfree(old_task_list);
 
 		/* The caller atomically follows with submit, or explicitly unlocks. */
 	return request;
 
 err_free_task_list:
-	kfree(task_list);
+	kvfree(task_list);
 err_put_request:
 	mutex_lock(&request_manager->lock);
 	rga_request_put(request);
@@ -1587,7 +1592,7 @@ rga_request_kernel_config_locked(struct rga_user_request *user_request)
 	rga_request_get(request);
 	mutex_unlock(&request_manager->lock);
 
-	task_list = kmalloc_array(user_request->task_num, sizeof(struct rga_req), GFP_KERNEL);
+	task_list = kvzalloc(array_size(user_request->task_num, sizeof(*task_list)), GFP_KERNEL);
 	if (task_list == NULL) {
 		rga_req_err(request, "task_req list alloc error!\n");
 		ret = -ENOMEM;
@@ -1595,7 +1600,7 @@ rga_request_kernel_config_locked(struct rga_user_request *user_request)
 	}
 
 	memcpy(task_list, (void *)(uintptr_t)user_request->task_ptr,
-	       sizeof(struct rga_req) * user_request->task_num);
+	       array_size(user_request->task_num, sizeof(*task_list)));
 
 	mutex_lock(&request->run_lock);
 	mutex_lock(&request->commit_lock);
@@ -1616,13 +1621,13 @@ rga_request_kernel_config_locked(struct rga_user_request *user_request)
 	request->acquire_fence_fd = user_request->acquire_fence_fd;
 
 	spin_unlock_irqrestore(&request->lock, flags);
-	kfree(old_task_list);
+	kvfree(old_task_list);
 
 	/* The caller atomically follows with submit. */
 	return request;
 
 err_free_task_list:
-	kfree(task_list);
+	kvfree(task_list);
 err_put_request:
 	mutex_lock(&request_manager->lock);
 	rga_request_put(request);
@@ -1860,7 +1865,7 @@ int rga_request_free(struct rga_request *request)
 	spin_unlock_irqrestore(&request->lock, flags);
 
 	if (task_list != NULL)
-		kfree(task_list);
+		kvfree(task_list);
 
 	rga_session_put(request->session);
 

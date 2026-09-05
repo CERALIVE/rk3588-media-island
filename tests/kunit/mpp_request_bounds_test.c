@@ -2,6 +2,7 @@
 #include <kunit/test.h>
 
 #include "../mpp/mpp_request_bounds.h"
+#include "../mpp/media_request_size.h"
 
 #define RKVENC_V2_CLASS_BASE_S	0x0000
 #define RKVENC_V2_CLASS_BASE_E	0x0058
@@ -145,7 +146,19 @@ static void mpp_req_jpgdec_bounds_test(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, mpp_req_count_room(16, 16), -EINVAL);
 }
 
+static void media_request_size_rejects_overflow_test(struct kunit *test)
+{
+	size_t bytes = 123;
+
+	KUNIT_EXPECT_EQ(test, media_request_size(SIZE_MAX / sizeof(u64) + 1,
+					       sizeof(u64), &bytes), -EINVAL);
+	KUNIT_EXPECT_EQ(test, bytes, (size_t)0);
+	KUNIT_EXPECT_EQ(test, media_request_size(8192, sizeof(u64), &bytes), 0);
+	KUNIT_EXPECT_EQ(test, bytes, (size_t)65536);
+}
+
 static struct kunit_case mpp_request_bounds_cases[] = {
+	KUNIT_CASE(media_request_size_rejects_overflow_test),
 	KUNIT_CASE(mpp_req_shape_rejects_wrap_test),
 	KUNIT_CASE(mpp_req_shape_rejects_short_word_test),
 	KUNIT_CASE(mpp_req_shape_rejects_unaligned_test),

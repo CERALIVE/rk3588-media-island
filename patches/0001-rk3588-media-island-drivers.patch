@@ -5,7 +5,7 @@ Subject: [PATCH 1/9] video: rockchip: add the CeraLive RK3588 media island
 
 The Rockchip MPP service with its three compiled clients (RKVENC2, RKVDEC2, JPGDEC), the multi_rga 2D engine driver, and the UAPI headers they publish.
 
-78 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
+79 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
 
 GENERATED from the rk3588-media-island source tree by scripts/build-series.py. The source is the truth and this series is its output; per-file provenance is docs/PROVENANCE.md and the originating commits' Origin: trailers, never this mailbox header.
 
@@ -2008,6 +2008,29 @@ index 0000000000000000000000000000000000000000..a200d63a678877fb2faab04e15bcf558
 +
 +	rkvdec2_3568_hack_link[125] = iova + PAGE_SIZE;
 +}
+diff --git a/drivers/video/rockchip/mpp/media_request_size.h b/drivers/video/rockchip/mpp/media_request_size.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..66bc2bda14f010734b0a85169fc4d4f871165e50
+--- /dev/null
++++ b/drivers/video/rockchip/mpp/media_request_size.h
+@@ -0,0 +1,17 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef ROCKCHIP_MEDIA_REQUEST_SIZE_H
++#define ROCKCHIP_MEDIA_REQUEST_SIZE_H
++
++#include <linux/errno.h>
++#include <linux/overflow.h>
++
++static inline int media_request_size(size_t count, size_t element, size_t *bytes)
++{
++	if (check_mul_overflow(count, element, bytes)) {
++		*bytes = 0;
++		return -EINVAL;
++	}
++	return 0;
++}
++
++#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_av1dec.c b/drivers/video/rockchip/mpp/mpp_av1dec.c
 new file mode 100644
 index 0000000000000000000000000000000000000000..39c63f49a0f3a6407fe1ca18bdf23241508c0890
@@ -3221,10 +3244,10 @@ index 0000000000000000000000000000000000000000..3ebeecc5719d09a0ff436a9d035d6cf9
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_common.c b/drivers/video/rockchip/mpp/mpp_common.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..a712cf312b5f0d61bcf217c2c05a08610867c380
+index 0000000000000000000000000000000000000000..7422052f2a9bc042babed2cd0d47f3bc73c71ea7
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_common.c
-@@ -0,0 +1,3412 @@
+@@ -0,0 +1,3416 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -3272,6 +3295,7 @@ index 0000000000000000000000000000000000000000..a712cf312b5f0d61bcf217c2c05a0861
 +#include "mpp_dma_policy.h"
 +#include "mpp_iommu.h"
 +#include "mpp_request_bounds.h"
++#include "media_request_size.h"
 +#include "mpp_rkvenc_test.h"
 +
 +/* input parmater structure for version 1 */
@@ -5795,7 +5819,10 @@ index 0000000000000000000000000000000000000000..a712cf312b5f0d61bcf217c2c05a0861
 +{
 +	int max_size = ARRAY_SIZE(off_inf->elem);
 +	int cnt = req->size / sizeof(off_inf->elem[0]);
-+	u32 size = cnt * sizeof(off_inf->elem[0]);
++	size_t size;
++
++	if (media_request_size(cnt, sizeof(off_inf->elem[0]), &size))
++		return -EINVAL;
 +
 +	/*
 +	 * Reject a byte count that is not a whole number of elements: the
@@ -45015,10 +45042,10 @@ index 0000000000000000000000000000000000000000..27cdea2f7b70b6d3b26056d63df89ce8
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_drv.c b/drivers/video/rockchip/rga3/rga_drv.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..16750d32bde1bf866a32f043b511660e65c9a8f8
+index 0000000000000000000000000000000000000000..79aac71a1e83d24bf3c6f8b60eac15457582215c
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_drv.c
-@@ -0,0 +1,2005 @@
+@@ -0,0 +1,2010 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -45041,6 +45068,7 @@ index 0000000000000000000000000000000000000000..16750d32bde1bf866a32f043b511660e
 +#include "rga_common.h"
 +
 +#include <linux/string.h>
++#include "../mpp/media_request_size.h"
 +
 +struct rga_drvdata_t *rga_drvdata;
 +
@@ -45733,6 +45761,7 @@ index 0000000000000000000000000000000000000000..16750d32bde1bf866a32f043b511660e
 +
 +static long rga_ioctl_import_buffer(unsigned long arg, struct rga_session *session)
 +{
++	size_t bytes;
 +	int i;
 +	int imported = 0;
 +	int ret = 0;
@@ -45757,8 +45786,9 @@ index 0000000000000000000000000000000000000000..16750d32bde1bf866a32f043b511660e
 +		return -EFAULT;
 +	}
 +
-+	external_buffer = kmalloc(sizeof(struct rga_external_buffer) * buffer_pool.size,
-+				  GFP_KERNEL);
++	if (media_request_size(buffer_pool.size, sizeof(*external_buffer), &bytes))
++		return -EINVAL;
++	external_buffer = kvzalloc(bytes, GFP_KERNEL);
 +	if (external_buffer == NULL) {
 +		rga_err("external buffer list alloc error!\n");
 +		return -ENOMEM;
@@ -45766,7 +45796,7 @@ index 0000000000000000000000000000000000000000..16750d32bde1bf866a32f043b511660e
 +
 +	if (unlikely(copy_from_user(external_buffer,
 +				    u64_to_user_ptr(buffer_pool.buffers_ptr),
-+				    sizeof(struct rga_external_buffer) * buffer_pool.size))) {
++				    bytes))) {
 +		rga_err("rga_buffer_pool external_buffer list copy_from_user failed\n");
 +		ret = -EFAULT;
 +
@@ -45822,7 +45852,7 @@ index 0000000000000000000000000000000000000000..16750d32bde1bf866a32f043b511660e
 +
 +	if (unlikely(copy_to_user(u64_to_user_ptr(buffer_pool.buffers_ptr),
 +				  external_buffer,
-+				  sizeof(struct rga_external_buffer) * buffer_pool.size))) {
++				  bytes))) {
 +		rga_err("rga_buffer_pool external_buffer list copy_to_user failed\n");
 +		ret = -EFAULT;
 +
@@ -45844,13 +45874,14 @@ index 0000000000000000000000000000000000000000..16750d32bde1bf866a32f043b511660e
 +	}
 +
 +err_free_external_buffer:
-+	kfree(external_buffer);
++	kvfree(external_buffer);
 +	return ret;
 +}
 +
 +static long rga_ioctl_release_buffer(unsigned long arg,
 +				     struct rga_session *session)
 +{
++	size_t bytes;
 +	int i;
 +	int ret = 0;
 +	struct rga_buffer_pool buffer_pool;
@@ -45874,8 +45905,9 @@ index 0000000000000000000000000000000000000000..16750d32bde1bf866a32f043b511660e
 +		return -EFAULT;
 +	}
 +
-+	external_buffer = kmalloc(sizeof(struct rga_external_buffer) * buffer_pool.size,
-+				  GFP_KERNEL);
++	if (media_request_size(buffer_pool.size, sizeof(*external_buffer), &bytes))
++		return -EINVAL;
++	external_buffer = kvzalloc(bytes, GFP_KERNEL);
 +	if (external_buffer == NULL) {
 +		rga_err("external buffer list alloc error!\n");
 +		return -ENOMEM;
@@ -45883,7 +45915,7 @@ index 0000000000000000000000000000000000000000..16750d32bde1bf866a32f043b511660e
 +
 +	if (unlikely(copy_from_user(external_buffer,
 +				    u64_to_user_ptr(buffer_pool.buffers_ptr),
-+				    sizeof(struct rga_external_buffer) * buffer_pool.size))) {
++				    bytes))) {
 +		rga_err("rga_buffer_pool external_buffer list copy_from_user failed\n");
 +		ret = -EFAULT;
 +
@@ -45904,7 +45936,7 @@ index 0000000000000000000000000000000000000000..16750d32bde1bf866a32f043b511660e
 +	}
 +
 +err_free_external_buffer:
-+	kfree(external_buffer);
++	kvfree(external_buffer);
 +	return ret;
 +}
 +
@@ -48501,10 +48533,10 @@ index 0000000000000000000000000000000000000000..377e502d7d5c3666496b570e6390452e
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_job.c b/drivers/video/rockchip/rga3/rga_job.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..33815154dce52c7e0fa5f04b60dae2af2a168b26
+index 0000000000000000000000000000000000000000..13890532117973c96386507cead60a2a859a85bf
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_job.c
-@@ -0,0 +1,2041 @@
+@@ -0,0 +1,2046 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -48521,6 +48553,7 @@ index 0000000000000000000000000000000000000000..33815154dce52c7e0fa5f04b60dae2af
 +#include "rga_common.h"
 +#include "rga_request_validation.h"
 +#include "rga_trace.h"
++#include "../mpp/media_request_size.h"
 +
 +enum rga_acquire_fence_state {
 +	RGA_ACQUIRE_FENCE_NONE,
@@ -48544,9 +48577,9 @@ index 0000000000000000000000000000000000000000..33815154dce52c7e0fa5f04b60dae2af
 +		job->cmd_buf = NULL;
 +	}
 +
-+	kfree(job->task_buffers);
++	kvfree(job->task_buffers);
 +	job->task_buffers = NULL;
-+	kfree(job->task_list);
++	kvfree(job->task_list);
 +	job->task_list = NULL;
 +
 +	/*
@@ -48694,8 +48727,11 @@ index 0000000000000000000000000000000000000000..33815154dce52c7e0fa5f04b60dae2af
 +				     struct rga_session *session)
 +{
 +	int i;
++	size_t bytes;
 +	struct rga_job *job = NULL;
 +
++	if (media_request_size(task_count, sizeof(*task_list), &bytes))
++		return NULL;
 +	job = kzalloc(sizeof(*job), GFP_KERNEL);
 +	if (!job)
 +		return NULL;
@@ -48709,13 +48745,13 @@ index 0000000000000000000000000000000000000000..33815154dce52c7e0fa5f04b60dae2af
 +	job->timestamp.init = ktime_get();
 +	job->pid = current->pid;
 +
-+	job->task_list = kmemdup_array(task_list, task_count,
-+				       sizeof(*task_list), GFP_KERNEL);
++	job->task_list = kvzalloc(bytes, GFP_KERNEL);
 +	if (!job->task_list) {
 +		rga_job_free(job);
 +		return NULL;
 +	}
 +	job->task_count = task_count;
++	memcpy(job->task_list, task_list, bytes);
 +
 +	for (i = 0; i < task_count; i++) {
 +		if (job->task_list[i].priority > 0) {
@@ -49088,7 +49124,8 @@ index 0000000000000000000000000000000000000000..33815154dce52c7e0fa5f04b60dae2af
 +
 +	if (job->task_count > 1) {
 +		job->cmd_buf = rga_dma_alloc_coherent(job->scheduler,
-+			job->task_count * scheduler->data->cmd_reg_size * sizeof(uint32_t));
++			array_size(job->task_count,
++				   array_size(scheduler->data->cmd_reg_size, sizeof(uint32_t))));
 +		if (job->cmd_buf == NULL) {
 +			rga_job_err(job, "Failed to allocate coherent memory for multi-task.\n");
 +			ret = -ENOMEM;
@@ -49104,7 +49141,7 @@ index 0000000000000000000000000000000000000000..33815154dce52c7e0fa5f04b60dae2af
 +	}
 +
 +	job->task_buffers =
-+		kzalloc(sizeof(struct rga_job_task_buffers) * job->task_count, GFP_KERNEL);
++		kvzalloc(array_size(job->task_count, sizeof(*job->task_buffers)), GFP_KERNEL);
 +	if (!job->task_buffers) {
 +		rga_job_err(job, "Failed to allocate memory for channel buffers.\n");
 +		ret = -ENOMEM;
@@ -49127,7 +49164,7 @@ index 0000000000000000000000000000000000000000..33815154dce52c7e0fa5f04b60dae2af
 +	if (ret)
 +		goto err_unmap_job_info;
 +
-+	job->bytes = job->task_count * sizeof(*job->task_list);
++	job->bytes = array_size(job->task_count, sizeof(*job->task_list));
 +	atomic64_inc(&job->session->telemetry.tasks);
 +	atomic64_add(job->bytes, &job->session->telemetry.bytes);
 +	trace_rga_req_queued(job->session->id, job->request_id, job->task_count);
@@ -50012,7 +50049,7 @@ index 0000000000000000000000000000000000000000..33815154dce52c7e0fa5f04b60dae2af
 +	rga_request_get(request);
 +	mutex_unlock(&request_manager->lock);
 +
-+	task_list = kmalloc_array(user_request->task_num, sizeof(struct rga_req), GFP_KERNEL);
++	task_list = kvzalloc(array_size(user_request->task_num, sizeof(*task_list)), GFP_KERNEL);
 +	if (task_list == NULL) {
 +		rga_req_err(request, "task_req list alloc error!\n");
 +		ret = -ENOMEM;
@@ -50020,7 +50057,7 @@ index 0000000000000000000000000000000000000000..33815154dce52c7e0fa5f04b60dae2af
 +	}
 +
 +	if (unlikely(copy_from_user(task_list, u64_to_user_ptr(user_request->task_ptr),
-+				    sizeof(struct rga_req) * user_request->task_num))) {
++				    array_size(user_request->task_num, sizeof(*task_list))))) {
 +		rga_req_err(request, "rga_user_request task list copy_from_user failed\n");
 +		ret = -EFAULT;
 +		goto err_free_task_list;
@@ -50047,13 +50084,13 @@ index 0000000000000000000000000000000000000000..33815154dce52c7e0fa5f04b60dae2af
 +	request->feature = task_list[0].feature;
 +
 +	spin_unlock_irqrestore(&request->lock, flags);
-+	kfree(old_task_list);
++	kvfree(old_task_list);
 +
 +		/* The caller atomically follows with submit, or explicitly unlocks. */
 +	return request;
 +
 +err_free_task_list:
-+	kfree(task_list);
++	kvfree(task_list);
 +err_put_request:
 +	mutex_lock(&request_manager->lock);
 +	rga_request_put(request);
@@ -50094,7 +50131,7 @@ index 0000000000000000000000000000000000000000..33815154dce52c7e0fa5f04b60dae2af
 +	rga_request_get(request);
 +	mutex_unlock(&request_manager->lock);
 +
-+	task_list = kmalloc_array(user_request->task_num, sizeof(struct rga_req), GFP_KERNEL);
++	task_list = kvzalloc(array_size(user_request->task_num, sizeof(*task_list)), GFP_KERNEL);
 +	if (task_list == NULL) {
 +		rga_req_err(request, "task_req list alloc error!\n");
 +		ret = -ENOMEM;
@@ -50102,7 +50139,7 @@ index 0000000000000000000000000000000000000000..33815154dce52c7e0fa5f04b60dae2af
 +	}
 +
 +	memcpy(task_list, (void *)(uintptr_t)user_request->task_ptr,
-+	       sizeof(struct rga_req) * user_request->task_num);
++	       array_size(user_request->task_num, sizeof(*task_list)));
 +
 +	mutex_lock(&request->run_lock);
 +	mutex_lock(&request->commit_lock);
@@ -50123,13 +50160,13 @@ index 0000000000000000000000000000000000000000..33815154dce52c7e0fa5f04b60dae2af
 +	request->acquire_fence_fd = user_request->acquire_fence_fd;
 +
 +	spin_unlock_irqrestore(&request->lock, flags);
-+	kfree(old_task_list);
++	kvfree(old_task_list);
 +
 +	/* The caller atomically follows with submit. */
 +	return request;
 +
 +err_free_task_list:
-+	kfree(task_list);
++	kvfree(task_list);
 +err_put_request:
 +	mutex_lock(&request_manager->lock);
 +	rga_request_put(request);
@@ -50367,7 +50404,7 @@ index 0000000000000000000000000000000000000000..33815154dce52c7e0fa5f04b60dae2af
 +	spin_unlock_irqrestore(&request->lock, flags);
 +
 +	if (task_list != NULL)
-+		kfree(task_list);
++		kvfree(task_list);
 +
 +	rga_session_put(request->session);
 +

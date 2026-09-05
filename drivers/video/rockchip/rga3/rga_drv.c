@@ -20,6 +20,7 @@
 #include "rga_common.h"
 
 #include <linux/string.h>
+#include "../mpp/media_request_size.h"
 
 struct rga_drvdata_t *rga_drvdata;
 
@@ -712,6 +713,7 @@ bool rga_session_get_unless_zero(struct rga_session *session)
 
 static long rga_ioctl_import_buffer(unsigned long arg, struct rga_session *session)
 {
+	size_t bytes;
 	int i;
 	int imported = 0;
 	int ret = 0;
@@ -736,8 +738,9 @@ static long rga_ioctl_import_buffer(unsigned long arg, struct rga_session *sessi
 		return -EFAULT;
 	}
 
-	external_buffer = kmalloc(sizeof(struct rga_external_buffer) * buffer_pool.size,
-				  GFP_KERNEL);
+	if (media_request_size(buffer_pool.size, sizeof(*external_buffer), &bytes))
+		return -EINVAL;
+	external_buffer = kvzalloc(bytes, GFP_KERNEL);
 	if (external_buffer == NULL) {
 		rga_err("external buffer list alloc error!\n");
 		return -ENOMEM;
@@ -745,7 +748,7 @@ static long rga_ioctl_import_buffer(unsigned long arg, struct rga_session *sessi
 
 	if (unlikely(copy_from_user(external_buffer,
 				    u64_to_user_ptr(buffer_pool.buffers_ptr),
-				    sizeof(struct rga_external_buffer) * buffer_pool.size))) {
+				    bytes))) {
 		rga_err("rga_buffer_pool external_buffer list copy_from_user failed\n");
 		ret = -EFAULT;
 
@@ -801,7 +804,7 @@ static long rga_ioctl_import_buffer(unsigned long arg, struct rga_session *sessi
 
 	if (unlikely(copy_to_user(u64_to_user_ptr(buffer_pool.buffers_ptr),
 				  external_buffer,
-				  sizeof(struct rga_external_buffer) * buffer_pool.size))) {
+				  bytes))) {
 		rga_err("rga_buffer_pool external_buffer list copy_to_user failed\n");
 		ret = -EFAULT;
 
@@ -823,13 +826,14 @@ err_rollback_imports:
 	}
 
 err_free_external_buffer:
-	kfree(external_buffer);
+	kvfree(external_buffer);
 	return ret;
 }
 
 static long rga_ioctl_release_buffer(unsigned long arg,
 				     struct rga_session *session)
 {
+	size_t bytes;
 	int i;
 	int ret = 0;
 	struct rga_buffer_pool buffer_pool;
@@ -853,8 +857,9 @@ static long rga_ioctl_release_buffer(unsigned long arg,
 		return -EFAULT;
 	}
 
-	external_buffer = kmalloc(sizeof(struct rga_external_buffer) * buffer_pool.size,
-				  GFP_KERNEL);
+	if (media_request_size(buffer_pool.size, sizeof(*external_buffer), &bytes))
+		return -EINVAL;
+	external_buffer = kvzalloc(bytes, GFP_KERNEL);
 	if (external_buffer == NULL) {
 		rga_err("external buffer list alloc error!\n");
 		return -ENOMEM;
@@ -862,7 +867,7 @@ static long rga_ioctl_release_buffer(unsigned long arg,
 
 	if (unlikely(copy_from_user(external_buffer,
 				    u64_to_user_ptr(buffer_pool.buffers_ptr),
-				    sizeof(struct rga_external_buffer) * buffer_pool.size))) {
+				    bytes))) {
 		rga_err("rga_buffer_pool external_buffer list copy_from_user failed\n");
 		ret = -EFAULT;
 
@@ -883,7 +888,7 @@ static long rga_ioctl_release_buffer(unsigned long arg,
 	}
 
 err_free_external_buffer:
-	kfree(external_buffer);
+	kvfree(external_buffer);
 	return ret;
 }
 
