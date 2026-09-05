@@ -132,7 +132,11 @@ mutations: missing encoder snapshot, private link recovery, missing epoch advanc
 loss of the persistent iosys_map, and unbounded timeout output. This source check
 complements UML; neither substitutes for a board drill.
 
-LSP was attempted on all changed C files. The retained, unselected RKVDEC-v1
-source still has pre-existing 7.2 API-port diagnostics (translator arities, old
-IOMMU-map arity, unavailable BSP PM-domain calls and remove callback type).
-The selected-client compiler/sparse gate does not cover that dormant client.
+LSP was attempted on all changed C files. A subsequent standalone compiler and
+history comparison established that the intentionally unselected RKVDEC-v1
+source has the **same eight diagnostic classes before and after this PR**.
+The failing call sites blame to the original import; the PR's scaling-list
+changes introduce no additional diagnostic. This is out of scope by policy,
+not an unfinished modernization requirement. See
+[RKVDEC-V1-DIAGNOSTICS.md](RKVDEC-V1-DIAGNOSTICS.md) for exact base/PR lines,
+compiler errors and blame evidence. No dormant-client fix or enablement was made.
