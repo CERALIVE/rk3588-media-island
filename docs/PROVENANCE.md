@@ -144,6 +144,9 @@ to name the donor directly.
 | `drivers/video/rockchip/mpp/mpp_rkvdec.c` | donor | same | REBASED | Reservation-protected iosys_map PPS access. | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/media_map.h` | CeraLive | same | FIRST-PARTY | Bounded iosys reads and raw-vmap ownership cleanup. | `GPL-2.0-only` |
 | `drivers/video/rockchip/mpp/media_fault.h` | CeraLive | same | FIRST-PARTY | Shared per-device rate limit for runtime fault diagnostics. | `GPL-2.0-only` |
+| `drivers/video/rockchip/mpp/media_dump.h` | CeraLive | — | FIRST-PARTY | Bounded register/event capture and deferred devcoredump ownership. | `GPL-2.0-only` |
+| `drivers/video/rockchip/mpp/media_recovery.h` | CeraLive | — | FIRST-PARTY | Managed reset lists and recovery epoch claims. | `GPL-2.0-only` |
+| `drivers/video/rockchip/mpp/media_probe.h` | CeraLive | — | FIRST-PARTY | Named resource deferral diagnostics. | `GPL-2.0-only` |
 | `drivers/video/rockchip/mpp/mpp_rkvdec2.c` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_rkvdec2.h` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_rkvdec2_link.c` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
@@ -244,6 +247,25 @@ the commit named here; there is no unlabelled post-replay source drift.
 | `a615b53` | Preserve user/kernel address spaces and file-local immutable objects so sparse is clean. |
 
 ## 7.2 compile and module identity
+
+### Modernization amendments to the import ledger
+
+The original imported-byte classifications above are superseded for the following
+files by the first-party adaptations in this series. Licence expressions and
+origin objects are unchanged. Rationale and proof are in MODERNIZATION.md.
+
+| Maintained files | Adaptation | Commit |
+|---|---|---|
+| `mpp/mpp_common.c`, `rga3/rga_drv.c`, `rga3/rga_job.c` | Overflow-safe array sizing and kvzalloc ownership | `89c2958` |
+| `mpp/mpp_rkvdec.c`, `rga3/rga_debugger.c`, `rga3/rga_dma_buf.c`, `rga3/rga_mm.c` | iosys_map CPU access and cleanup | `7f3fd7a` |
+| `mpp/mpp_common.h`, `mpp/mpp_common.c`, `mpp/mpp_iommu.c`, `mpp/mpp_jpgdec.c`, `mpp/mpp_rkvdec2.c`, `mpp/mpp_rkvdec2_link.c`, `mpp/mpp_rkvenc2.c`, `rga3/include/rga_drv.h`, `rga3/rga_drv.c`, `rga3/rga_job.c`, `rga3/rga_iommu.c`, `rga3/rga2_reg_info.c`, `rga3/rga3_reg_info.c` | Per-device fault diagnostic budget | `33481a4` |
+| `mpp/Kconfig`, `mpp/mpp_common.h`, `mpp/mpp_common.c`, `rga3/Kconfig`, `rga3/include/rga_drv.h`, `rga3/rga_drv.c`, `rga3/rga_job.c` | WANT_DEV_COREDUMP selection, bounded snapshots and lifecycle history | `77bcb1c` |
+| `mpp/mpp_common.h`, `mpp/mpp_common.c`, `mpp/mpp_jpgdec.c`, `mpp/mpp_rkvdec2.c`, `mpp/mpp_rkvenc2.c`, `rga3/include/rga_drv.h`, `rga3/rga_drv.c`, `rga3/rga_job.c`, `rga3/rga2_reg_info.c`, `rga3/rga3_reg_info.c` | Managed device-local reset lists, preserved MPP reset order and epoch claims | `841a2af` |
+| `mpp/mpp_common.h`, `mpp/mpp_common.c`, `mpp/mpp_iommu.c`, `mpp/mpp_jpgdec.c`, `mpp/mpp_rkvdec2.c`, `rga3/include/rga_drv.h`, `rga3/rga_drv.c` | Named resource failures and provider-deferral propagation | `772e4f1` |
+
+Paths in this amendment table are relative to `drivers/video/rockchip/`.
+The six new `media_*.h` headers take the independently asserted source census
+from 78 to 84; integration and mailbox counts remain eight and nine.
 
 The pinned Linux 7.2 tree was configured with arm64 `defconfig`, the pinned
 device fragment and `configs/rk3588-media-island.fragment`. After generating

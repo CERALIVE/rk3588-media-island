@@ -92,7 +92,7 @@ non-vacuous:
 
 | Gate | Live assertion |
 |---|---|
-| `series-integrity` | nine generated mailboxes reconstruct all 78 island source files and carry all eight applied integration payloads byte-identically; `integration/pending/` remains excluded |
+| `series-integrity` | nine generated mailboxes reconstruct all 84 island source files and carry all eight applied integration payloads byte-identically; `integration/pending/` remains excluded |
 | `shim-lint` | all classified compatibility headers and source call sites are scanned; a REAL-DEPENDENCY body remains forbidden |
 | `uapi-parity` | the imported kernel header is compared with both pinned userspace/vendor references, including every command value and layout assertion |
 | `cross-compile-modules` | strict modpost links exactly `rk_vcodec.ko` and `rga_multicore.ko` against the configured Linux 7.2 provider symbol table, verifies their OF aliases with `modinfo`, then builds and inspects both supported board DTBs |
