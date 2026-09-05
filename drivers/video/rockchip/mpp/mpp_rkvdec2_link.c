@@ -390,11 +390,11 @@ static void rkvdec_link_node_dump(const char *func, struct rkvdec_link_dev *dev)
 	for (i = 0; i < dev->task_capacity; i++) {
 		reg = table_base + i * reg_count;
 
-		mpp_err("slot %d link config iova %08x:\n", i,
+		mpp_fault(dev->mpp, "slot %d link config iova %08x:\n", i,
 			iova + i * dev->link_node_size);
 
 		for (j = 0; j < reg_count; j++) {
-			mpp_err("reg%03d 0x%08x\n", j, reg[j]);
+			mpp_fault(dev->mpp, "reg%03d 0x%08x\n", j, reg[j]);
 			udelay(100);
 		}
 	}
@@ -407,12 +407,12 @@ static void rkvdec_core_reg_dump(const char *func, struct rkvdec_link_dev *dev)
 	u32 e = mpp->var->hw_info->reg_end;
 	u32 i;
 
-	mpp_err("--- dump hardware register ---\n");
+	mpp_fault(mpp, "--- dump hardware register ---\n");
 
 	for (i = s; i <= e; i++) {
 		u32 reg = i * sizeof(u32);
 
-		mpp_err("reg[%03d]: %04x: 0x%08x\n",
+		mpp_fault(mpp, "reg[%03d]: %04x: 0x%08x\n",
 			i, reg, readl_relaxed(mpp->reg_base + reg));
 		udelay(100);
 	}
@@ -420,21 +420,21 @@ static void rkvdec_core_reg_dump(const char *func, struct rkvdec_link_dev *dev)
 
 static void rkvdec_link_reg_dump(const char *func, struct rkvdec_link_dev *dev)
 {
-	mpp_err("dump link config status from %s\n", func);
-	mpp_err("reg 0 %08x - irq status\n", dev->irq_status);
-	mpp_err("reg 1 %08x - cfg addr\n", dev->iova_curr);
-	mpp_err("reg 2 %08x - link mode\n", dev->link_mode);
-	mpp_err("reg 4 %08x - decoded num\n", dev->decoded_status);
-	mpp_err("reg 5 %08x - total num\n", dev->total);
-	mpp_err("reg 6 %08x - link mode en\n", dev->enabled);
-	mpp_err("reg 6 %08x - next ltb addr\n", dev->iova_next);
+	mpp_fault(dev->mpp, "dump link config status from %s\n", func);
+	mpp_fault(dev->mpp, "reg 0 %08x - irq status\n", dev->irq_status);
+	mpp_fault(dev->mpp, "reg 1 %08x - cfg addr\n", dev->iova_curr);
+	mpp_fault(dev->mpp, "reg 2 %08x - link mode\n", dev->link_mode);
+	mpp_fault(dev->mpp, "reg 4 %08x - decoded num\n", dev->decoded_status);
+	mpp_fault(dev->mpp, "reg 5 %08x - total num\n", dev->total);
+	mpp_fault(dev->mpp, "reg 6 %08x - link mode en\n", dev->enabled);
+	mpp_fault(dev->mpp, "reg 6 %08x - next ltb addr\n", dev->iova_next);
 }
 
 static void rkvdec_link_counter(const char *func, struct rkvdec_link_dev *dev)
 {
-	mpp_err("dump link counter from %s\n", func);
+	mpp_fault(dev->mpp, "dump link counter from %s\n", func);
 
-	mpp_err("task pending %d running %d\n",
+	mpp_fault(dev->mpp, "task pending %d running %d\n",
 		atomic_read(&dev->task_pending), dev->task_running);
 }
 
@@ -632,11 +632,12 @@ static void *rkvdec2_link_prepare(struct mpp_dev *mpp,
 	return mpp_task;
 }
 
-static int rkvdec2_link_reset(struct mpp_dev *mpp)
+static int rkvdec2_link_reset_once(struct mpp_dev *mpp, void *context)
 {
 	int ret;
+	int reset_ret = 0;
 
-	dev_info(mpp->dev, "resetting...\n");
+	mpp_fault(mpp, "resetting...\n");
 
 	disable_irq(mpp->irq);
 	mpp_iommu_disable_irq(mpp->iommu_info);
@@ -644,12 +645,11 @@ static int rkvdec2_link_reset(struct mpp_dev *mpp)
 	/* FIXME lock resource lock of the other devices in combo */
 	mpp_iommu_down_write(mpp->iommu_info);
 	mpp_reset_down_write(mpp->reset_group);
-	atomic_set(&mpp->reset_request, 0);
 
 	rockchip_save_qos(mpp->dev);
 
 	if (mpp->hw_ops->reset)
-		mpp->hw_ops->reset(mpp);
+		reset_ret = mpp->hw_ops->reset(mpp);
 
 	rockchip_restore_qos(mpp->dev);
 
@@ -659,16 +659,21 @@ static int rkvdec2_link_reset(struct mpp_dev *mpp)
 	 */
 	ret = mpp_iommu_refresh(mpp->iommu_info, mpp->dev);
 	if (ret)
-		dev_err(mpp->dev, "failed to refresh iommu: %d\n", ret);
+		mpp_fault(mpp, "failed to refresh iommu: %d\n", ret);
 
 	mpp_reset_up_write(mpp->reset_group);
 	mpp_iommu_up_write(mpp->iommu_info);
 
 	enable_irq(mpp->irq);
 	mpp_iommu_enable_irq(mpp->iommu_info);
-	dev_info(mpp->dev, "reset done\n");
+	mpp_fault(mpp, "reset done\n");
 
-	return ret;
+	return reset_ret ? reset_ret : ret;
+}
+
+static int rkvdec2_link_reset(struct mpp_dev *mpp)
+{
+	return mpp_hw_recover(mpp, rkvdec2_link_reset_once, NULL);
 }
 
 static int rkvdec2_link_irq(struct mpp_dev *mpp)
@@ -1053,19 +1058,19 @@ static void rkvdec2_link_timeout_proc(struct work_struct *work_s)
 					     struct mpp_task, timeout_work);
 
 	if (test_and_set_bit(TASK_STATE_HANDLE, &task->state)) {
-		mpp_err("task %d state %lx has been handled\n",
+		pr_err_ratelimited("task %d state %lx has been handled\n",
 			task->task_id, task->state);
 		return;
 	}
 
 	if (!task->session) {
-		mpp_err("task %d session is null.\n", task->task_id);
+		pr_err_ratelimited("task %d session is null.\n", task->task_id);
 		return;
 	}
 	session = task->session;
 
 	if (!session->mpp) {
-		mpp_err("task %d:%d mpp is null.\n", session->index,
+		pr_err_ratelimited("task %d:%d mpp is null.\n", session->index,
 			task->task_id);
 		return;
 	}
@@ -1074,6 +1079,7 @@ static void rkvdec2_link_timeout_proc(struct work_struct *work_s)
 
 	dec = to_rkvdec2_dev(mpp);
 	atomic_inc(&dec->link_dec->task_timeout);
+	mpp_dump_task(mpp, task, task->irq_status);
 
 	mpp_fault(mpp, "session %d task %d state %#lx timeout, cnt %d\n",
 		session->index, task->task_index, task->state,
@@ -1120,7 +1126,7 @@ static int rkvdec2_link_iommu_fault_handle(struct iommu_domain *iommu,
 		}
 	}
 	if (dump_mem_region)
-		mpp_task_dump_mem_region(mpp, mpp_task);
+		mpp_dump_task(mpp, mpp_task, status);
 	spin_unlock_irqrestore(&queue->running_lock, flags);
 	mpp_task_dump_hw_reg(mpp);
 
@@ -1138,7 +1144,7 @@ static void rkvdec2_link_resend(struct mpp_dev *mpp)
 
 	link_dec->task_running = 0;
 	list_for_each_entry_safe(mpp_task, n, &queue->running_list, queue_link) {
-		dev_err(mpp->dev, "resend task %d\n", mpp_task->task_index);
+		mpp_fault(mpp, "resend task %d\n", mpp_task->task_index);
 		cancel_delayed_work_sync(&mpp_task->timeout_work);
 		clear_bit(TASK_STATE_TIMEOUT, &mpp_task->state);
 		clear_bit(TASK_STATE_HANDLE, &mpp_task->state);
@@ -1207,12 +1213,13 @@ static void rkvdec2_link_try_dequeue(struct mpp_dev *mpp)
 		 * if timeout/abort/force dequeue found, reset and stop hw first.
 		 */
 		if ((timeout_flag || abort_flag || force_dequeue) && !reset_flag) {
-			dev_err(mpp->dev, "session %d task %d timeout %d abort %d force_dequeue %d\n",
+			mpp_fault(mpp, "session %d task %d timeout %d abort %d force_dequeue %d\n",
 				mpp_task->session->index, mpp_task->task_index,
 				timeout_flag, abort_flag, force_dequeue);
+			mpp_dump_task(mpp, mpp_task, irq_status);
 			reset_ret = rkvdec2_link_reset(mpp);
 			if (reset_ret) {
-				dev_err(mpp->dev, "link reset failed: %d\n", reset_ret);
+				mpp_fault(mpp, "link reset failed: %d\n", reset_ret);
 				set_bit(TASK_STATE_ABORT, &mpp_task->state);
 			}
 			reset_flag = 1;
@@ -1250,7 +1257,7 @@ static void rkvdec2_link_try_dequeue(struct mpp_dev *mpp)
 			     irq_status, timeout_flag, abort_flag);
 
 		if (irq_status & info->err_mask) {
-			dev_err(mpp->dev,
+			mpp_fault(mpp,
 				"session %d task %d irq_status %#08x timeout %u abort %u\n",
 				mpp_task->session->index, mpp_task->task_index,
 				irq_status, timeout_flag, abort_flag);
@@ -1511,7 +1518,7 @@ void rkvdec2_link_worker(struct kthread_work *work_s)
 		int ret = rkvdec2_link_reset(mpp);
 
 		if (ret) {
-			dev_err(mpp->dev, "link reset failed: %d\n", ret);
+			mpp_fault(mpp, "link reset failed: %d\n", ret);
 			atomic_set(&mpp->reset_request, 1);
 			goto done;
 		}
@@ -1755,18 +1762,19 @@ static void rkvdec2_ccu_timeout_work(struct work_struct *work_s)
 					     struct mpp_task, timeout_work);
 
 	if (test_and_set_bit(TASK_STATE_HANDLE, &task->state)) {
-		mpp_err("task %d state %lx has been handled\n",
+		pr_err_ratelimited("task %d state %lx has been handled\n",
 			task->task_id, task->state);
 		return;
 	}
 
 	if (!task->session) {
-		mpp_err("task %d session is null.\n", task->task_id);
+		pr_err_ratelimited("task %d session is null.\n", task->task_id);
 		return;
 	}
 	mpp = mpp_get_task_used_device(task, task->session);
-	mpp_err("%s, task %d state %#lx timeout\n", dev_name(mpp->dev),
+	mpp_fault(mpp, "%s, task %d state %#lx timeout\n", dev_name(mpp->dev),
 		task->task_index, task->state);
+	mpp_dump_task(mpp, task, task->irq_status);
 	set_bit(TASK_STATE_TIMEOUT, &task->state);
 	atomic_inc(&mpp->reset_request);
 	atomic_inc(&mpp->queue->reset_request);
@@ -2025,70 +2033,66 @@ static int rkvdec2_soft_ccu_dequeue(struct mpp_taskqueue *queue,
 	return 0;
 }
 
+struct rkvdec2_recovery_context {
+	struct rkvdec2_ccu *ccu;
+	int index;
+};
+
+static int rkvdec2_soft_ccu_core_reset(struct mpp_dev *mpp, void *arg)
+{
+	struct rkvdec2_recovery_context *context = arg;
+	struct rkvdec2_ccu *ccu = context->ccu;
+	struct rkvdec2_dev *dec = to_rkvdec2_dev(mpp);
+	u32 val;
+	int ret, reset_ret = 0;
+
+	mpp_fault(mpp, "resetting for err %#x\n", mpp->irq_status);
+	disable_hardirq(mpp->irq);
+	writel(dec->core_mask, ccu->reg_base + RKVDEC_CCU_CORE_IDLE_BASE);
+	mpp_write(mpp, RKVDEC_REG_IMPORTANT_BASE, RKVDEC_SOFTREST_EN);
+	udelay(5);
+	val = mpp_read(mpp, RKVDEC_REG_INT_EN);
+	if (!(val & RKVDEC_SOFT_RESET_READY))
+		mpp_fault(mpp, "soft reset fail, int %08x\n", val);
+	mpp_write(mpp, RKVDEC_REG_INT_EN, 0);
+	val = mpp_read(mpp, RKVDEC_REG_DEBUG_INT_BASE);
+	if (!(val & RKVDEC_BIT_BUS_IDLE))
+		mpp_fault(mpp, "bus busy\n");
+	if (IS_REACHABLE(CONFIG_ROCKCHIP_SIP)) {
+		rockchip_dmcfreq_lock();
+		sip_smc_vpu_reset(context->index, 0, 0);
+		rockchip_dmcfreq_unlock();
+	} else {
+		reset_ret = rkvdec2_reset(mpp);
+	}
+	writel(dec->core_mask & RKVDEC_CCU_CORE_RW_MASK,
+	       ccu->reg_base + RKVDEC_CCU_CORE_ERR_BASE);
+	writel(dec->core_mask & RKVDEC_CCU_CORE_RW_MASK,
+	       ccu->reg_base + RKVDEC_CCU_CORE_IDLE_BASE);
+	ret = mpp_iommu_refresh(mpp->iommu_info, mpp->dev);
+	if (ret)
+		mpp_fault(mpp, "iommu refresh failed: %d\n", ret);
+	mpp->irq_status = 0;
+	mpp_iommu_shared_domain_verify(&ccu->iommu, mpp->iommu_info);
+	enable_irq(mpp->irq);
+	mpp_fault(mpp, "reset done\n");
+	return reset_ret ? reset_ret : ret;
+}
+
 static int rkvdec2_soft_ccu_reset(struct mpp_taskqueue *queue,
 				  struct rkvdec2_ccu *ccu)
 {
-	int i;
-	int first_ret = 0;
+	int i, ret, first_ret = 0;
 
 	for (i = queue->core_count - 1; i >= 0; i--) {
-		u32 val;
-		int ret;
-
+		struct rkvdec2_recovery_context context = { .ccu = ccu, .index = i };
 		struct mpp_dev *mpp = queue->cores[i];
-		struct rkvdec2_dev *dec = to_rkvdec2_dev(mpp);
 
 		if (mpp->disable)
 			continue;
-		/* Claim this core's request before reset so a new one survives. */
-		atomic_xchg(&mpp->reset_request, 0);
-
-		dev_info(mpp->dev, "resetting for err %#x\n", mpp->irq_status);
-		disable_hardirq(mpp->irq);
-
-		/* foce idle, disconnect core and ccu */
-		writel(dec->core_mask, ccu->reg_base + RKVDEC_CCU_CORE_IDLE_BASE);
-
-		/* soft reset */
-		mpp_write(mpp, RKVDEC_REG_IMPORTANT_BASE, RKVDEC_SOFTREST_EN);
-		udelay(5);
-		val = mpp_read(mpp, RKVDEC_REG_INT_EN);
-		if (!(val & RKVDEC_SOFT_RESET_READY))
-			mpp_err("soft reset fail, int %08x\n", val);
-		mpp_write(mpp, RKVDEC_REG_INT_EN, 0);
-
-		/* check bus idle */
-		val = mpp_read(mpp, RKVDEC_REG_DEBUG_INT_BASE);
-		if (!(val & RKVDEC_BIT_BUS_IDLE))
-			mpp_err("bus busy\n");
-
-		if (IS_REACHABLE(CONFIG_ROCKCHIP_SIP)) {
-			/* sip reset */
-			rockchip_dmcfreq_lock();
-			sip_smc_vpu_reset(i, 0, 0);
-			rockchip_dmcfreq_unlock();
-		} else {
-			rkvdec2_reset(mpp);
-		}
-		/* clear error mask */
-		writel(dec->core_mask & RKVDEC_CCU_CORE_RW_MASK,
-		       ccu->reg_base + RKVDEC_CCU_CORE_ERR_BASE);
-		/* connect core and ccu */
-		writel(dec->core_mask & RKVDEC_CCU_CORE_RW_MASK,
-		       ccu->reg_base + RKVDEC_CCU_CORE_IDLE_BASE);
-		ret = mpp_iommu_refresh(mpp->iommu_info, mpp->dev);
-		if (ret) {
-			dev_err(mpp->dev, "iommu refresh failed: %d\n", ret);
-			if (!first_ret)
-				first_ret = ret;
-		}
-		/* Any completion sampled before reset no longer has valid readback. */
-		mpp->irq_status = 0;
-		/* audit: reset/refresh must leave the core on the shared domain */
-		mpp_iommu_shared_domain_verify(&ccu->iommu, mpp->iommu_info);
-
-		enable_irq(mpp->irq);
-		dev_info(mpp->dev, "reset done\n");
+		ret = mpp_hw_recover(mpp, rkvdec2_soft_ccu_core_reset, &context);
+		if (ret && !first_ret)
+			first_ret = ret;
 	}
 	return first_ret;
 }
@@ -2139,7 +2143,7 @@ static struct mpp_dev *rkvdec2_ccu_dev_match_by_iommu(struct mpp_taskqueue *queu
 		u32 is_write = (status & BIT(5)) ? 1 : 0;
 
 		if (status && iova)
-			dev_err(iommu_dev, "core %d pagfault at iova %#08x type %s status %#x\n",
+			mpp_fault(mpp, "core %d pagfault at iova %#08x type %s status %#x\n",
 				mpp->core_id, iova, is_write ? "write" : "read", status);
 	}
 out:
@@ -2159,7 +2163,7 @@ int rkvdec2_soft_ccu_iommu_fault_handle(struct iommu_domain *iommu,
 
 	mpp = rkvdec2_ccu_dev_match_by_iommu(queue, iommu_dev);
 	if (!mpp) {
-		dev_err(iommu_dev, "iommu fault, but no dev match\n");
+		dev_err_ratelimited(iommu_dev, "iommu fault, but no dev match\n");
 		return -ENODEV;
 	}
 	/*
@@ -2176,7 +2180,7 @@ int rkvdec2_soft_ccu_iommu_fault_handle(struct iommu_domain *iommu,
 	spin_lock_irqsave(&mpp->queue->running_lock, flags);
 	mpp_task = mpp->cur_task;
 	if (mpp_task)
-		mpp_task_dump_mem_region(mpp, mpp_task);
+		mpp_dump_task(mpp, mpp_task, status);
 	spin_unlock_irqrestore(&mpp->queue->running_lock, flags);
 
 	atomic_inc(&mpp->queue->reset_request);
@@ -2202,13 +2206,13 @@ int rkvdec2_hard_ccu_iommu_fault_handle(struct iommu_domain *iommu,
 
 	mpp = rkvdec2_ccu_dev_match_by_iommu(queue, iommu_dev);
 	if (!mpp) {
-		dev_err(iommu_dev, "iommu fault, but no dev match\n");
+		dev_err_ratelimited(iommu_dev, "iommu fault, but no dev match\n");
 		return -ENODEV;
 	}
 
 	dec = to_rkvdec2_dev(mpp);
 	err_task_iova = readl(dec->link_dec->reg_base + 0x4);
-	dev_err(mpp->dev, "core %d err task iova %#08x\n", mpp->core_id, err_task_iova);
+	mpp_fault(mpp, "core %d err task iova %#08x\n", mpp->core_id, err_task_iova);
 	rockchip_iommu_mask_irq(mpp->dev);
 
 	spin_lock_irqsave(&queue->running_lock, flags);
@@ -2216,7 +2220,7 @@ int rkvdec2_hard_ccu_iommu_fault_handle(struct iommu_domain *iommu,
 		struct rkvdec2_task *task = to_rkvdec2_task(mpp_task);
 
 		if ((u32)task->table->iova == err_task_iova) {
-			mpp_task_dump_mem_region(mpp, mpp_task);
+			mpp_dump_task(mpp, mpp_task, status);
 			set_bit(TASK_STATE_ABORT, &mpp_task->state);
 			break;
 		}
@@ -2677,10 +2681,10 @@ static int rkvdec2_hard_ccu_dequeue(struct mpp_taskqueue *queue,
 			if (timeout_flag && !dump_reg && mpp_debug_unlikely(DEBUG_DUMP_ERR_REG)) {
 				u32 i;
 
-				mpp_err("###### ccu #####\n");
+				mpp_fault(&dec->mpp, "###### ccu #####\n");
 				rkvdec2_dump_ccu(ccu);
 				for (i = 0; i < queue->core_count; i++) {
-					mpp_err("###### core %d #####\n", i);
+					mpp_fault(queue->cores[i], "###### core %d #####\n", i);
 					rkvdec2_dump_link(to_rkvdec2_dev(queue->cores[i]));
 					rkvdec2_dump_core(queue->cores[i], task);
 				}
@@ -2694,9 +2698,10 @@ static int rkvdec2_hard_ccu_dequeue(struct mpp_taskqueue *queue,
 			/* Wake up the GET thread */
 			wake_up(&mpp_task->wait);
 			if ((irq_status & hw->err_mask) || timeout_flag) {
-				pr_err("session %d task %d irq_status %#x timeout=%u abort=%u\n",
+				mpp_fault(&dec->mpp, "session %d task %d irq_status %#x timeout=%u abort=%u\n",
 					mpp_task->session->index, mpp_task->task_index,
 					irq_status, timeout_flag, abort_flag);
+				mpp_dump_task(&dec->mpp, mpp_task, irq_status);
 				atomic_inc(&queue->reset_request);
 			}
 			mpp_dev_load(mpp_task->session->mpp, mpp_task);
@@ -2717,69 +2722,65 @@ static int rkvdec2_hard_ccu_dequeue(struct mpp_taskqueue *queue,
 	return 0;
 }
 
+static int rkvdec2_hard_ccu_core_reset(struct mpp_dev *mpp, void *arg)
+{
+	struct rkvdec2_recovery_context *context = arg;
+	struct rkvdec2_ccu *ccu = context->ccu;
+	struct rkvdec2_dev *dec = to_rkvdec2_dev(mpp);
+	u32 val;
+	int ret, reset_ret = 0;
+
+	mpp_fault(mpp, "resetting...\n");
+	disable_hardirq(mpp->irq);
+	writel(dec->core_mask, ccu->reg_base + RKVDEC_CCU_CORE_IDLE_BASE);
+	writel(0, ccu->reg_base + RKVDEC_CCU_WORK_BASE);
+	mpp_write(mpp, RKVDEC_REG_IMPORTANT_BASE, RKVDEC_SOFTREST_EN);
+	udelay(5);
+	val = mpp_read(mpp, RKVDEC_REG_INT_EN);
+	if (!(val & RKVDEC_SOFT_RESET_READY))
+		mpp_fault(mpp, "soft reset fail, int %08x\n", val);
+#if IS_ENABLED(CONFIG_ROCKCHIP_SIP)
+	rockchip_dmcfreq_lock();
+	sip_smc_vpu_reset(context->index, 0, 0);
+	rockchip_dmcfreq_unlock();
+#else
+	reset_ret = rkvdec2_reset(mpp);
+#endif
+	ret = mpp_iommu_refresh(mpp->iommu_info, mpp->dev);
+	if (ret)
+		mpp_fault(mpp, "iommu refresh failed: %d\n", ret);
+	enable_irq(mpp->irq);
+	mpp_iommu_shared_domain_verify(&ccu->iommu, mpp->iommu_info);
+	val = mpp_read_relaxed(mpp, 272 * 4);
+	mpp_fault(mpp, "reset done, idle %d\n", val & 1);
+	return reset_ret ? reset_ret : ret;
+}
+
 static int rkvdec2_hard_ccu_reset(struct mpp_taskqueue *queue, struct rkvdec2_ccu *ccu)
 {
-	u32 i = 0;
-	int first_ret = 0;
+	unsigned int i;
+	int ret, first_ret = 0;
+	bool recovered = false;
 
-	mpp_debug_enter();
-
-	/* reset and active core */
 	for (i = 0; i < queue->core_count; i++) {
-		u32 val = 0;
-		int ret;
+		struct rkvdec2_recovery_context context = { .ccu = ccu, .index = i };
 		struct mpp_dev *mpp = queue->cores[i];
-		struct rkvdec2_dev *dec = to_rkvdec2_dev(mpp);
+		s64 claimed = atomic64_read(&mpp->recovery.claimed_epoch);
 
 		if (mpp->disable)
 			continue;
-		/* Claim this core's request before reset so a new one survives. */
-		atomic_xchg(&mpp->reset_request, 0);
-		dev_info(mpp->dev, "resetting...\n");
-		disable_hardirq(mpp->irq);
-		/* force idle */
-		writel(dec->core_mask, ccu->reg_base + RKVDEC_CCU_CORE_IDLE_BASE);
-		writel(0, ccu->reg_base + RKVDEC_CCU_WORK_BASE);
-
-		{
-			/* soft reset */
-			u32 val;
-
-			mpp_write(mpp, RKVDEC_REG_IMPORTANT_BASE, RKVDEC_SOFTREST_EN);
-			udelay(5);
-			val = mpp_read(mpp, RKVDEC_REG_INT_EN);
-			if (!(val & RKVDEC_SOFT_RESET_READY))
-				mpp_err("soft reset fail, int %08x\n", val);
-
-			// /* cru reset */
-			// dev_info(mpp->dev, "cru reset\n");
-			// rkvdec2_reset(mpp);
-		}
-#if IS_ENABLED(CONFIG_ROCKCHIP_SIP)
-		rockchip_dmcfreq_lock();
-		sip_smc_vpu_reset(i, 0, 0);
-		rockchip_dmcfreq_unlock();
-#else
-		rkvdec2_reset(mpp);
-#endif
-		ret = mpp_iommu_refresh(mpp->iommu_info, mpp->dev);
-		if (ret) {
-			dev_err(mpp->dev, "iommu refresh failed: %d\n", ret);
-			if (!first_ret)
-				first_ret = ret;
-		}
-		enable_irq(mpp->irq);
-		/* audit: reset/refresh must leave the core on the shared domain */
-		mpp_iommu_shared_domain_verify(&ccu->iommu, mpp->iommu_info);
-		val = mpp_read_relaxed(mpp, 272*4);
-		dev_info(mpp->dev, "reset done, idle %d\n", (val & 1));
+		ret = mpp_hw_recover(mpp, rkvdec2_hard_ccu_core_reset, &context);
+		if (ret && !first_ret)
+			first_ret = ret;
+		recovered |= claimed != atomic64_read(&mpp->recovery.claimed_epoch);
 	}
-	/* reset ccu */
-	mpp_safe_reset(ccu->rst_a);
-	udelay(5);
-	mpp_safe_unreset(ccu->rst_a);
+	if (recovered) {
+		struct reset_control_bulk_data control = { .rstc = ccu->rst_a };
 
-	mpp_debug_leave();
+		ret = media_reset_cycle(1, &control, &control);
+		if (ret && !first_ret)
+			first_ret = ret;
+	}
 	return first_ret;
 }
 

@@ -12,6 +12,7 @@
 #define __ROCKCHIP_MPP_IOMMU_H__
 
 #include <linux/iommu.h>
+#include <linux/iosys-map.h>
 #include <linux/dma-mapping.h>
 #include <linux/interrupt.h>
 #include <linux/iova.h>
@@ -33,6 +34,7 @@ struct mpp_dma_buffer {
 
 	dma_addr_t iova;
 	unsigned long size;
+	struct iosys_map map;
 	void *vaddr;
 
 	struct kref ref;

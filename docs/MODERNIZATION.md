@@ -11,7 +11,7 @@ drills, not part of this source series.
 | (c) Recovery epochs / bulk resets | Managed optional exclusive reset lists; epoch claims in common MPP and RGA recovery | `media_recovery_concurrent_epoch_test`: two kernel threads, 2,000 attempts, one claim. `media_recovery_later_epoch_test`: a new start permits a second claim and rejects stale epochs. UML 60/60 |
 | (d) Deferred resource diagnostics | Named probe errors for clocks, interrupts, IOMMU and power domains; provider deferrals propagated | `media_probe_names_deferred_resource_test` checks the kernel's stored deferred-probe reason names iommus provider and aclk_vcodec, retaining -EPROBE_DEFER; UML 61/61 |
 | (e) Request sizing | Checked multiplication; variable-sized RGA request/pool/job arrays use kvzalloc with kvfree on every exit | `media_request_size_rejects_overflow_test`: SIZE_MAX / sizeof(u64) + 1 returns -EINVAL and clears the size; 64 KiB boundary accepted. UML: 55/55 passed |
-| (f) iosys_map | Raw mapping state replaced; legacy dma-buf vmap and PDE_DATA branches removed | `media_map_lifetime_test`: real page vmap, bounded read, unmap clears ownership, repeated cleanup safe. UML 56/56; selected MPP/RGA objects sparse C=2 with -Wsparse-error clean; raw-vmap/PDE_DATA grep empty |
+| (f) iosys_map | Raw mapping state replaced; legacy dma-buf vmap and PDE_DATA branches removed | `media_map_lifetime_test` covers page mapping cleanup; `media_mapping_preserves_exporter_map_test` uses a real dma-buf exporter and checks its I/O map survives until the exact unmap and is then cleared. UML 62/62; selected MPP/RGA objects sparse C=2 with -Wsparse-error clean; raw-vmap/PDE_DATA grep empty |
 | (g) Mapping cost decision | UNMEASURABLE ON THIS BOARD: no perf binary; Rock also lacks exposed trace events and an available hardware encoder | [Baseline transcript](MODERNIZATION-BASELINE.md). No percentage inferred; no iommu_map_sg change made, and NOT-WORTH-IT is not claimed |
 
 ## Fault logging
@@ -50,6 +50,12 @@ vfree-only stub.
 The live timeout → `/sys/class/devcoredump/devcd*/data` → five-minute kernel
 expiry drill is **deferred until a modified kernel is deployed**. UML tests
 submission/ownership and the sysfs link, not the board timeout or expiry timer.
+
+The dedicated encoder result-wait timeout and the decoder link/soft-CCU/hard-CCU
+timeout and IOMMU paths also capture through `mpp_dump_task`. MMIO is sampled
+only while a runtime-PM reference is available; a late userspace timeout after
+power-down records metadata with zero registers instead of touching an unpowered
+block. The kernel buffer is self-contained before queued work can outlive the task.
 
 ## Mapping ownership
 
@@ -90,6 +96,12 @@ controls retain the register-reset fallback. Existing job-mutex and power-refere
 ownership remains with the callers. Each hardware task start opens a fresh epoch;
 repeated faults in that epoch cannot trigger another reset sequence.
 
+Default MPP, link, both decoder CCU modes and the decoder's pre-suspend reset
+enter the same `mpp_hw_recover` owner. Mode-specific callbacks retain their own
+stop/mask/reset/IOMMU/restore sequence rather than losing those differences in a
+generic bulk call. The common task-run boundary advances epochs for linked tasks
+as well as the default worker.
+
 These unit proofs exercise recovery ownership, not silicon reset efficacy. The
 post-flash reset/fault drill must still establish the latter.
 
@@ -109,3 +121,18 @@ board-flash drill.** No modified module or kernel was deployed. There is no
 measured delta and no ≤1% acceptance claim. This single run is not a variance
 study and cannot attribute an iommu_map fraction; a controlled before/after
 campaign on the same board and kernel configuration remains required.
+
+## Review corrections and source wiring proof
+
+The initial independent review rejected missing encoder/link timeout hooks,
+decoder-link recovery bypasses, leftover selected-path fault logs, and the MPP
+buffer pool's loss of the dma-buf map tag. The follow-up source corrections cover
+those paths. `scripts/check-modernization.py --self-test` now rejects five
+mutations: missing encoder snapshot, private link recovery, missing epoch advance,
+loss of the persistent iosys_map, and unbounded timeout output. This source check
+complements UML; neither substitutes for a board drill.
+
+LSP was attempted on all changed C files. The retained, unselected RKVDEC-v1
+source still has pre-existing 7.2 API-port diagnostics (translator arities, old
+IOMMU-map arity, unavailable BSP PM-domain calls and remove callback type).
+The selected-client compiler/sparse gate does not cover that dormant client.

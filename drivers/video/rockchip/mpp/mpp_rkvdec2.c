@@ -1780,6 +1780,8 @@ static int rkvdec2_ccu_remove(struct device *dev)
 
 static int rkvdec2_ccu_probe(struct platform_device *pdev)
 {
+	struct media_resets resets = {};
+	int ret, i;
 	struct rkvdec2_ccu *ccu;
 	struct resource *res;
 	struct device *dev = &pdev->dev;
@@ -1820,9 +1822,12 @@ static int rkvdec2_ccu_probe(struct platform_device *pdev)
 	if (IS_ERR(ccu->aclk_info.clk))
 		return media_probe_error(dev, PTR_ERR(ccu->aclk_info.clk), "aclk_ccu");
 
-	ccu->rst_a = devm_reset_control_get(dev, "video_ccu");
-	if (IS_ERR(ccu->rst_a))
-		return media_probe_error(dev, PTR_ERR(ccu->rst_a), "video_ccu");
+	ret = media_resets_get(dev, &resets);
+	if (ret)
+		return ret;
+	for (i = 0; i < resets.count; i++)
+		if (!strcmp(resets.controls[i].id, "video_ccu"))
+			ccu->rst_a = resets.controls[i].rstc;
 	if (ccu->rst_a)
 		mpp_safe_unreset(ccu->rst_a);
 	else
@@ -2247,6 +2252,16 @@ static void rkvdec2_shutdown(struct platform_device *pdev)
 		mpp_dev_shutdown(pdev);
 }
 
+static int rkvdec2_pm_reset_once(struct mpp_dev *mpp, void *context)
+{
+	int ret, reset_ret = 0;
+
+	if (mpp->hw_ops->reset)
+		reset_ret = mpp->hw_ops->reset(mpp);
+	ret = mpp_iommu_refresh(mpp->iommu_info, mpp->dev);
+	return reset_ret ? reset_ret : ret;
+}
+
 static int __maybe_unused rkvdec2_runtime_suspend(struct device *dev)
 {
 	if (strstr(dev_name(dev), "ccu")) {
@@ -2269,9 +2284,7 @@ static int __maybe_unused rkvdec2_runtime_suspend(struct device *dev)
 		 * to ensure hardware is fully idle,
 		 * reset and wait for reset ready before suspend.
 		 */
-		if (mpp->hw_ops->reset)
-			mpp->hw_ops->reset(mpp);
-		ret = mpp_iommu_refresh(mpp->iommu_info, mpp->dev);
+		ret = mpp_hw_recover(mpp, rkvdec2_pm_reset_once, NULL);
 		if (ret) {
 			dev_err(dev, "failed to refresh iommu: %d\n", ret);
 			if (mpp->is_irq_startup) {

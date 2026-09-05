@@ -2011,10 +2011,10 @@ index 0000000000000000000000000000000000000000..a200d63a678877fb2faab04e15bcf558
 +}
 diff --git a/drivers/video/rockchip/mpp/media_dump.h b/drivers/video/rockchip/mpp/media_dump.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..e0a2946fded2cfcb588a38c39a8415039e109281
+index 0000000000000000000000000000000000000000..ab8d5cd32f0f52105a14374c08316175abf6fe8b
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/media_dump.h
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,130 @@
 +/* SPDX-License-Identifier: GPL-2.0-only */
 +#ifndef ROCKCHIP_MEDIA_DUMP_H
 +#define ROCKCHIP_MEDIA_DUMP_H
@@ -2033,6 +2033,8 @@ index 0000000000000000000000000000000000000000..e0a2946fded2cfcb588a38c39a841503
 +	MEDIA_DONE,
 +	MEDIA_FAULT,
 +	MEDIA_RESET,
++	MEDIA_QUEUED,
++	MEDIA_SELECTED,
 +};
 +
 +struct media_dump_event_record {
@@ -2180,15 +2182,16 @@ index 0000000000000000000000000000000000000000..4642718e050a6052c7bb37fb6c78e027
 +#endif
 diff --git a/drivers/video/rockchip/mpp/media_map.h b/drivers/video/rockchip/mpp/media_map.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..8d8b1de0c733e4089d3a3b6bd4f3e37e4866fd48
+index 0000000000000000000000000000000000000000..0c2c5feae045b8de667d792e7603766ae3deb91b
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/media_map.h
-@@ -0,0 +1,26 @@
+@@ -0,0 +1,33 @@
 +/* SPDX-License-Identifier: GPL-2.0-only */
 +#ifndef ROCKCHIP_MEDIA_MAP_H
 +#define ROCKCHIP_MEDIA_MAP_H
 +
 +#include <linux/errno.h>
++#include <linux/dma-buf.h>
 +#include <linux/iosys-map.h>
 +#include <linux/vmalloc.h>
 +
@@ -2206,6 +2209,12 @@ index 0000000000000000000000000000000000000000..8d8b1de0c733e4089d3a3b6bd4f3e37e
 +{
 +	if (iosys_map_is_set(map))
 +		vunmap(map->vaddr);
++	iosys_map_clear(map);
++}
++
++static inline void media_dma_vunmap(struct dma_buf *buffer, struct iosys_map *map)
++{
++	dma_buf_vunmap_unlocked(buffer, map);
 +	iosys_map_clear(map);
 +}
 +
@@ -3555,10 +3564,10 @@ index 0000000000000000000000000000000000000000..3ebeecc5719d09a0ff436a9d035d6cf9
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_common.c b/drivers/video/rockchip/mpp/mpp_common.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..59369964fe7f4c777fa8723822e025ae71525fea
+index 0000000000000000000000000000000000000000..0745012d2e04752c7b84f7352d8bc443ec402d2a
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_common.c
-@@ -0,0 +1,3467 @@
+@@ -0,0 +1,3489 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -3716,7 +3725,7 @@ index 0000000000000000000000000000000000000000..59369964fe7f4c777fa8723822e025ae
 +	media_dump_event(&mpp->dump, MEDIA_FAULT, task->task_id, irq_status);
 +}
 +
-+static void mpp_dump_task(struct mpp_dev *mpp, struct mpp_task *task, u32 irq_status)
++void mpp_dump_task(struct mpp_dev *mpp, struct mpp_task *task, u32 irq_status)
 +{
 +	struct media_dump_record record = {
 +		.task = task->task_id, .core = mpp->core_id, .status = irq_status,
@@ -3730,10 +3739,13 @@ index 0000000000000000000000000000000000000000..59369964fe7f4c777fa8723822e025ae
 +		record.iova = mem->iova;
 +		record.span = mem->len;
 +	}
-+	record.reg_base = hw->reg_start * 4;
-+	record.reg_count = min_t(u32, hw->reg_end - hw->reg_start + 1, MEDIA_DUMP_REGS);
-+	for (i = 0; i < record.reg_count; i++)
-+		record.regs[i] = mpp_read_relaxed(mpp, record.reg_base + i * 4);
++	if (pm_runtime_get_if_in_use(mpp->dev) > 0) {
++		record.reg_base = hw->reg_start * 4;
++		record.reg_count = min_t(u32, hw->reg_end - hw->reg_start + 1, MEDIA_DUMP_REGS);
++		for (i = 0; i < record.reg_count; i++)
++			record.regs[i] = mpp_read_relaxed(mpp, record.reg_base + i * 4);
++		pm_runtime_put_autosuspend(mpp->dev);
++	}
 +	media_dump_capture(&mpp->dump, &record);
 +}
 +
@@ -4242,7 +4254,7 @@ index 0000000000000000000000000000000000000000..59369964fe7f4c777fa8723822e025ae
 +	struct mpp_task *task = container_of(ref, struct mpp_task, ref);
 +
 +	if (!task->session) {
-+		mpp_err("task %p, task->session is null.\n", task);
++		pr_err_ratelimited("task %p, task->session is null.\n", task);
 +		return;
 +	}
 +	session = task->session;
@@ -4275,13 +4287,13 @@ index 0000000000000000000000000000000000000000..59369964fe7f4c777fa8723822e025ae
 +	struct mpp_session *session = task->session;
 +
 +	if (!session) {
-+		mpp_err("task %p, task->session is null.\n", task);
++		pr_err_ratelimited("task %p, task->session is null.\n", task);
 +		return;
 +	}
 +
 +	mpp = mpp_get_task_used_device(task, session);
 +	if (!mpp) {
-+		mpp_err("session %d:%d mpp is null\n", session->device_type, session->index);
++		pr_err_ratelimited("session %d:%d mpp is null\n", session->device_type, session->index);
 +		return;
 +	}
 +	disable_irq(mpp->irq);
@@ -4441,20 +4453,33 @@ index 0000000000000000000000000000000000000000..59369964fe7f4c777fa8723822e025ae
 +	return rst;
 +}
 +
-+int mpp_dev_reset(struct mpp_dev *mpp)
++int mpp_hw_recover(struct mpp_dev *mpp,
++		   int (*recover)(struct mpp_dev *, void *), void *context)
 +{
 +	int ret;
-+	int reset_ret = 0;
 +	int reason;
 +	s64 epoch = atomic64_read(&mpp->recovery.recovery_epoch);
 +
 +	mutex_lock(&mpp->recovery_lock);
 +	reason = atomic_xchg(&mpp->reset_request, 0);
-+	if (!reason || !media_recovery_claim(&mpp->recovery, epoch)) {
++	if (!media_recovery_claim(&mpp->recovery, epoch)) {
 +		ret = mpp->recovery_result;
 +		mutex_unlock(&mpp->recovery_lock);
 +		return ret;
 +	}
++	atomic64_inc(&mpp->telemetry.resets);
++	trace_mpp_reset(mpp->core_id, reason);
++	media_dump_event(&mpp->dump, MEDIA_RESET, 0, reason);
++	ret = recover(mpp, context);
++	mpp->recovery_result = ret;
++	mutex_unlock(&mpp->recovery_lock);
++	return ret;
++}
++
++static int mpp_dev_reset_once(struct mpp_dev *mpp, void *context)
++{
++	int ret;
++	int reset_ret = 0;
 +
 +	mpp_fault(mpp, "resetting...\n");
 +
@@ -4475,9 +4500,6 @@ index 0000000000000000000000000000000000000000..59369964fe7f4c777fa8723822e025ae
 +	/* FIXME lock resource lock of the other devices in combo */
 +	mpp_iommu_down_write(mpp->iommu_info);
 +	mpp_reset_down_write(mpp->reset_group);
-+	atomic64_inc(&mpp->telemetry.resets);
-+	trace_mpp_reset(mpp->core_id, reason);
-+	media_dump_event(&mpp->dump, MEDIA_RESET, 0, reason);
 +
 +	if (mpp->hw_ops->reset)
 +		reset_ret = mpp->hw_ops->reset(mpp);
@@ -4501,13 +4523,21 @@ index 0000000000000000000000000000000000000000..59369964fe7f4c777fa8723822e025ae
 +
 +	mpp_fault(mpp, "reset done\n");
 +
-+	mpp->recovery_result = reset_ret ? reset_ret : ret;
-+	mutex_unlock(&mpp->recovery_lock);
 +	return reset_ret ? reset_ret : ret;
++}
++
++int mpp_dev_reset(struct mpp_dev *mpp)
++{
++	if (!atomic_read(&mpp->reset_request))
++		return 0;
++	return mpp_hw_recover(mpp, mpp_dev_reset_once, NULL);
 +}
 +
 +void mpp_task_run_begin(struct mpp_task *task, u32 timing_en, u32 timeout)
 +{
++	struct mpp_dev *mpp = mpp_get_task_used_device(task, task->session);
++
++	media_recovery_started(&mpp->recovery);
 +	preempt_disable();
 +
 +	set_bit(TASK_STATE_START, &task->state);
@@ -4677,7 +4707,6 @@ index 0000000000000000000000000000000000000000..59369964fe7f4c777fa8723822e025ae
 +	set_bit(TASK_STATE_BUSY_REPORTED, &task->state);
 +	atomic_inc(&mpp->telemetry.busy);
 +	trace_mpp_task_started(mpp->core_id, task->task_id);
-+	media_recovery_started(&mpp->recovery);
 +	media_dump_event(&mpp->dump, MEDIA_STARTED, task->task_id, 0);
 +	/* Fault admission is live before a pending codec completion can run. */
 +	enable_irq(mpp->irq);
@@ -4861,6 +4890,7 @@ index 0000000000000000000000000000000000000000..59369964fe7f4c777fa8723822e025ae
 +		atomic_inc(&task_mpp->task_count);
 +		trace_mpp_core_selected(task->task_id, task_mpp->core_id,
 +					queue->core_idle);
++		media_dump_event(&task_mpp->dump, MEDIA_SELECTED, task->task_id, 0);
 +		mpp_taskqueue_pending_to_run(queue, task);
 +		WARN_ON_ONCE(!mpp_task_recovery_mark_running(&task->state));
 +		if (mpp_task_run(task_mpp, task))
@@ -5822,6 +5852,7 @@ index 0000000000000000000000000000000000000000..59369964fe7f4c777fa8723822e025ae
 +		atomic64_add(task->bytes, &task->session->telemetry.bytes);
 +		trace_mpp_task_queued(task->session->index, task->task_id,
 +				      task->session->device_type);
++		media_dump_event(&task->session->mpp->dump, MEDIA_QUEUED, task->task_id, 0);
 +	}
 +
 +	if (mpp_prev && queue_prev) {
@@ -7028,10 +7059,10 @@ index 0000000000000000000000000000000000000000..59369964fe7f4c777fa8723822e025ae
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_common.h b/drivers/video/rockchip/mpp/mpp_common.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..6365cd7b8311d8b777f9e92119d59d857b678263
+index 0000000000000000000000000000000000000000..ae7b324d61e1957188eca7b6e9126c1b96038ede
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_common.h
-@@ -0,0 +1,911 @@
+@@ -0,0 +1,915 @@
 +/* SPDX-License-Identifier: (GPL-2.0+ OR MIT) */
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -7071,6 +7102,10 @@ index 0000000000000000000000000000000000000000..6365cd7b8311d8b777f9e92119d59d85
 +
 +struct mpp_dev;
 +struct mpp_clk_info;
++struct mpp_task;
++void mpp_dump_task(struct mpp_dev *mpp, struct mpp_task *task, u32 irq_status);
++int mpp_hw_recover(struct mpp_dev *mpp,
++		   int (*recover)(struct mpp_dev *, void *), void *context);
 +int mpp_get_optional_clk_info(struct mpp_dev *mpp, struct mpp_clk_info *info,
 +			      const char *name);
 +
@@ -9564,7 +9599,7 @@ index 0000000000000000000000000000000000000000..97f3d74b127425838f2efa61e2cd7db6
 +EXPORT_SYMBOL(rockchip_iep2_driver);
 diff --git a/drivers/video/rockchip/mpp/mpp_iommu.c b/drivers/video/rockchip/mpp/mpp_iommu.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..6d2a054c66d9cced1598f9e12ab7d1bee78c6072
+index 0000000000000000000000000000000000000000..58cd326a5d3cac43195c1a148d14cf6af105effa
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_iommu.c
 @@ -0,0 +1,1472 @@
@@ -9601,6 +9636,7 @@ index 0000000000000000000000000000000000000000..6d2a054c66d9cced1598f9e12ab7d1be
 +
 +#include "mpp_debug.h"
 +#include "mpp_iommu.h"
++#include "media_map.h"
 +#include "mpp_common.h"
 +
 +/*
@@ -9750,6 +9786,10 @@ index 0000000000000000000000000000000000000000..6d2a054c66d9cced1598f9e12ab7d1be
 +	buffer->attach = NULL;
 +	buffer->sgt = NULL;
 +
++	if (iosys_map_is_set(&buffer->map)) {
++		media_dma_vunmap(dmabuf, &buffer->map);
++		dma_buf_end_cpu_access(dmabuf, DMA_FROM_DEVICE);
++	}
 +	/* 6.18: locked variant now asserts dma_resv held; use _unlocked */
 +	dma_buf_unmap_attachment_unlocked(attach, sgt, buffer->dir);
 +	dma_buf_detach(dmabuf, attach);
@@ -10031,16 +10071,14 @@ index 0000000000000000000000000000000000000000..6d2a054c66d9cced1598f9e12ab7d1be
 +int mpp_dma_unmap_kernel(struct mpp_dma_session *dma,
 +			 struct mpp_dma_buffer *buffer)
 +{
-+	struct iosys_map map = IOSYS_MAP_INIT_VADDR(buffer->vaddr);
 +	struct dma_buf *dmabuf = buffer->dmabuf;
 +
-+	if (IS_ERR_OR_NULL(map.vaddr) ||
++	if (iosys_map_is_null(&buffer->map) ||
 +	    IS_ERR_OR_NULL(dmabuf))
 +		return -EINVAL;
 +
 +	/* 6.18: locked variant now asserts dma_resv held; use _unlocked */
-+	dma_buf_vunmap_unlocked(dmabuf, &map);
-+	buffer->vaddr = NULL;
++	media_dma_vunmap(dmabuf, &buffer->map);
 +
 +	dma_buf_end_cpu_access(dmabuf, DMA_FROM_DEVICE);
 +
@@ -10051,7 +10089,6 @@ index 0000000000000000000000000000000000000000..6d2a054c66d9cced1598f9e12ab7d1be
 +		       struct mpp_dma_buffer *buffer)
 +{
 +	int ret;
-+	struct iosys_map map;
 +	struct dma_buf *dmabuf = buffer->dmabuf;
 +
 +	if (IS_ERR_OR_NULL(dmabuf))
@@ -10064,13 +10101,11 @@ index 0000000000000000000000000000000000000000..6d2a054c66d9cced1598f9e12ab7d1be
 +	}
 +
 +	/* 6.18: locked variant now asserts dma_resv held; use _unlocked */
-+	ret = dma_buf_vmap_unlocked(dmabuf, &map);
++	ret = dma_buf_vmap_unlocked(dmabuf, &buffer->map);
 +	if (ret) {
 +		dev_dbg(dma->dev, "can't vmap the dma buffer\n");
 +		goto failed_vmap;
 +	}
-+
-+	buffer->vaddr = map.vaddr;
 +
 +	return 0;
 +
@@ -11042,10 +11077,10 @@ index 0000000000000000000000000000000000000000..6d2a054c66d9cced1598f9e12ab7d1be
 +}
 diff --git a/drivers/video/rockchip/mpp/mpp_iommu.h b/drivers/video/rockchip/mpp/mpp_iommu.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..c4f661cb313b82975cce93e705158f1396cc3b9c
+index 0000000000000000000000000000000000000000..0f3aa7c93edc7aa7ea653702664dd18a3a9f5a31
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_iommu.h
-@@ -0,0 +1,266 @@
+@@ -0,0 +1,268 @@
 +/* SPDX-License-Identifier: (GPL-2.0+ OR MIT) */
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -11060,6 +11095,7 @@ index 0000000000000000000000000000000000000000..c4f661cb313b82975cce93e705158f13
 +#define __ROCKCHIP_MPP_IOMMU_H__
 +
 +#include <linux/iommu.h>
++#include <linux/iosys-map.h>
 +#include <linux/dma-mapping.h>
 +#include <linux/interrupt.h>
 +#include <linux/iova.h>
@@ -11081,6 +11117,7 @@ index 0000000000000000000000000000000000000000..c4f661cb313b82975cce93e705158f13
 +
 +	dma_addr_t iova;
 +	unsigned long size;
++	struct iosys_map map;
 +	void *vaddr;
 +
 +	struct kref ref;
@@ -14894,10 +14931,10 @@ index 0000000000000000000000000000000000000000..f02af64d28642a6231668ad5f8dfb280
 +EXPORT_SYMBOL(rockchip_rkvdec_driver);
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvdec2.c b/drivers/video/rockchip/mpp/mpp_rkvdec2.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..2e978f856fc5d7e2173c889c60a3285fb143b2c0
+index 0000000000000000000000000000000000000000..69c58759ebb36d717fcc2df513a9adb828ce28cc
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvdec2.c
-@@ -0,0 +1,2340 @@
+@@ -0,0 +1,2353 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2020 Rockchip Electronics Co., Ltd.
@@ -16680,6 +16717,8 @@ index 0000000000000000000000000000000000000000..2e978f856fc5d7e2173c889c60a3285f
 +
 +static int rkvdec2_ccu_probe(struct platform_device *pdev)
 +{
++	struct media_resets resets = {};
++	int ret, i;
 +	struct rkvdec2_ccu *ccu;
 +	struct resource *res;
 +	struct device *dev = &pdev->dev;
@@ -16720,9 +16759,12 @@ index 0000000000000000000000000000000000000000..2e978f856fc5d7e2173c889c60a3285f
 +	if (IS_ERR(ccu->aclk_info.clk))
 +		return media_probe_error(dev, PTR_ERR(ccu->aclk_info.clk), "aclk_ccu");
 +
-+	ccu->rst_a = devm_reset_control_get(dev, "video_ccu");
-+	if (IS_ERR(ccu->rst_a))
-+		return media_probe_error(dev, PTR_ERR(ccu->rst_a), "video_ccu");
++	ret = media_resets_get(dev, &resets);
++	if (ret)
++		return ret;
++	for (i = 0; i < resets.count; i++)
++		if (!strcmp(resets.controls[i].id, "video_ccu"))
++			ccu->rst_a = resets.controls[i].rstc;
 +	if (ccu->rst_a)
 +		mpp_safe_unreset(ccu->rst_a);
 +	else
@@ -17147,6 +17189,16 @@ index 0000000000000000000000000000000000000000..2e978f856fc5d7e2173c889c60a3285f
 +		mpp_dev_shutdown(pdev);
 +}
 +
++static int rkvdec2_pm_reset_once(struct mpp_dev *mpp, void *context)
++{
++	int ret, reset_ret = 0;
++
++	if (mpp->hw_ops->reset)
++		reset_ret = mpp->hw_ops->reset(mpp);
++	ret = mpp_iommu_refresh(mpp->iommu_info, mpp->dev);
++	return reset_ret ? reset_ret : ret;
++}
++
 +static int __maybe_unused rkvdec2_runtime_suspend(struct device *dev)
 +{
 +	if (strstr(dev_name(dev), "ccu")) {
@@ -17169,9 +17221,7 @@ index 0000000000000000000000000000000000000000..2e978f856fc5d7e2173c889c60a3285f
 +		 * to ensure hardware is fully idle,
 +		 * reset and wait for reset ready before suspend.
 +		 */
-+		if (mpp->hw_ops->reset)
-+			mpp->hw_ops->reset(mpp);
-+		ret = mpp_iommu_refresh(mpp->iommu_info, mpp->dev);
++		ret = mpp_hw_recover(mpp, rkvdec2_pm_reset_once, NULL);
 +		if (ret) {
 +			dev_err(dev, "failed to refresh iommu: %d\n", ret);
 +			if (mpp->is_irq_startup) {
@@ -17482,10 +17532,10 @@ index 0000000000000000000000000000000000000000..dda9d19efc636f4300818f79bf46fb24
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvdec2_link.c b/drivers/video/rockchip/mpp/mpp_rkvdec2_link.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf4142f666da2
+index 0000000000000000000000000000000000000000..4f99503c9081c5e766bf30fd788a5eb5d258c72e
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvdec2_link.c
-@@ -0,0 +1,3127 @@
+@@ -0,0 +1,3128 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
@@ -17878,11 +17928,11 @@ index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf414
 +	for (i = 0; i < dev->task_capacity; i++) {
 +		reg = table_base + i * reg_count;
 +
-+		mpp_err("slot %d link config iova %08x:\n", i,
++		mpp_fault(dev->mpp, "slot %d link config iova %08x:\n", i,
 +			iova + i * dev->link_node_size);
 +
 +		for (j = 0; j < reg_count; j++) {
-+			mpp_err("reg%03d 0x%08x\n", j, reg[j]);
++			mpp_fault(dev->mpp, "reg%03d 0x%08x\n", j, reg[j]);
 +			udelay(100);
 +		}
 +	}
@@ -17895,12 +17945,12 @@ index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf414
 +	u32 e = mpp->var->hw_info->reg_end;
 +	u32 i;
 +
-+	mpp_err("--- dump hardware register ---\n");
++	mpp_fault(mpp, "--- dump hardware register ---\n");
 +
 +	for (i = s; i <= e; i++) {
 +		u32 reg = i * sizeof(u32);
 +
-+		mpp_err("reg[%03d]: %04x: 0x%08x\n",
++		mpp_fault(mpp, "reg[%03d]: %04x: 0x%08x\n",
 +			i, reg, readl_relaxed(mpp->reg_base + reg));
 +		udelay(100);
 +	}
@@ -17908,21 +17958,21 @@ index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf414
 +
 +static void rkvdec_link_reg_dump(const char *func, struct rkvdec_link_dev *dev)
 +{
-+	mpp_err("dump link config status from %s\n", func);
-+	mpp_err("reg 0 %08x - irq status\n", dev->irq_status);
-+	mpp_err("reg 1 %08x - cfg addr\n", dev->iova_curr);
-+	mpp_err("reg 2 %08x - link mode\n", dev->link_mode);
-+	mpp_err("reg 4 %08x - decoded num\n", dev->decoded_status);
-+	mpp_err("reg 5 %08x - total num\n", dev->total);
-+	mpp_err("reg 6 %08x - link mode en\n", dev->enabled);
-+	mpp_err("reg 6 %08x - next ltb addr\n", dev->iova_next);
++	mpp_fault(dev->mpp, "dump link config status from %s\n", func);
++	mpp_fault(dev->mpp, "reg 0 %08x - irq status\n", dev->irq_status);
++	mpp_fault(dev->mpp, "reg 1 %08x - cfg addr\n", dev->iova_curr);
++	mpp_fault(dev->mpp, "reg 2 %08x - link mode\n", dev->link_mode);
++	mpp_fault(dev->mpp, "reg 4 %08x - decoded num\n", dev->decoded_status);
++	mpp_fault(dev->mpp, "reg 5 %08x - total num\n", dev->total);
++	mpp_fault(dev->mpp, "reg 6 %08x - link mode en\n", dev->enabled);
++	mpp_fault(dev->mpp, "reg 6 %08x - next ltb addr\n", dev->iova_next);
 +}
 +
 +static void rkvdec_link_counter(const char *func, struct rkvdec_link_dev *dev)
 +{
-+	mpp_err("dump link counter from %s\n", func);
++	mpp_fault(dev->mpp, "dump link counter from %s\n", func);
 +
-+	mpp_err("task pending %d running %d\n",
++	mpp_fault(dev->mpp, "task pending %d running %d\n",
 +		atomic_read(&dev->task_pending), dev->task_running);
 +}
 +
@@ -18120,11 +18170,12 @@ index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf414
 +	return mpp_task;
 +}
 +
-+static int rkvdec2_link_reset(struct mpp_dev *mpp)
++static int rkvdec2_link_reset_once(struct mpp_dev *mpp, void *context)
 +{
 +	int ret;
++	int reset_ret = 0;
 +
-+	dev_info(mpp->dev, "resetting...\n");
++	mpp_fault(mpp, "resetting...\n");
 +
 +	disable_irq(mpp->irq);
 +	mpp_iommu_disable_irq(mpp->iommu_info);
@@ -18132,12 +18183,11 @@ index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf414
 +	/* FIXME lock resource lock of the other devices in combo */
 +	mpp_iommu_down_write(mpp->iommu_info);
 +	mpp_reset_down_write(mpp->reset_group);
-+	atomic_set(&mpp->reset_request, 0);
 +
 +	rockchip_save_qos(mpp->dev);
 +
 +	if (mpp->hw_ops->reset)
-+		mpp->hw_ops->reset(mpp);
++		reset_ret = mpp->hw_ops->reset(mpp);
 +
 +	rockchip_restore_qos(mpp->dev);
 +
@@ -18147,16 +18197,21 @@ index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf414
 +	 */
 +	ret = mpp_iommu_refresh(mpp->iommu_info, mpp->dev);
 +	if (ret)
-+		dev_err(mpp->dev, "failed to refresh iommu: %d\n", ret);
++		mpp_fault(mpp, "failed to refresh iommu: %d\n", ret);
 +
 +	mpp_reset_up_write(mpp->reset_group);
 +	mpp_iommu_up_write(mpp->iommu_info);
 +
 +	enable_irq(mpp->irq);
 +	mpp_iommu_enable_irq(mpp->iommu_info);
-+	dev_info(mpp->dev, "reset done\n");
++	mpp_fault(mpp, "reset done\n");
 +
-+	return ret;
++	return reset_ret ? reset_ret : ret;
++}
++
++static int rkvdec2_link_reset(struct mpp_dev *mpp)
++{
++	return mpp_hw_recover(mpp, rkvdec2_link_reset_once, NULL);
 +}
 +
 +static int rkvdec2_link_irq(struct mpp_dev *mpp)
@@ -18541,19 +18596,19 @@ index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf414
 +					     struct mpp_task, timeout_work);
 +
 +	if (test_and_set_bit(TASK_STATE_HANDLE, &task->state)) {
-+		mpp_err("task %d state %lx has been handled\n",
++		pr_err_ratelimited("task %d state %lx has been handled\n",
 +			task->task_id, task->state);
 +		return;
 +	}
 +
 +	if (!task->session) {
-+		mpp_err("task %d session is null.\n", task->task_id);
++		pr_err_ratelimited("task %d session is null.\n", task->task_id);
 +		return;
 +	}
 +	session = task->session;
 +
 +	if (!session->mpp) {
-+		mpp_err("task %d:%d mpp is null.\n", session->index,
++		pr_err_ratelimited("task %d:%d mpp is null.\n", session->index,
 +			task->task_id);
 +		return;
 +	}
@@ -18562,6 +18617,7 @@ index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf414
 +
 +	dec = to_rkvdec2_dev(mpp);
 +	atomic_inc(&dec->link_dec->task_timeout);
++	mpp_dump_task(mpp, task, task->irq_status);
 +
 +	mpp_fault(mpp, "session %d task %d state %#lx timeout, cnt %d\n",
 +		session->index, task->task_index, task->state,
@@ -18608,7 +18664,7 @@ index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf414
 +		}
 +	}
 +	if (dump_mem_region)
-+		mpp_task_dump_mem_region(mpp, mpp_task);
++		mpp_dump_task(mpp, mpp_task, status);
 +	spin_unlock_irqrestore(&queue->running_lock, flags);
 +	mpp_task_dump_hw_reg(mpp);
 +
@@ -18626,7 +18682,7 @@ index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf414
 +
 +	link_dec->task_running = 0;
 +	list_for_each_entry_safe(mpp_task, n, &queue->running_list, queue_link) {
-+		dev_err(mpp->dev, "resend task %d\n", mpp_task->task_index);
++		mpp_fault(mpp, "resend task %d\n", mpp_task->task_index);
 +		cancel_delayed_work_sync(&mpp_task->timeout_work);
 +		clear_bit(TASK_STATE_TIMEOUT, &mpp_task->state);
 +		clear_bit(TASK_STATE_HANDLE, &mpp_task->state);
@@ -18695,12 +18751,13 @@ index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf414
 +		 * if timeout/abort/force dequeue found, reset and stop hw first.
 +		 */
 +		if ((timeout_flag || abort_flag || force_dequeue) && !reset_flag) {
-+			dev_err(mpp->dev, "session %d task %d timeout %d abort %d force_dequeue %d\n",
++			mpp_fault(mpp, "session %d task %d timeout %d abort %d force_dequeue %d\n",
 +				mpp_task->session->index, mpp_task->task_index,
 +				timeout_flag, abort_flag, force_dequeue);
++			mpp_dump_task(mpp, mpp_task, irq_status);
 +			reset_ret = rkvdec2_link_reset(mpp);
 +			if (reset_ret) {
-+				dev_err(mpp->dev, "link reset failed: %d\n", reset_ret);
++				mpp_fault(mpp, "link reset failed: %d\n", reset_ret);
 +				set_bit(TASK_STATE_ABORT, &mpp_task->state);
 +			}
 +			reset_flag = 1;
@@ -18738,7 +18795,7 @@ index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf414
 +			     irq_status, timeout_flag, abort_flag);
 +
 +		if (irq_status & info->err_mask) {
-+			dev_err(mpp->dev,
++			mpp_fault(mpp,
 +				"session %d task %d irq_status %#08x timeout %u abort %u\n",
 +				mpp_task->session->index, mpp_task->task_index,
 +				irq_status, timeout_flag, abort_flag);
@@ -18999,7 +19056,7 @@ index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf414
 +		int ret = rkvdec2_link_reset(mpp);
 +
 +		if (ret) {
-+			dev_err(mpp->dev, "link reset failed: %d\n", ret);
++			mpp_fault(mpp, "link reset failed: %d\n", ret);
 +			atomic_set(&mpp->reset_request, 1);
 +			goto done;
 +		}
@@ -19243,18 +19300,19 @@ index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf414
 +					     struct mpp_task, timeout_work);
 +
 +	if (test_and_set_bit(TASK_STATE_HANDLE, &task->state)) {
-+		mpp_err("task %d state %lx has been handled\n",
++		pr_err_ratelimited("task %d state %lx has been handled\n",
 +			task->task_id, task->state);
 +		return;
 +	}
 +
 +	if (!task->session) {
-+		mpp_err("task %d session is null.\n", task->task_id);
++		pr_err_ratelimited("task %d session is null.\n", task->task_id);
 +		return;
 +	}
 +	mpp = mpp_get_task_used_device(task, task->session);
-+	mpp_err("%s, task %d state %#lx timeout\n", dev_name(mpp->dev),
++	mpp_fault(mpp, "%s, task %d state %#lx timeout\n", dev_name(mpp->dev),
 +		task->task_index, task->state);
++	mpp_dump_task(mpp, task, task->irq_status);
 +	set_bit(TASK_STATE_TIMEOUT, &task->state);
 +	atomic_inc(&mpp->reset_request);
 +	atomic_inc(&mpp->queue->reset_request);
@@ -19513,70 +19571,66 @@ index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf414
 +	return 0;
 +}
 +
++struct rkvdec2_recovery_context {
++	struct rkvdec2_ccu *ccu;
++	int index;
++};
++
++static int rkvdec2_soft_ccu_core_reset(struct mpp_dev *mpp, void *arg)
++{
++	struct rkvdec2_recovery_context *context = arg;
++	struct rkvdec2_ccu *ccu = context->ccu;
++	struct rkvdec2_dev *dec = to_rkvdec2_dev(mpp);
++	u32 val;
++	int ret, reset_ret = 0;
++
++	mpp_fault(mpp, "resetting for err %#x\n", mpp->irq_status);
++	disable_hardirq(mpp->irq);
++	writel(dec->core_mask, ccu->reg_base + RKVDEC_CCU_CORE_IDLE_BASE);
++	mpp_write(mpp, RKVDEC_REG_IMPORTANT_BASE, RKVDEC_SOFTREST_EN);
++	udelay(5);
++	val = mpp_read(mpp, RKVDEC_REG_INT_EN);
++	if (!(val & RKVDEC_SOFT_RESET_READY))
++		mpp_fault(mpp, "soft reset fail, int %08x\n", val);
++	mpp_write(mpp, RKVDEC_REG_INT_EN, 0);
++	val = mpp_read(mpp, RKVDEC_REG_DEBUG_INT_BASE);
++	if (!(val & RKVDEC_BIT_BUS_IDLE))
++		mpp_fault(mpp, "bus busy\n");
++	if (IS_REACHABLE(CONFIG_ROCKCHIP_SIP)) {
++		rockchip_dmcfreq_lock();
++		sip_smc_vpu_reset(context->index, 0, 0);
++		rockchip_dmcfreq_unlock();
++	} else {
++		reset_ret = rkvdec2_reset(mpp);
++	}
++	writel(dec->core_mask & RKVDEC_CCU_CORE_RW_MASK,
++	       ccu->reg_base + RKVDEC_CCU_CORE_ERR_BASE);
++	writel(dec->core_mask & RKVDEC_CCU_CORE_RW_MASK,
++	       ccu->reg_base + RKVDEC_CCU_CORE_IDLE_BASE);
++	ret = mpp_iommu_refresh(mpp->iommu_info, mpp->dev);
++	if (ret)
++		mpp_fault(mpp, "iommu refresh failed: %d\n", ret);
++	mpp->irq_status = 0;
++	mpp_iommu_shared_domain_verify(&ccu->iommu, mpp->iommu_info);
++	enable_irq(mpp->irq);
++	mpp_fault(mpp, "reset done\n");
++	return reset_ret ? reset_ret : ret;
++}
++
 +static int rkvdec2_soft_ccu_reset(struct mpp_taskqueue *queue,
 +				  struct rkvdec2_ccu *ccu)
 +{
-+	int i;
-+	int first_ret = 0;
++	int i, ret, first_ret = 0;
 +
 +	for (i = queue->core_count - 1; i >= 0; i--) {
-+		u32 val;
-+		int ret;
-+
++		struct rkvdec2_recovery_context context = { .ccu = ccu, .index = i };
 +		struct mpp_dev *mpp = queue->cores[i];
-+		struct rkvdec2_dev *dec = to_rkvdec2_dev(mpp);
 +
 +		if (mpp->disable)
 +			continue;
-+		/* Claim this core's request before reset so a new one survives. */
-+		atomic_xchg(&mpp->reset_request, 0);
-+
-+		dev_info(mpp->dev, "resetting for err %#x\n", mpp->irq_status);
-+		disable_hardirq(mpp->irq);
-+
-+		/* foce idle, disconnect core and ccu */
-+		writel(dec->core_mask, ccu->reg_base + RKVDEC_CCU_CORE_IDLE_BASE);
-+
-+		/* soft reset */
-+		mpp_write(mpp, RKVDEC_REG_IMPORTANT_BASE, RKVDEC_SOFTREST_EN);
-+		udelay(5);
-+		val = mpp_read(mpp, RKVDEC_REG_INT_EN);
-+		if (!(val & RKVDEC_SOFT_RESET_READY))
-+			mpp_err("soft reset fail, int %08x\n", val);
-+		mpp_write(mpp, RKVDEC_REG_INT_EN, 0);
-+
-+		/* check bus idle */
-+		val = mpp_read(mpp, RKVDEC_REG_DEBUG_INT_BASE);
-+		if (!(val & RKVDEC_BIT_BUS_IDLE))
-+			mpp_err("bus busy\n");
-+
-+		if (IS_REACHABLE(CONFIG_ROCKCHIP_SIP)) {
-+			/* sip reset */
-+			rockchip_dmcfreq_lock();
-+			sip_smc_vpu_reset(i, 0, 0);
-+			rockchip_dmcfreq_unlock();
-+		} else {
-+			rkvdec2_reset(mpp);
-+		}
-+		/* clear error mask */
-+		writel(dec->core_mask & RKVDEC_CCU_CORE_RW_MASK,
-+		       ccu->reg_base + RKVDEC_CCU_CORE_ERR_BASE);
-+		/* connect core and ccu */
-+		writel(dec->core_mask & RKVDEC_CCU_CORE_RW_MASK,
-+		       ccu->reg_base + RKVDEC_CCU_CORE_IDLE_BASE);
-+		ret = mpp_iommu_refresh(mpp->iommu_info, mpp->dev);
-+		if (ret) {
-+			dev_err(mpp->dev, "iommu refresh failed: %d\n", ret);
-+			if (!first_ret)
-+				first_ret = ret;
-+		}
-+		/* Any completion sampled before reset no longer has valid readback. */
-+		mpp->irq_status = 0;
-+		/* audit: reset/refresh must leave the core on the shared domain */
-+		mpp_iommu_shared_domain_verify(&ccu->iommu, mpp->iommu_info);
-+
-+		enable_irq(mpp->irq);
-+		dev_info(mpp->dev, "reset done\n");
++		ret = mpp_hw_recover(mpp, rkvdec2_soft_ccu_core_reset, &context);
++		if (ret && !first_ret)
++			first_ret = ret;
 +	}
 +	return first_ret;
 +}
@@ -19627,7 +19681,7 @@ index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf414
 +		u32 is_write = (status & BIT(5)) ? 1 : 0;
 +
 +		if (status && iova)
-+			dev_err(iommu_dev, "core %d pagfault at iova %#08x type %s status %#x\n",
++			mpp_fault(mpp, "core %d pagfault at iova %#08x type %s status %#x\n",
 +				mpp->core_id, iova, is_write ? "write" : "read", status);
 +	}
 +out:
@@ -19647,7 +19701,7 @@ index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf414
 +
 +	mpp = rkvdec2_ccu_dev_match_by_iommu(queue, iommu_dev);
 +	if (!mpp) {
-+		dev_err(iommu_dev, "iommu fault, but no dev match\n");
++		dev_err_ratelimited(iommu_dev, "iommu fault, but no dev match\n");
 +		return -ENODEV;
 +	}
 +	/*
@@ -19664,7 +19718,7 @@ index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf414
 +	spin_lock_irqsave(&mpp->queue->running_lock, flags);
 +	mpp_task = mpp->cur_task;
 +	if (mpp_task)
-+		mpp_task_dump_mem_region(mpp, mpp_task);
++		mpp_dump_task(mpp, mpp_task, status);
 +	spin_unlock_irqrestore(&mpp->queue->running_lock, flags);
 +
 +	atomic_inc(&mpp->queue->reset_request);
@@ -19690,13 +19744,13 @@ index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf414
 +
 +	mpp = rkvdec2_ccu_dev_match_by_iommu(queue, iommu_dev);
 +	if (!mpp) {
-+		dev_err(iommu_dev, "iommu fault, but no dev match\n");
++		dev_err_ratelimited(iommu_dev, "iommu fault, but no dev match\n");
 +		return -ENODEV;
 +	}
 +
 +	dec = to_rkvdec2_dev(mpp);
 +	err_task_iova = readl(dec->link_dec->reg_base + 0x4);
-+	dev_err(mpp->dev, "core %d err task iova %#08x\n", mpp->core_id, err_task_iova);
++	mpp_fault(mpp, "core %d err task iova %#08x\n", mpp->core_id, err_task_iova);
 +	rockchip_iommu_mask_irq(mpp->dev);
 +
 +	spin_lock_irqsave(&queue->running_lock, flags);
@@ -19704,7 +19758,7 @@ index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf414
 +		struct rkvdec2_task *task = to_rkvdec2_task(mpp_task);
 +
 +		if ((u32)task->table->iova == err_task_iova) {
-+			mpp_task_dump_mem_region(mpp, mpp_task);
++			mpp_dump_task(mpp, mpp_task, status);
 +			set_bit(TASK_STATE_ABORT, &mpp_task->state);
 +			break;
 +		}
@@ -20165,10 +20219,10 @@ index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf414
 +			if (timeout_flag && !dump_reg && mpp_debug_unlikely(DEBUG_DUMP_ERR_REG)) {
 +				u32 i;
 +
-+				mpp_err("###### ccu #####\n");
++				mpp_fault(&dec->mpp, "###### ccu #####\n");
 +				rkvdec2_dump_ccu(ccu);
 +				for (i = 0; i < queue->core_count; i++) {
-+					mpp_err("###### core %d #####\n", i);
++					mpp_fault(queue->cores[i], "###### core %d #####\n", i);
 +					rkvdec2_dump_link(to_rkvdec2_dev(queue->cores[i]));
 +					rkvdec2_dump_core(queue->cores[i], task);
 +				}
@@ -20182,9 +20236,10 @@ index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf414
 +			/* Wake up the GET thread */
 +			wake_up(&mpp_task->wait);
 +			if ((irq_status & hw->err_mask) || timeout_flag) {
-+				pr_err("session %d task %d irq_status %#x timeout=%u abort=%u\n",
++				mpp_fault(&dec->mpp, "session %d task %d irq_status %#x timeout=%u abort=%u\n",
 +					mpp_task->session->index, mpp_task->task_index,
 +					irq_status, timeout_flag, abort_flag);
++				mpp_dump_task(&dec->mpp, mpp_task, irq_status);
 +				atomic_inc(&queue->reset_request);
 +			}
 +			mpp_dev_load(mpp_task->session->mpp, mpp_task);
@@ -20205,69 +20260,65 @@ index 0000000000000000000000000000000000000000..87018c43543c28749bca6ae70c3bf414
 +	return 0;
 +}
 +
++static int rkvdec2_hard_ccu_core_reset(struct mpp_dev *mpp, void *arg)
++{
++	struct rkvdec2_recovery_context *context = arg;
++	struct rkvdec2_ccu *ccu = context->ccu;
++	struct rkvdec2_dev *dec = to_rkvdec2_dev(mpp);
++	u32 val;
++	int ret, reset_ret = 0;
++
++	mpp_fault(mpp, "resetting...\n");
++	disable_hardirq(mpp->irq);
++	writel(dec->core_mask, ccu->reg_base + RKVDEC_CCU_CORE_IDLE_BASE);
++	writel(0, ccu->reg_base + RKVDEC_CCU_WORK_BASE);
++	mpp_write(mpp, RKVDEC_REG_IMPORTANT_BASE, RKVDEC_SOFTREST_EN);
++	udelay(5);
++	val = mpp_read(mpp, RKVDEC_REG_INT_EN);
++	if (!(val & RKVDEC_SOFT_RESET_READY))
++		mpp_fault(mpp, "soft reset fail, int %08x\n", val);
++#if IS_ENABLED(CONFIG_ROCKCHIP_SIP)
++	rockchip_dmcfreq_lock();
++	sip_smc_vpu_reset(context->index, 0, 0);
++	rockchip_dmcfreq_unlock();
++#else
++	reset_ret = rkvdec2_reset(mpp);
++#endif
++	ret = mpp_iommu_refresh(mpp->iommu_info, mpp->dev);
++	if (ret)
++		mpp_fault(mpp, "iommu refresh failed: %d\n", ret);
++	enable_irq(mpp->irq);
++	mpp_iommu_shared_domain_verify(&ccu->iommu, mpp->iommu_info);
++	val = mpp_read_relaxed(mpp, 272 * 4);
++	mpp_fault(mpp, "reset done, idle %d\n", val & 1);
++	return reset_ret ? reset_ret : ret;
++}
++
 +static int rkvdec2_hard_ccu_reset(struct mpp_taskqueue *queue, struct rkvdec2_ccu *ccu)
 +{
-+	u32 i = 0;
-+	int first_ret = 0;
++	unsigned int i;
++	int ret, first_ret = 0;
++	bool recovered = false;
 +
-+	mpp_debug_enter();
-+
-+	/* reset and active core */
 +	for (i = 0; i < queue->core_count; i++) {
-+		u32 val = 0;
-+		int ret;
++		struct rkvdec2_recovery_context context = { .ccu = ccu, .index = i };
 +		struct mpp_dev *mpp = queue->cores[i];
-+		struct rkvdec2_dev *dec = to_rkvdec2_dev(mpp);
++		s64 claimed = atomic64_read(&mpp->recovery.claimed_epoch);
 +
 +		if (mpp->disable)
 +			continue;
-+		/* Claim this core's request before reset so a new one survives. */
-+		atomic_xchg(&mpp->reset_request, 0);
-+		dev_info(mpp->dev, "resetting...\n");
-+		disable_hardirq(mpp->irq);
-+		/* force idle */
-+		writel(dec->core_mask, ccu->reg_base + RKVDEC_CCU_CORE_IDLE_BASE);
-+		writel(0, ccu->reg_base + RKVDEC_CCU_WORK_BASE);
-+
-+		{
-+			/* soft reset */
-+			u32 val;
-+
-+			mpp_write(mpp, RKVDEC_REG_IMPORTANT_BASE, RKVDEC_SOFTREST_EN);
-+			udelay(5);
-+			val = mpp_read(mpp, RKVDEC_REG_INT_EN);
-+			if (!(val & RKVDEC_SOFT_RESET_READY))
-+				mpp_err("soft reset fail, int %08x\n", val);
-+
-+			// /* cru reset */
-+			// dev_info(mpp->dev, "cru reset\n");
-+			// rkvdec2_reset(mpp);
-+		}
-+#if IS_ENABLED(CONFIG_ROCKCHIP_SIP)
-+		rockchip_dmcfreq_lock();
-+		sip_smc_vpu_reset(i, 0, 0);
-+		rockchip_dmcfreq_unlock();
-+#else
-+		rkvdec2_reset(mpp);
-+#endif
-+		ret = mpp_iommu_refresh(mpp->iommu_info, mpp->dev);
-+		if (ret) {
-+			dev_err(mpp->dev, "iommu refresh failed: %d\n", ret);
-+			if (!first_ret)
-+				first_ret = ret;
-+		}
-+		enable_irq(mpp->irq);
-+		/* audit: reset/refresh must leave the core on the shared domain */
-+		mpp_iommu_shared_domain_verify(&ccu->iommu, mpp->iommu_info);
-+		val = mpp_read_relaxed(mpp, 272*4);
-+		dev_info(mpp->dev, "reset done, idle %d\n", (val & 1));
++		ret = mpp_hw_recover(mpp, rkvdec2_hard_ccu_core_reset, &context);
++		if (ret && !first_ret)
++			first_ret = ret;
++		recovered |= claimed != atomic64_read(&mpp->recovery.claimed_epoch);
 +	}
-+	/* reset ccu */
-+	mpp_safe_reset(ccu->rst_a);
-+	udelay(5);
-+	mpp_safe_unreset(ccu->rst_a);
++	if (recovered) {
++		struct reset_control_bulk_data control = { .rstc = ccu->rst_a };
 +
-+	mpp_debug_leave();
++		ret = media_reset_cycle(1, &control, &control);
++		if (ret && !first_ret)
++			first_ret = ret;
++	}
 +	return first_ret;
 +}
 +
@@ -22357,10 +22408,10 @@ index 0000000000000000000000000000000000000000..039752db69c71b3befeade39a91d81bf
 +};
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc2.c b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..ccd4d580a8748467d6484fe4d989224d8b1f4117
+index 0000000000000000000000000000000000000000..e26418b5cf284ec6a6a7f489e13cfa34a91f613e
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
-@@ -0,0 +1,3857 @@
+@@ -0,0 +1,3846 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
@@ -25229,29 +25280,18 @@ index 0000000000000000000000000000000000000000..ccd4d580a8748467d6484fe4d989224d
 +	return ret;
 +}
 +
-+#define RKVENC2_TIMEOUT_DUMP_REG_START	(0x5100)
-+#define RKVENC2_TIMEOUT_DUMP_REG_END	(0x5160)
-+
 +static void rkvenc2_task_timeout_process(struct mpp_session *session,
 +					 struct mpp_task *task)
 +{
 +	atomic_inc(&task->abort_request);
 +	set_bit(TASK_STATE_ABORT, &task->state);
 +
-+	mpp_err("session %d:%d count %d task %d ref %d timeout\n",
-+		session->pid, session->index, atomic_read(&session->task_count),
-+		task->task_id, kref_read(&task->ref));
-+
 +	if (task->mpp) {
 +		struct mpp_dev *mpp = task->mpp;
-+		u32 start = RKVENC2_TIMEOUT_DUMP_REG_START;
-+		u32 end = RKVENC2_TIMEOUT_DUMP_REG_END;
-+		u32 offset;
 +
-+		dev_err(mpp->dev, "core %d dump timeout status:\n", mpp->core_id);
-+
-+		for (offset = start; offset < end; offset += sizeof(u32))
-+			mpp_reg_show(mpp, offset);
++		mpp_fault(mpp, "session %d:%d task %d timeout\n",
++			  session->pid, session->index, task->task_id);
++		mpp_dump_task(mpp, task, task->irq_status);
 +	}
 +
 +	rkvenc2_task_pop_pending(task);
@@ -48939,10 +48979,10 @@ index 0000000000000000000000000000000000000000..aeace228cdddeaed86017ed0dca1d8c1
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_job.c b/drivers/video/rockchip/rga3/rga_job.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..310b58aa22100c83b137bf500de0c0b44e566616
+index 0000000000000000000000000000000000000000..0b71665dadbcf6d5331776aa025dcc9376f352ee
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_job.c
-@@ -0,0 +1,2076 @@
+@@ -0,0 +1,2078 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -49604,8 +49644,10 @@ index 0000000000000000000000000000000000000000..310b58aa22100c83b137bf500de0c0b4
 +	atomic64_inc(&job->session->telemetry.tasks);
 +	atomic64_add(job->bytes, &job->session->telemetry.bytes);
 +	trace_rga_req_queued(job->session->id, job->request_id, job->task_count);
++	media_dump_event(&scheduler->dump, MEDIA_QUEUED, job->request_id, 0);
 +	trace_rga_core_selected(job->request_id, scheduler->core,
 +				job->task_list[0].core);
++	media_dump_event(&scheduler->dump, MEDIA_SELECTED, job->request_id, 0);
 +
 +	rga_job_next(scheduler);
 +

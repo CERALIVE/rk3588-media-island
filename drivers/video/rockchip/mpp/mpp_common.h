@@ -37,6 +37,10 @@
 
 struct mpp_dev;
 struct mpp_clk_info;
+struct mpp_task;
+void mpp_dump_task(struct mpp_dev *mpp, struct mpp_task *task, u32 irq_status);
+int mpp_hw_recover(struct mpp_dev *mpp,
+		   int (*recover)(struct mpp_dev *, void *), void *context);
 int mpp_get_optional_clk_info(struct mpp_dev *mpp, struct mpp_clk_info *info,
 			      const char *name);
 

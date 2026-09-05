@@ -659,8 +659,10 @@ int rga_job_commit(struct rga_req *task_list, size_t task_count,
 	atomic64_inc(&job->session->telemetry.tasks);
 	atomic64_add(job->bytes, &job->session->telemetry.bytes);
 	trace_rga_req_queued(job->session->id, job->request_id, job->task_count);
+	media_dump_event(&scheduler->dump, MEDIA_QUEUED, job->request_id, 0);
 	trace_rga_core_selected(job->request_id, scheduler->core,
 				job->task_list[0].core);
+	media_dump_event(&scheduler->dump, MEDIA_SELECTED, job->request_id, 0);
 
 	rga_job_next(scheduler);
 

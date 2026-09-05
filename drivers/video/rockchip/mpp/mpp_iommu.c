@@ -31,6 +31,7 @@
 
 #include "mpp_debug.h"
 #include "mpp_iommu.h"
+#include "media_map.h"
 #include "mpp_common.h"
 
 /*
@@ -180,6 +181,10 @@ static void mpp_dma_release_buffer(struct kref *ref)
 	buffer->attach = NULL;
 	buffer->sgt = NULL;
 
+	if (iosys_map_is_set(&buffer->map)) {
+		media_dma_vunmap(dmabuf, &buffer->map);
+		dma_buf_end_cpu_access(dmabuf, DMA_FROM_DEVICE);
+	}
 	/* 6.18: locked variant now asserts dma_resv held; use _unlocked */
 	dma_buf_unmap_attachment_unlocked(attach, sgt, buffer->dir);
 	dma_buf_detach(dmabuf, attach);
@@ -461,16 +466,14 @@ fail:
 int mpp_dma_unmap_kernel(struct mpp_dma_session *dma,
 			 struct mpp_dma_buffer *buffer)
 {
-	struct iosys_map map = IOSYS_MAP_INIT_VADDR(buffer->vaddr);
 	struct dma_buf *dmabuf = buffer->dmabuf;
 
-	if (IS_ERR_OR_NULL(map.vaddr) ||
+	if (iosys_map_is_null(&buffer->map) ||
 	    IS_ERR_OR_NULL(dmabuf))
 		return -EINVAL;
 
 	/* 6.18: locked variant now asserts dma_resv held; use _unlocked */
-	dma_buf_vunmap_unlocked(dmabuf, &map);
-	buffer->vaddr = NULL;
+	media_dma_vunmap(dmabuf, &buffer->map);
 
 	dma_buf_end_cpu_access(dmabuf, DMA_FROM_DEVICE);
 
@@ -481,7 +484,6 @@ int mpp_dma_map_kernel(struct mpp_dma_session *dma,
 		       struct mpp_dma_buffer *buffer)
 {
 	int ret;
-	struct iosys_map map;
 	struct dma_buf *dmabuf = buffer->dmabuf;
 
 	if (IS_ERR_OR_NULL(dmabuf))
@@ -494,13 +496,11 @@ int mpp_dma_map_kernel(struct mpp_dma_session *dma,
 	}
 
 	/* 6.18: locked variant now asserts dma_resv held; use _unlocked */
-	ret = dma_buf_vmap_unlocked(dmabuf, &map);
+	ret = dma_buf_vmap_unlocked(dmabuf, &buffer->map);
 	if (ret) {
 		dev_dbg(dma->dev, "can't vmap the dma buffer\n");
 		goto failed_vmap;
 	}
-
-	buffer->vaddr = map.vaddr;
 
 	return 0;
 

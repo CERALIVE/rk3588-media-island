@@ -16,6 +16,8 @@ enum media_dump_event {
 	MEDIA_DONE,
 	MEDIA_FAULT,
 	MEDIA_RESET,
+	MEDIA_QUEUED,
+	MEDIA_SELECTED,
 };
 
 struct media_dump_event_record {

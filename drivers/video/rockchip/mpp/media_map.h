@@ -3,6 +3,7 @@
 #define ROCKCHIP_MEDIA_MAP_H
 
 #include <linux/errno.h>
+#include <linux/dma-buf.h>
 #include <linux/iosys-map.h>
 #include <linux/vmalloc.h>
 
@@ -20,6 +21,12 @@ static inline void media_vunmap(struct iosys_map *map)
 {
 	if (iosys_map_is_set(map))
 		vunmap(map->vaddr);
+	iosys_map_clear(map);
+}
+
+static inline void media_dma_vunmap(struct dma_buf *buffer, struct iosys_map *map)
+{
+	dma_buf_vunmap_unlocked(buffer, map);
 	iosys_map_clear(map);
 }
 

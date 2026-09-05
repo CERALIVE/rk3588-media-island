@@ -264,6 +264,10 @@ origin objects are unchanged. Rationale and proof are in MODERNIZATION.md.
 | `mpp/mpp_common.h`, `mpp/mpp_common.c`, `mpp/mpp_iommu.c`, `mpp/mpp_jpgdec.c`, `mpp/mpp_rkvdec2.c`, `rga3/include/rga_drv.h`, `rga3/rga_drv.c` | Named resource failures and provider-deferral propagation | `772e4f1` |
 
 Paths in this amendment table are relative to `drivers/video/rockchip/`.
+The review correction additionally adapts `mpp/mpp_iommu.h` to retain the whole
+dma-buf `iosys_map`, and routes encoder/link timeout and CCU recovery through
+the shared helpers. The coherent-allocation `vaddr` remains distinct from the
+exporter-owned map; it is not a reconstructed dma-buf mapping.
 The six new `media_*.h` headers take the independently asserted source census
 from 78 to 84; integration and mailbox counts remain eight and nine.
 
