@@ -48,6 +48,7 @@
 #include <linux/string_helpers.h>
 #include "../../mpp/media_fault.h"
 #include "../../mpp/media_dump.h"
+#include "../../mpp/media_recovery.h"
 
 #include <asm/cacheflush.h>
 
@@ -430,6 +431,8 @@ struct rga_scheduler_t {
 	struct device *dev;
 	struct ratelimit_state fault_limit;
 	struct media_dump dump;
+	struct media_recovery recovery;
+	struct media_resets resets;
 	void __iomem *rga_base;
 	struct rga_iommu_info *iommu_info;
 

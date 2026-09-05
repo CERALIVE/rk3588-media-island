@@ -1765,24 +1765,30 @@ static void rga_cmd_to_rga3_cmd(struct rga_req *req_rga, struct rga3_req *req)
 
 static void rga3_soft_reset(struct rga_scheduler_t *scheduler)
 {
-	u32 i;
+	u32 i = 0;
 	u32 iommu_dte_addr = 0;
 
 	if (scheduler->data->mmu == RGA_IOMMU)
 		iommu_dte_addr = rga_read(RGA_IOMMU_DTE_ADDR, scheduler);
 
-	rga_write(s_RGA3_SYS_CTRL_CCLK_SRESET(1) | s_RGA3_SYS_CTRL_ACLK_SRESET(1),
-		  RGA3_SYS_CTRL, scheduler);
+	if (scheduler->resets.count) {
+		if (media_reset_cycle(scheduler->resets.count, scheduler->resets.controls,
+				      scheduler->resets.controls))
+			i = RGA_RESET_TIMEOUT;
+	} else {
+		rga_write(s_RGA3_SYS_CTRL_CCLK_SRESET(1) | s_RGA3_SYS_CTRL_ACLK_SRESET(1),
+			  RGA3_SYS_CTRL, scheduler);
 
-	for (i = 0; i < RGA_RESET_TIMEOUT; i++) {
-		if (rga_read(RGA3_RO_SRST, scheduler) & m_RGA3_RO_SRST_RO_RST_DONE)
-			break;
+		for (i = 0; i < RGA_RESET_TIMEOUT; i++) {
+			if (rga_read(RGA3_RO_SRST, scheduler) & m_RGA3_RO_SRST_RO_RST_DONE)
+				break;
 
-		udelay(1);
+			udelay(1);
+		}
+
+		rga_write(s_RGA3_SYS_CTRL_CCLK_SRESET(0) | s_RGA3_SYS_CTRL_ACLK_SRESET(0),
+			  RGA3_SYS_CTRL, scheduler);
 	}
-
-	rga_write(s_RGA3_SYS_CTRL_CCLK_SRESET(0) | s_RGA3_SYS_CTRL_ACLK_SRESET(0),
-		  RGA3_SYS_CTRL, scheduler);
 
 	if (scheduler->data->mmu == RGA_IOMMU) {
 		rga_write(iommu_dte_addr, RGA_IOMMU_DTE_ADDR, scheduler);

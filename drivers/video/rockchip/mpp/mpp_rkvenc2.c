@@ -2717,19 +2717,20 @@ static int rkvenc_reset(struct mpp_dev *mpp)
 
 	/* cru reset */
 	if (ret && enc->rst_a && enc->rst_h && enc->rst_core) {
+		struct reset_control_bulk_data assert_order[] = {
+			{ .rstc = enc->rst_a }, { .rstc = enc->rst_h }, { .rstc = enc->rst_core },
+		};
+		struct reset_control_bulk_data deassert_order[] = {
+			{ .rstc = enc->rst_core }, { .rstc = enc->rst_h }, { .rstc = enc->rst_a },
+		};
+
 		mpp_fault(mpp, "soft reset timeout, use cru reset\n");
 		mpp_pmu_idle_request(mpp, true);
-		mpp_safe_reset(enc->rst_a);
-		mpp_safe_reset(enc->rst_h);
-		mpp_safe_reset(enc->rst_core);
-		udelay(5);
-		mpp_safe_unreset(enc->rst_a);
-		mpp_safe_unreset(enc->rst_h);
-		mpp_safe_unreset(enc->rst_core);
+		ret = media_reset_cycle(ARRAY_SIZE(assert_order), assert_order, deassert_order);
 		mpp_pmu_idle_request(mpp, false);
 	}
-	if (ret && !(enc->rst_a && enc->rst_h && enc->rst_core))
-		return ret;
+	if (ret)
+		goto out_unlock;
 
 	set_bit(mpp->core_id, &queue->core_idle);
 
@@ -2745,6 +2746,7 @@ static int rkvenc_reset(struct mpp_dev *mpp)
 
 	mpp_dbg_core("core %d reset idle %lx\n", mpp->core_id, queue->core_idle);
 
+out_unlock:
 #ifdef CONFIG_ROCKCHIP_MPP_RKVENC2_DEVFREQ
 	if (enc->devfreq)
 		mutex_unlock(&enc->devfreq->lock);
@@ -2752,7 +2754,7 @@ static int rkvenc_reset(struct mpp_dev *mpp)
 
 	mpp_debug_leave();
 
-	return 0;
+	return ret;
 }
 
 static int rkvenc_clk_on(struct mpp_dev *mpp)

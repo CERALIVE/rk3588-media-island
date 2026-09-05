@@ -829,9 +829,11 @@ mpp_reset_control_get(struct mpp_dev *mpp, enum MPP_RESET_TYPE type, const char 
 	/* check reset whether belone to device alone */
 	index = of_property_match_string(mpp->dev->of_node, "reset-names", name);
 	if (index >= 0) {
-		rst = devm_reset_control_get(mpp->dev, name);
-		if (IS_ERR(rst))
-			return rst;
+		for (index = 0; index < mpp->resets.count; index++)
+			if (!strcmp(mpp->resets.controls[index].id, name)) {
+				rst = mpp->resets.controls[index].rstc;
+				break;
+			}
 		ret = mpp_safe_unreset(rst);
 		if (ret)
 			return ERR_PTR(ret);
@@ -881,10 +883,15 @@ int mpp_dev_reset(struct mpp_dev *mpp)
 	int ret;
 	int reset_ret = 0;
 	int reason;
+	s64 epoch = atomic64_read(&mpp->recovery.recovery_epoch);
 
+	mutex_lock(&mpp->recovery_lock);
 	reason = atomic_xchg(&mpp->reset_request, 0);
-	if (!reason)
-		return 0;
+	if (!reason || !media_recovery_claim(&mpp->recovery, epoch)) {
+		ret = mpp->recovery_result;
+		mutex_unlock(&mpp->recovery_lock);
+		return ret;
+	}
 
 	mpp_fault(mpp, "resetting...\n");
 
@@ -931,9 +938,9 @@ int mpp_dev_reset(struct mpp_dev *mpp)
 
 	mpp_fault(mpp, "reset done\n");
 
-	if (reset_ret)
-		return reset_ret;
-	return ret;
+	mpp->recovery_result = reset_ret ? reset_ret : ret;
+	mutex_unlock(&mpp->recovery_lock);
+	return reset_ret ? reset_ret : ret;
 }
 
 void mpp_task_run_begin(struct mpp_task *task, u32 timing_en, u32 timeout)
@@ -1107,6 +1114,7 @@ static int mpp_task_run(struct mpp_dev *mpp,
 	set_bit(TASK_STATE_BUSY_REPORTED, &task->state);
 	atomic_inc(&mpp->telemetry.busy);
 	trace_mpp_task_started(mpp->core_id, task->task_id);
+	media_recovery_started(&mpp->recovery);
 	media_dump_event(&mpp->dump, MEDIA_STARTED, task->task_id, 0);
 	/* Fault admission is live before a pending codec completion can run. */
 	enable_irq(mpp->irq);
@@ -2875,6 +2883,11 @@ int mpp_dev_probe(struct mpp_dev *mpp,
 
 	mpp->dev = dev;
 	media_fault_init(&mpp->fault_limit);
+	media_recovery_init(&mpp->recovery);
+	mutex_init(&mpp->recovery_lock);
+	ret = media_resets_get(dev, &mpp->resets);
+	if (ret)
+		return ret;
 	ret = media_dump_init(&mpp->dump, dev);
 	if (ret)
 		return ret;

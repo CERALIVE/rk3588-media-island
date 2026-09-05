@@ -125,6 +125,9 @@ void rga_telemetry_reset(struct rga_scheduler_t *scheduler, int reason,
 {
 	if (!reset)
 		return;
+	if (!media_recovery_claim(&scheduler->recovery,
+				  atomic64_read(&scheduler->recovery.recovery_epoch)))
+		return;
 
 	atomic64_inc(&scheduler->telemetry.resets);
 	trace_rga_reset(scheduler->core, reason);
@@ -286,6 +289,7 @@ static int rga_job_run(struct rga_job *job, struct rga_scheduler_t *scheduler)
 	set_bit(RGA_JOB_STATE_RUNNING, &job->state);
 	job->telemetry_start = ktime_get();
 	trace_rga_job_started(scheduler->core, job->request_id);
+	media_recovery_started(&scheduler->recovery);
 	media_dump_event(&scheduler->dump, MEDIA_STARTED, job->request_id, 0);
 
 	return ret;

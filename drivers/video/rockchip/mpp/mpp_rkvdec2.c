@@ -1485,34 +1485,34 @@ static int rkvdec2_sip_reset(struct mpp_dev *mpp)
 int rkvdec2_reset(struct mpp_dev *mpp)
 {
 	struct rkvdec2_dev *dec = to_rkvdec2_dev(mpp);
+	int ret = 0;
 
 	mpp_debug_enter();
 
 	/* cru reset */
 	if (dec->rst_a && dec->rst_h) {
+		struct reset_control_bulk_data assert_order[] = {
+			{ .rstc = dec->rst_niu_a }, { .rstc = dec->rst_niu_h },
+			{ .rstc = dec->rst_a }, { .rstc = dec->rst_h },
+			{ .rstc = dec->rst_core }, { .rstc = dec->rst_cabac },
+			{ .rstc = dec->rst_hevc_cabac },
+		};
+		struct reset_control_bulk_data deassert_order[] = {
+			{ .rstc = dec->rst_hevc_cabac }, { .rstc = dec->rst_cabac },
+			{ .rstc = dec->rst_core }, { .rstc = dec->rst_h },
+			{ .rstc = dec->rst_a }, { .rstc = dec->rst_niu_a },
+			{ .rstc = dec->rst_niu_h },
+		};
+
 		mpp_debug(DEBUG_RESET, "cru reset in\n");
 		mpp_pmu_idle_request(mpp, true);
-		mpp_safe_reset(dec->rst_niu_a);
-		mpp_safe_reset(dec->rst_niu_h);
-		mpp_safe_reset(dec->rst_a);
-		mpp_safe_reset(dec->rst_h);
-		mpp_safe_reset(dec->rst_core);
-		mpp_safe_reset(dec->rst_cabac);
-		mpp_safe_reset(dec->rst_hevc_cabac);
-		udelay(5);
-		mpp_safe_unreset(dec->rst_niu_h);
-		mpp_safe_unreset(dec->rst_niu_a);
-		mpp_safe_unreset(dec->rst_a);
-		mpp_safe_unreset(dec->rst_h);
-		mpp_safe_unreset(dec->rst_core);
-		mpp_safe_unreset(dec->rst_cabac);
-		mpp_safe_unreset(dec->rst_hevc_cabac);
+		ret = media_reset_cycle(ARRAY_SIZE(assert_order), assert_order, deassert_order);
 		mpp_pmu_idle_request(mpp, false);
 		mpp_debug(DEBUG_RESET, "cru reset out\n");
 	}
 	mpp_debug_leave();
 
-	return 0;
+	return ret;
 }
 
 static int rkvdec_vdpu383_reset(struct mpp_dev *mpp)

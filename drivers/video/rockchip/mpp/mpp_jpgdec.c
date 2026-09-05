@@ -547,22 +547,25 @@ static int jpgdec_reset(struct mpp_dev *mpp)
 	ret = jpgdec_soft_reset(mpp);
 
 	if (ret && dec->rst_a && dec->rst_h) {
+		struct reset_control_bulk_data assert_order[] = {
+			{ .rstc = dec->rst_a }, { .rstc = dec->rst_h },
+		};
+		struct reset_control_bulk_data deassert_order[] = {
+			{ .rstc = dec->rst_h }, { .rstc = dec->rst_a },
+		};
+
 		mpp_debug(DEBUG_RESET, "reset in\n");
 
 		/* Don't skip this or iommu won't work after reset */
 		mpp_pmu_idle_request(mpp, true);
-		mpp_safe_reset(dec->rst_a);
-		mpp_safe_reset(dec->rst_h);
-		udelay(5);
-		mpp_safe_unreset(dec->rst_a);
-		mpp_safe_unreset(dec->rst_h);
+		ret = media_reset_cycle(ARRAY_SIZE(assert_order), assert_order, deassert_order);
 		mpp_pmu_idle_request(mpp, false);
 
 		mpp_debug(DEBUG_RESET, "reset out\n");
 	}
 	mpp_write(mpp, JPGDEC_REG_INT_EN_BASE, 0);
 
-	return 0;
+	return ret;
 }
 
 static struct mpp_hw_ops jpgdec_v1_hw_ops = {

@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
+#include <linux/completion.h>
+#include <linux/kthread.h>
+#include <linux/sched/task.h>
+#include "../mpp/media_recovery.h"
 
 #include "../mpp/mpp_recovery_state.h"
 
@@ -134,7 +138,73 @@ static void mpp_task_rejects_repeated_milestones_test(struct kunit *test)
 	KUNIT_EXPECT_FALSE(test, mpp_task_recovery_mark_running(&state));
 }
 
+struct media_recovery_race {
+	struct media_recovery recovery;
+	struct completion start;
+	atomic_t sequences;
+};
+
+static int media_recovery_racer(void *arg)
+{
+	struct media_recovery_race *race = arg;
+	s64 epoch = atomic64_read(&race->recovery.recovery_epoch);
+	int i;
+
+	wait_for_completion(&race->start);
+	for (i = 0; i < 1000; i++)
+		if (media_recovery_claim(&race->recovery, epoch))
+			atomic_inc(&race->sequences);
+	return 0;
+}
+
+static void media_recovery_concurrent_epoch_test(struct kunit *test)
+{
+	struct media_recovery_race race;
+	struct task_struct *threads[2] = {};
+	int i;
+
+	media_recovery_init(&race.recovery);
+	init_completion(&race.start);
+	atomic_set(&race.sequences, 0);
+	for (i = 0; i < ARRAY_SIZE(threads); i++) {
+		threads[i] = kthread_run(media_recovery_racer, &race, "media-recover-%d", i);
+		KUNIT_EXPECT_FALSE(test, IS_ERR(threads[i]));
+		if (IS_ERR(threads[i])) {
+			threads[i] = NULL;
+			break;
+		}
+		get_task_struct(threads[i]);
+	}
+	complete_all(&race.start);
+	for (i = 0; i < ARRAY_SIZE(threads); i++) {
+		if (!threads[i])
+			continue;
+		kthread_stop(threads[i]);
+		put_task_struct(threads[i]);
+	}
+	KUNIT_EXPECT_EQ(test, atomic_read(&race.sequences), 1);
+}
+
+static void media_recovery_later_epoch_test(struct kunit *test)
+{
+	struct media_recovery recovery;
+	unsigned int sequences = 0;
+	s64 old_epoch;
+
+	media_recovery_init(&recovery);
+	old_epoch = atomic64_read(&recovery.recovery_epoch);
+	sequences += media_recovery_claim(&recovery, old_epoch);
+	sequences += media_recovery_claim(&recovery, old_epoch);
+	KUNIT_EXPECT_EQ(test, sequences, 1u);
+	media_recovery_started(&recovery);
+	sequences += media_recovery_claim(&recovery, atomic64_read(&recovery.recovery_epoch));
+	KUNIT_EXPECT_EQ(test, sequences, 2u);
+	KUNIT_EXPECT_FALSE(test, media_recovery_claim(&recovery, old_epoch));
+}
+
 static struct kunit_case mpp_recovery_state_cases[] = {
+	KUNIT_CASE(media_recovery_concurrent_epoch_test),
+	KUNIT_CASE(media_recovery_later_epoch_test),
 	KUNIT_CASE(mpp_session_teardown_orders_every_phase_test),
 	KUNIT_CASE(mpp_session_teardown_rejects_skipped_phase_test),
 	KUNIT_CASE(mpp_session_teardown_rejects_repeated_phase_test),

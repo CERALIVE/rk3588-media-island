@@ -2727,7 +2727,7 @@ static void rga_cmd_to_rga2_cmd(struct rga_scheduler_t *scheduler,
 
 static void rga2_soft_reset(struct rga_scheduler_t *scheduler)
 {
-	u32 i;
+	u32 i = 0;
 	u32 reg;
 	u32 iommu_dte_addr = 0, iommu_int_mask = 0, iommu_auto_gate = 0;
 
@@ -2737,18 +2737,22 @@ static void rga2_soft_reset(struct rga_scheduler_t *scheduler)
 		iommu_auto_gate = rga_read(RGA_IOMMU_AUTO_GATING, scheduler);
 	}
 
-	rga_write(m_RGA2_SYS_CTRL_ACLK_SRESET_P | m_RGA2_SYS_CTRL_CCLK_SRESET_P |
-		  m_RGA2_SYS_CTRL_RST_PROTECT_P,
-		  RGA2_SYS_CTRL, scheduler);
+	if (scheduler->resets.count) {
+		if (media_reset_cycle(scheduler->resets.count, scheduler->resets.controls,
+				      scheduler->resets.controls))
+			i = RGA_RESET_TIMEOUT;
+	} else {
+		rga_write(m_RGA2_SYS_CTRL_ACLK_SRESET_P | m_RGA2_SYS_CTRL_CCLK_SRESET_P |
+			  m_RGA2_SYS_CTRL_RST_PROTECT_P, RGA2_SYS_CTRL, scheduler);
 
-	for (i = 0; i < RGA_RESET_TIMEOUT; i++) {
-		/* RGA_SYS_CTRL */
-		reg = rga_read(RGA2_SYS_CTRL, scheduler) & 1;
+		for (i = 0; i < RGA_RESET_TIMEOUT; i++) {
+			reg = rga_read(RGA2_SYS_CTRL, scheduler) & 1;
 
-		if (reg == 0)
-			break;
+			if (reg == 0)
+				break;
 
-		udelay(1);
+			udelay(1);
+		}
 	}
 
 	if (scheduler->data->mmu == RGA_IOMMU) {

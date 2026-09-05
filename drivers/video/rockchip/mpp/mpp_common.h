@@ -31,6 +31,7 @@
 #include "mpp_recovery_state.h"
 #include "media_fault.h"
 #include "media_dump.h"
+#include "media_recovery.h"
 #include <uapi/linux/rk-mpp.h>
 
 #define MHZ				(1000 * 1000)
@@ -300,6 +301,10 @@ struct mpp_dev {
 	struct device *dev;
 	struct ratelimit_state fault_limit;
 	struct media_dump dump;
+	struct media_recovery recovery;
+	struct mutex recovery_lock;
+	int recovery_result;
+	struct media_resets resets;
 	const struct mpp_dev_var *var;
 	struct mpp_hw_ops *hw_ops;
 	struct mpp_dev_ops *dev_ops;

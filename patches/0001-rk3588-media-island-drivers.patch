@@ -5,7 +5,7 @@ Subject: [PATCH 1/9] video: rockchip: add the CeraLive RK3588 media island
 
 The Rockchip MPP service with its three compiled clients (RKVENC2, RKVDEC2, JPGDEC), the multi_rga 2D engine driver, and the UAPI headers they publish.
 
-82 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
+83 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
 
 GENERATED from the rk3588-media-island source tree by scripts/build-series.py. The source is the truth and this series is its output; per-file provenance is docs/PROVENANCE.md and the originating commits' Origin: trailers, never this mailbox header.
 
@@ -2210,6 +2210,97 @@ index 0000000000000000000000000000000000000000..8d8b1de0c733e4089d3a3b6bd4f3e37e
 +}
 +
 +#endif
+diff --git a/drivers/video/rockchip/mpp/media_recovery.h b/drivers/video/rockchip/mpp/media_recovery.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..80c8d4faabfa00dfdf3dc83d464e2021c7ad9ad1
+--- /dev/null
++++ b/drivers/video/rockchip/mpp/media_recovery.h
+@@ -0,0 +1,85 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef ROCKCHIP_MEDIA_RECOVERY_H
++#define ROCKCHIP_MEDIA_RECOVERY_H
++
++#include <linux/atomic.h>
++#include <linux/delay.h>
++#include <linux/device.h>
++#include <linux/of.h>
++#include <linux/reset.h>
++#include <linux/slab.h>
++
++struct media_recovery {
++	atomic64_t recovery_epoch;
++	atomic64_t claimed_epoch;
++};
++
++static inline void media_recovery_init(struct media_recovery *r)
++{
++	atomic64_set(&r->recovery_epoch, 1);
++	atomic64_set(&r->claimed_epoch, 0);
++}
++
++static inline void media_recovery_started(struct media_recovery *r)
++{
++	atomic64_inc(&r->recovery_epoch);
++}
++
++static inline bool media_recovery_claim(struct media_recovery *r, s64 epoch)
++{
++	s64 old = atomic64_read(&r->claimed_epoch);
++
++	while (old < epoch) {
++		if (atomic64_try_cmpxchg(&r->claimed_epoch, &old, epoch))
++			return true;
++	}
++	return false;
++}
++
++struct media_resets {
++	struct reset_control_bulk_data *controls;
++	int count;
++};
++
++static inline int media_resets_get(struct device *dev, struct media_resets *resets)
++{
++	int count, i, ret;
++	const char *name;
++
++	if (!of_find_property(dev->of_node, "reset-names", NULL))
++		return 0;
++	count = of_property_count_strings(dev->of_node, "reset-names");
++	if (count < 0)
++		return dev_err_probe(dev, count, "reset-names\n");
++	resets->controls = devm_kcalloc(dev, count, sizeof(*resets->controls), GFP_KERNEL);
++	if (!resets->controls)
++		return -ENOMEM;
++	for (i = 0; i < count; i++) {
++		ret = of_property_read_string_index(dev->of_node, "reset-names", i, &name);
++		if (ret)
++			return dev_err_probe(dev, ret, "reset-names[%d]\n", i);
++		/* Shared MPP reset-group ownership remains with the group, not each core. */
++		if (!strncmp(name, "shared_", 7))
++			continue;
++		resets->controls[resets->count++].id = name;
++	}
++	ret = devm_reset_control_bulk_get_optional_exclusive(dev, resets->count,
++							  resets->controls);
++	if (ret)
++		return dev_err_probe(dev, ret, "reset controls from reset-names\n");
++	return 0;
++}
++
++static inline int media_reset_cycle(int count,
++				    struct reset_control_bulk_data *assert_order,
++				    struct reset_control_bulk_data *deassert_order)
++{
++	int ret = reset_control_bulk_assert(count, assert_order);
++
++	if (ret)
++		return ret;
++	udelay(5);
++	return reset_control_bulk_deassert(count, deassert_order);
++}
++
++#endif
 diff --git a/drivers/video/rockchip/mpp/media_request_size.h b/drivers/video/rockchip/mpp/media_request_size.h
 new file mode 100644
 index 0000000000000000000000000000000000000000..66bc2bda14f010734b0a85169fc4d4f871165e50
@@ -3446,10 +3537,10 @@ index 0000000000000000000000000000000000000000..3ebeecc5719d09a0ff436a9d035d6cf9
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_common.c b/drivers/video/rockchip/mpp/mpp_common.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..fd45ee9f3568b1374949a7036cc05b7cdafe1433
+index 0000000000000000000000000000000000000000..32ba96ea183d1c4bf02e57a75b885455f68b70dd
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_common.c
-@@ -0,0 +1,3446 @@
+@@ -0,0 +1,3459 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -4281,9 +4372,11 @@ index 0000000000000000000000000000000000000000..fd45ee9f3568b1374949a7036cc05b7c
 +	/* check reset whether belone to device alone */
 +	index = of_property_match_string(mpp->dev->of_node, "reset-names", name);
 +	if (index >= 0) {
-+		rst = devm_reset_control_get(mpp->dev, name);
-+		if (IS_ERR(rst))
-+			return rst;
++		for (index = 0; index < mpp->resets.count; index++)
++			if (!strcmp(mpp->resets.controls[index].id, name)) {
++				rst = mpp->resets.controls[index].rstc;
++				break;
++			}
 +		ret = mpp_safe_unreset(rst);
 +		if (ret)
 +			return ERR_PTR(ret);
@@ -4333,10 +4426,15 @@ index 0000000000000000000000000000000000000000..fd45ee9f3568b1374949a7036cc05b7c
 +	int ret;
 +	int reset_ret = 0;
 +	int reason;
++	s64 epoch = atomic64_read(&mpp->recovery.recovery_epoch);
 +
++	mutex_lock(&mpp->recovery_lock);
 +	reason = atomic_xchg(&mpp->reset_request, 0);
-+	if (!reason)
-+		return 0;
++	if (!reason || !media_recovery_claim(&mpp->recovery, epoch)) {
++		ret = mpp->recovery_result;
++		mutex_unlock(&mpp->recovery_lock);
++		return ret;
++	}
 +
 +	mpp_fault(mpp, "resetting...\n");
 +
@@ -4383,9 +4481,9 @@ index 0000000000000000000000000000000000000000..fd45ee9f3568b1374949a7036cc05b7c
 +
 +	mpp_fault(mpp, "reset done\n");
 +
-+	if (reset_ret)
-+		return reset_ret;
-+	return ret;
++	mpp->recovery_result = reset_ret ? reset_ret : ret;
++	mutex_unlock(&mpp->recovery_lock);
++	return reset_ret ? reset_ret : ret;
 +}
 +
 +void mpp_task_run_begin(struct mpp_task *task, u32 timing_en, u32 timeout)
@@ -4559,6 +4657,7 @@ index 0000000000000000000000000000000000000000..fd45ee9f3568b1374949a7036cc05b7c
 +	set_bit(TASK_STATE_BUSY_REPORTED, &task->state);
 +	atomic_inc(&mpp->telemetry.busy);
 +	trace_mpp_task_started(mpp->core_id, task->task_id);
++	media_recovery_started(&mpp->recovery);
 +	media_dump_event(&mpp->dump, MEDIA_STARTED, task->task_id, 0);
 +	/* Fault admission is live before a pending codec completion can run. */
 +	enable_irq(mpp->irq);
@@ -6327,6 +6426,11 @@ index 0000000000000000000000000000000000000000..fd45ee9f3568b1374949a7036cc05b7c
 +
 +	mpp->dev = dev;
 +	media_fault_init(&mpp->fault_limit);
++	media_recovery_init(&mpp->recovery);
++	mutex_init(&mpp->recovery_lock);
++	ret = media_resets_get(dev, &mpp->resets);
++	if (ret)
++		return ret;
 +	ret = media_dump_init(&mpp->dump, dev);
 +	if (ret)
 +		return ret;
@@ -6898,10 +7002,10 @@ index 0000000000000000000000000000000000000000..fd45ee9f3568b1374949a7036cc05b7c
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_common.h b/drivers/video/rockchip/mpp/mpp_common.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..3594eff875abaea0b615d1d7bf9e90977e8d5ec8
+index 0000000000000000000000000000000000000000..f6607a90a6d185ea40f678caadba1c7a0a9befe3
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_common.h
-@@ -0,0 +1,900 @@
+@@ -0,0 +1,905 @@
 +/* SPDX-License-Identifier: (GPL-2.0+ OR MIT) */
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -6935,6 +7039,7 @@ index 0000000000000000000000000000000000000000..3594eff875abaea0b615d1d7bf9e9097
 +#include "mpp_recovery_state.h"
 +#include "media_fault.h"
 +#include "media_dump.h"
++#include "media_recovery.h"
 +#include <uapi/linux/rk-mpp.h>
 +
 +#define MHZ				(1000 * 1000)
@@ -7204,6 +7309,10 @@ index 0000000000000000000000000000000000000000..3594eff875abaea0b615d1d7bf9e9097
 +	struct device *dev;
 +	struct ratelimit_state fault_limit;
 +	struct media_dump dump;
++	struct media_recovery recovery;
++	struct mutex recovery_lock;
++	int recovery_result;
++	struct media_resets resets;
 +	const struct mpp_dev_var *var;
 +	struct mpp_hw_ops *hw_ops;
 +	struct mpp_dev_ops *dev_ops;
@@ -11170,10 +11279,10 @@ index 0000000000000000000000000000000000000000..c4f661cb313b82975cce93e705158f13
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_jpgdec.c b/drivers/video/rockchip/mpp/mpp_jpgdec.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..c4d6279150749a490054e7d322f5a08a48541309
+index 0000000000000000000000000000000000000000..b3f25abe318430d3f49e152a1d02d8c382f53b64
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_jpgdec.c
-@@ -0,0 +1,672 @@
+@@ -0,0 +1,675 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2020 Rockchip Electronics Co., Ltd.
@@ -11723,22 +11832,25 @@ index 0000000000000000000000000000000000000000..c4d6279150749a490054e7d322f5a08a
 +	ret = jpgdec_soft_reset(mpp);
 +
 +	if (ret && dec->rst_a && dec->rst_h) {
++		struct reset_control_bulk_data assert_order[] = {
++			{ .rstc = dec->rst_a }, { .rstc = dec->rst_h },
++		};
++		struct reset_control_bulk_data deassert_order[] = {
++			{ .rstc = dec->rst_h }, { .rstc = dec->rst_a },
++		};
++
 +		mpp_debug(DEBUG_RESET, "reset in\n");
 +
 +		/* Don't skip this or iommu won't work after reset */
 +		mpp_pmu_idle_request(mpp, true);
-+		mpp_safe_reset(dec->rst_a);
-+		mpp_safe_reset(dec->rst_h);
-+		udelay(5);
-+		mpp_safe_unreset(dec->rst_a);
-+		mpp_safe_unreset(dec->rst_h);
++		ret = media_reset_cycle(ARRAY_SIZE(assert_order), assert_order, deassert_order);
 +		mpp_pmu_idle_request(mpp, false);
 +
 +		mpp_debug(DEBUG_RESET, "reset out\n");
 +	}
 +	mpp_write(mpp, JPGDEC_REG_INT_EN_BASE, 0);
 +
-+	return 0;
++	return ret;
 +}
 +
 +static struct mpp_hw_ops jpgdec_v1_hw_ops = {
@@ -14747,7 +14859,7 @@ index 0000000000000000000000000000000000000000..f02af64d28642a6231668ad5f8dfb280
 +EXPORT_SYMBOL(rockchip_rkvdec_driver);
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvdec2.c b/drivers/video/rockchip/mpp/mpp_rkvdec2.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..bf2a57ddcc67062c9551d95ae76969cc4fe004f5
+index 0000000000000000000000000000000000000000..27e3df01614e3778afadae1ab0a4d6ba4efe1ccc
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvdec2.c
 @@ -0,0 +1,2338 @@
@@ -16238,34 +16350,34 @@ index 0000000000000000000000000000000000000000..bf2a57ddcc67062c9551d95ae76969cc
 +int rkvdec2_reset(struct mpp_dev *mpp)
 +{
 +	struct rkvdec2_dev *dec = to_rkvdec2_dev(mpp);
++	int ret = 0;
 +
 +	mpp_debug_enter();
 +
 +	/* cru reset */
 +	if (dec->rst_a && dec->rst_h) {
++		struct reset_control_bulk_data assert_order[] = {
++			{ .rstc = dec->rst_niu_a }, { .rstc = dec->rst_niu_h },
++			{ .rstc = dec->rst_a }, { .rstc = dec->rst_h },
++			{ .rstc = dec->rst_core }, { .rstc = dec->rst_cabac },
++			{ .rstc = dec->rst_hevc_cabac },
++		};
++		struct reset_control_bulk_data deassert_order[] = {
++			{ .rstc = dec->rst_hevc_cabac }, { .rstc = dec->rst_cabac },
++			{ .rstc = dec->rst_core }, { .rstc = dec->rst_h },
++			{ .rstc = dec->rst_a }, { .rstc = dec->rst_niu_a },
++			{ .rstc = dec->rst_niu_h },
++		};
++
 +		mpp_debug(DEBUG_RESET, "cru reset in\n");
 +		mpp_pmu_idle_request(mpp, true);
-+		mpp_safe_reset(dec->rst_niu_a);
-+		mpp_safe_reset(dec->rst_niu_h);
-+		mpp_safe_reset(dec->rst_a);
-+		mpp_safe_reset(dec->rst_h);
-+		mpp_safe_reset(dec->rst_core);
-+		mpp_safe_reset(dec->rst_cabac);
-+		mpp_safe_reset(dec->rst_hevc_cabac);
-+		udelay(5);
-+		mpp_safe_unreset(dec->rst_niu_h);
-+		mpp_safe_unreset(dec->rst_niu_a);
-+		mpp_safe_unreset(dec->rst_a);
-+		mpp_safe_unreset(dec->rst_h);
-+		mpp_safe_unreset(dec->rst_core);
-+		mpp_safe_unreset(dec->rst_cabac);
-+		mpp_safe_unreset(dec->rst_hevc_cabac);
++		ret = media_reset_cycle(ARRAY_SIZE(assert_order), assert_order, deassert_order);
 +		mpp_pmu_idle_request(mpp, false);
 +		mpp_debug(DEBUG_RESET, "cru reset out\n");
 +	}
 +	mpp_debug_leave();
 +
-+	return 0;
++	return ret;
 +}
 +
 +static int rkvdec_vdpu383_reset(struct mpp_dev *mpp)
@@ -22208,10 +22320,10 @@ index 0000000000000000000000000000000000000000..039752db69c71b3befeade39a91d81bf
 +};
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc2.c b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..0468bb9ff631b38f846a89e61cdcb0f924c58731
+index 0000000000000000000000000000000000000000..ccd4d580a8748467d6484fe4d989224d8b1f4117
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
-@@ -0,0 +1,3855 @@
+@@ -0,0 +1,3857 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
@@ -24931,19 +25043,20 @@ index 0000000000000000000000000000000000000000..0468bb9ff631b38f846a89e61cdcb0f9
 +
 +	/* cru reset */
 +	if (ret && enc->rst_a && enc->rst_h && enc->rst_core) {
++		struct reset_control_bulk_data assert_order[] = {
++			{ .rstc = enc->rst_a }, { .rstc = enc->rst_h }, { .rstc = enc->rst_core },
++		};
++		struct reset_control_bulk_data deassert_order[] = {
++			{ .rstc = enc->rst_core }, { .rstc = enc->rst_h }, { .rstc = enc->rst_a },
++		};
++
 +		mpp_fault(mpp, "soft reset timeout, use cru reset\n");
 +		mpp_pmu_idle_request(mpp, true);
-+		mpp_safe_reset(enc->rst_a);
-+		mpp_safe_reset(enc->rst_h);
-+		mpp_safe_reset(enc->rst_core);
-+		udelay(5);
-+		mpp_safe_unreset(enc->rst_a);
-+		mpp_safe_unreset(enc->rst_h);
-+		mpp_safe_unreset(enc->rst_core);
++		ret = media_reset_cycle(ARRAY_SIZE(assert_order), assert_order, deassert_order);
 +		mpp_pmu_idle_request(mpp, false);
 +	}
-+	if (ret && !(enc->rst_a && enc->rst_h && enc->rst_core))
-+		return ret;
++	if (ret)
++		goto out_unlock;
 +
 +	set_bit(mpp->core_id, &queue->core_idle);
 +
@@ -24959,6 +25072,7 @@ index 0000000000000000000000000000000000000000..0468bb9ff631b38f846a89e61cdcb0f9
 +
 +	mpp_dbg_core("core %d reset idle %lx\n", mpp->core_id, queue->core_idle);
 +
++out_unlock:
 +#ifdef CONFIG_ROCKCHIP_MPP_RKVENC2_DEVFREQ
 +	if (enc->devfreq)
 +		mutex_unlock(&enc->devfreq->lock);
@@ -24966,7 +25080,7 @@ index 0000000000000000000000000000000000000000..0468bb9ff631b38f846a89e61cdcb0f9
 +
 +	mpp_debug_leave();
 +
-+	return 0;
++	return ret;
 +}
 +
 +static int rkvenc_clk_on(struct mpp_dev *mpp)
@@ -34868,10 +34982,10 @@ index 0000000000000000000000000000000000000000..b9fcfa507997d60325220f6edb59a73d
 +#endif
 diff --git a/drivers/video/rockchip/rga3/include/rga_drv.h b/drivers/video/rockchip/rga3/include/rga_drv.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..e40e6687ad0d7f5372b0cf81079559aabf2cf44f
+index 0000000000000000000000000000000000000000..19307c2e66d7dfc411488432530ef479d30c6b43
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/include/rga_drv.h
-@@ -0,0 +1,608 @@
+@@ -0,0 +1,611 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -34922,6 +35036,7 @@ index 0000000000000000000000000000000000000000..e40e6687ad0d7f5372b0cf81079559aa
 +#include <linux/string_helpers.h>
 +#include "../../mpp/media_fault.h"
 +#include "../../mpp/media_dump.h"
++#include "../../mpp/media_recovery.h"
 +
 +#include <asm/cacheflush.h>
 +
@@ -35304,6 +35419,8 @@ index 0000000000000000000000000000000000000000..e40e6687ad0d7f5372b0cf81079559aa
 +	struct device *dev;
 +	struct ratelimit_state fault_limit;
 +	struct media_dump dump;
++	struct media_recovery recovery;
++	struct media_resets resets;
 +	void __iomem *rga_base;
 +	struct rga_iommu_info *iommu_info;
 +
@@ -36015,10 +36132,10 @@ index 0000000000000000000000000000000000000000..1d29e9cafd1e3517988ecd89f193bdb0
 +#endif
 diff --git a/drivers/video/rockchip/rga3/rga2_reg_info.c b/drivers/video/rockchip/rga3/rga2_reg_info.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..3808444d99140ef58360a307b8660cb464ba0d50
+index 0000000000000000000000000000000000000000..3e62e90dacf465e455e24ca4c6319ab54d070e05
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga2_reg_info.c
-@@ -0,0 +1,3550 @@
+@@ -0,0 +1,3554 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -38748,7 +38865,7 @@ index 0000000000000000000000000000000000000000..3808444d99140ef58360a307b8660cb4
 +
 +static void rga2_soft_reset(struct rga_scheduler_t *scheduler)
 +{
-+	u32 i;
++	u32 i = 0;
 +	u32 reg;
 +	u32 iommu_dte_addr = 0, iommu_int_mask = 0, iommu_auto_gate = 0;
 +
@@ -38758,18 +38875,22 @@ index 0000000000000000000000000000000000000000..3808444d99140ef58360a307b8660cb4
 +		iommu_auto_gate = rga_read(RGA_IOMMU_AUTO_GATING, scheduler);
 +	}
 +
-+	rga_write(m_RGA2_SYS_CTRL_ACLK_SRESET_P | m_RGA2_SYS_CTRL_CCLK_SRESET_P |
-+		  m_RGA2_SYS_CTRL_RST_PROTECT_P,
-+		  RGA2_SYS_CTRL, scheduler);
++	if (scheduler->resets.count) {
++		if (media_reset_cycle(scheduler->resets.count, scheduler->resets.controls,
++				      scheduler->resets.controls))
++			i = RGA_RESET_TIMEOUT;
++	} else {
++		rga_write(m_RGA2_SYS_CTRL_ACLK_SRESET_P | m_RGA2_SYS_CTRL_CCLK_SRESET_P |
++			  m_RGA2_SYS_CTRL_RST_PROTECT_P, RGA2_SYS_CTRL, scheduler);
 +
-+	for (i = 0; i < RGA_RESET_TIMEOUT; i++) {
-+		/* RGA_SYS_CTRL */
-+		reg = rga_read(RGA2_SYS_CTRL, scheduler) & 1;
++		for (i = 0; i < RGA_RESET_TIMEOUT; i++) {
++			reg = rga_read(RGA2_SYS_CTRL, scheduler) & 1;
 +
-+		if (reg == 0)
-+			break;
++			if (reg == 0)
++				break;
 +
-+		udelay(1);
++			udelay(1);
++		}
 +	}
 +
 +	if (scheduler->data->mmu == RGA_IOMMU) {
@@ -39571,10 +39692,10 @@ index 0000000000000000000000000000000000000000..3808444d99140ef58360a307b8660cb4
 +};
 diff --git a/drivers/video/rockchip/rga3/rga3_reg_info.c b/drivers/video/rockchip/rga3/rga3_reg_info.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..1511ae7f4161b65604fd622308f66b58bb6517db
+index 0000000000000000000000000000000000000000..569ad8fbb3fc08d63a6b650fbc962c1dc8415c40
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga3_reg_info.c
-@@ -0,0 +1,2397 @@
+@@ -0,0 +1,2403 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -41342,24 +41463,30 @@ index 0000000000000000000000000000000000000000..1511ae7f4161b65604fd622308f66b58
 +
 +static void rga3_soft_reset(struct rga_scheduler_t *scheduler)
 +{
-+	u32 i;
++	u32 i = 0;
 +	u32 iommu_dte_addr = 0;
 +
 +	if (scheduler->data->mmu == RGA_IOMMU)
 +		iommu_dte_addr = rga_read(RGA_IOMMU_DTE_ADDR, scheduler);
 +
-+	rga_write(s_RGA3_SYS_CTRL_CCLK_SRESET(1) | s_RGA3_SYS_CTRL_ACLK_SRESET(1),
-+		  RGA3_SYS_CTRL, scheduler);
++	if (scheduler->resets.count) {
++		if (media_reset_cycle(scheduler->resets.count, scheduler->resets.controls,
++				      scheduler->resets.controls))
++			i = RGA_RESET_TIMEOUT;
++	} else {
++		rga_write(s_RGA3_SYS_CTRL_CCLK_SRESET(1) | s_RGA3_SYS_CTRL_ACLK_SRESET(1),
++			  RGA3_SYS_CTRL, scheduler);
 +
-+	for (i = 0; i < RGA_RESET_TIMEOUT; i++) {
-+		if (rga_read(RGA3_RO_SRST, scheduler) & m_RGA3_RO_SRST_RO_RST_DONE)
-+			break;
++		for (i = 0; i < RGA_RESET_TIMEOUT; i++) {
++			if (rga_read(RGA3_RO_SRST, scheduler) & m_RGA3_RO_SRST_RO_RST_DONE)
++				break;
 +
-+		udelay(1);
++			udelay(1);
++		}
++
++		rga_write(s_RGA3_SYS_CTRL_CCLK_SRESET(0) | s_RGA3_SYS_CTRL_ACLK_SRESET(0),
++			  RGA3_SYS_CTRL, scheduler);
 +	}
-+
-+	rga_write(s_RGA3_SYS_CTRL_CCLK_SRESET(0) | s_RGA3_SYS_CTRL_ACLK_SRESET(0),
-+		  RGA3_SYS_CTRL, scheduler);
 +
 +	if (scheduler->data->mmu == RGA_IOMMU) {
 +		rga_write(iommu_dte_addr, RGA_IOMMU_DTE_ADDR, scheduler);
@@ -45280,10 +45407,10 @@ index 0000000000000000000000000000000000000000..2eabff20024a5b2cea7138a428b2daf7
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_drv.c b/drivers/video/rockchip/rga3/rga_drv.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..ca82e552aaf7e1bd6d7531644b58a85afe0455ac
+index 0000000000000000000000000000000000000000..467c345cabf0ea0736123891401349cee1505d88
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_drv.c
-@@ -0,0 +1,2011 @@
+@@ -0,0 +1,2015 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -46850,6 +46977,7 @@ index 0000000000000000000000000000000000000000..ca82e552aaf7e1bd6d7531644b58a85a
 +	scheduler->ops = match_data->ops;
 +	scheduler->dev = dev;
 +	media_fault_init(&scheduler->fault_limit);
++	media_recovery_init(&scheduler->recovery);
 +
 +	mutex_init(&scheduler->job_mutex);
 +	scheduler->shutdown = false;
@@ -46902,6 +47030,9 @@ index 0000000000000000000000000000000000000000..ca82e552aaf7e1bd6d7531644b58a85a
 +		dev_err(dev, "init scheduler failed!\n");
 +		return ret;
 +	}
++	ret = media_resets_get(dev, &scheduler->resets);
++	if (ret)
++		return ret;
 +	if (match_data->device_type == RGA_DEVICE_RGA3)
 +		dma_caps = rga3_dma_capability();
 +	else
@@ -48772,10 +48903,10 @@ index 0000000000000000000000000000000000000000..aeace228cdddeaed86017ed0dca1d8c1
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_job.c b/drivers/video/rockchip/rga3/rga_job.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..5dba1afdbc00f678cbd2f8e82d9f477522748c6e
+index 0000000000000000000000000000000000000000..310b58aa22100c83b137bf500de0c0b44e566616
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_job.c
-@@ -0,0 +1,2072 @@
+@@ -0,0 +1,2076 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -48902,6 +49033,9 @@ index 0000000000000000000000000000000000000000..5dba1afdbc00f678cbd2f8e82d9f4775
 +			 void (*reset)(struct rga_scheduler_t *scheduler))
 +{
 +	if (!reset)
++		return;
++	if (!media_recovery_claim(&scheduler->recovery,
++				  atomic64_read(&scheduler->recovery.recovery_epoch)))
 +		return;
 +
 +	atomic64_inc(&scheduler->telemetry.resets);
@@ -49064,6 +49198,7 @@ index 0000000000000000000000000000000000000000..5dba1afdbc00f678cbd2f8e82d9f4775
 +	set_bit(RGA_JOB_STATE_RUNNING, &job->state);
 +	job->telemetry_start = ktime_get();
 +	trace_rga_job_started(scheduler->core, job->request_id);
++	media_recovery_started(&scheduler->recovery);
 +	media_dump_event(&scheduler->dump, MEDIA_STARTED, job->request_id, 0);
 +
 +	return ret;

@@ -8,7 +8,7 @@ drills, not part of this source series.
 |---|---|---|
 | (a) Fault logging | Shared per-device budget on the common MPP, selected-client IRQ/reset, and RGA fault paths | `media_fault_storm_test`: 1,000 direct log calls admit 10 lines in the five-second burst window; UML 57/57. Probe diagnostics are not rate limited |
 | (b) Wedge snapshots | ≤4 KiB text snapshots, IRQ-safe capture and deferred vzalloc/submission; last eight lifecycle events | `media_dump_submission_owns_buffer_test` uses CONFIG_DEV_COREDUMP=y, checks task=42 in formatted data, a real sysfs devcoredump link, and no retained buffer pointer after submission; UML 58/58 |
-| (c) Recovery epochs / bulk resets | Pending | Pending |
+| (c) Recovery epochs / bulk resets | Managed optional exclusive reset lists; epoch claims in common MPP and RGA recovery | `media_recovery_concurrent_epoch_test`: two kernel threads, 2,000 attempts, one claim. `media_recovery_later_epoch_test`: a new start permits a second claim and rejects stale epochs. UML 60/60 |
 | (d) Deferred resource diagnostics | Pending | Pending |
 | (e) Request sizing | Checked multiplication; variable-sized RGA request/pool/job arrays use kvzalloc with kvfree on every exit | `media_request_size_rejects_overflow_test`: SIZE_MAX / sizeof(u64) + 1 returns -EINVAL and clears the size; 64 KiB boundary accepted. UML: 55/55 passed |
 | (f) iosys_map | Raw mapping state replaced; legacy dma-buf vmap and PDE_DATA branches removed | `media_map_lifetime_test`: real page vmap, bounded read, unmap clears ownership, repeated cleanup safe. UML 56/56; selected MPP/RGA objects sparse C=2 with -Wsparse-error clean; raw-vmap/PDE_DATA grep empty |
@@ -62,5 +62,25 @@ The live sysfs and exporter hardware drills remain separate from UML ownership
 tests. No driver or KUnit test changes public structures or ioctl numbers.
 
 ## Cost gate
+
+## Recovery ordering
+
+MPP acquires its device-local reset list in one managed bulk operation. Shared
+reset-group controls deliberately retain their existing group owner. The three
+selected clients use bulk assert/deassert while preserving their distinct
+deassert order (the Linux bulk API walks that list in reverse). MPP serializes
+recovery through a mutex and returns the saved error to duplicate callers;
+existing PMU-idle, IRQ masking, IOMMU refresh and task failure paths remain.
+
+RGA serializes the recovery claim under the existing IRQ lock. Its RK3588 CRU
+reset provider is MMIO-only; this atomic path must not be generalized to a
+sleeping reset provider. With reset controls present the backend performs a bulk
+cycle inside the existing IOMMU-register save/restore boundary; absent optional
+controls retain the register-reset fallback. Existing job-mutex and power-reference
+ownership remains with the callers. Each hardware task start opens a fresh epoch;
+repeated faults in that epoch cannot trigger another reset sequence.
+
+These unit proofs exercise recovery ownership, not silicon reset efficacy. The
+post-flash reset/fault drill must still establish the latter.
 
 Pending baseline record. No after-change comparison has been taken.

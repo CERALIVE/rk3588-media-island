@@ -1564,6 +1564,7 @@ scheduler_ready:
 	scheduler->ops = match_data->ops;
 	scheduler->dev = dev;
 	media_fault_init(&scheduler->fault_limit);
+	media_recovery_init(&scheduler->recovery);
 
 	mutex_init(&scheduler->job_mutex);
 	scheduler->shutdown = false;
@@ -1616,6 +1617,9 @@ static int rga_drv_probe(struct platform_device *pdev)
 		dev_err(dev, "init scheduler failed!\n");
 		return ret;
 	}
+	ret = media_resets_get(dev, &scheduler->resets);
+	if (ret)
+		return ret;
 	if (match_data->device_type == RGA_DEVICE_RGA3)
 		dma_caps = rga3_dma_capability();
 	else
