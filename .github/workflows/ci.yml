@@ -287,6 +287,27 @@ jobs:
       # defconfig would prove the island against a configuration nobody ships.
       IMAGE_PIPELINE_COMMIT: e6b70f0da06a3ee82c9e0790225c80597ed05ab7
       IMAGE_KERNEL_FRAGMENT: manifests/kernel/rk3588-edge.fragment
+      # Generated kernel prerequisites only: never restore island objects or sources.
+      PROVIDER_CACHE_PATHS: |
+        .work/linux/vmlinux
+        .work/linux/vmlinux.symvers
+        .work/linux/Module.symvers
+        .work/linux/include/config
+        .work/linux/include/generated
+        .work/linux/arch/arm64/include/generated
+        .work/linux/scripts/module.lds
+        .work/linux/scripts/mod/modpost
+        .work/linux/scripts/mod/mk_elfconfig
+        .work/linux/scripts/mod/elfconfig.h
+        .work/linux/scripts/mod/devicetable-offsets.h
+        .work/linux/scripts/mod/devicetable-offsets.s
+        .work/linux/scripts/mod/empty.o
+        .work/linux/scripts/basic/fixdep
+        .work/linux/scripts/recordmcount
+        .work/linux/scripts/tracepoint-update
+        .work/linux/scripts/sign-file
+        .work/linux/scripts/asn1_compiler
+        .work/linux/scripts/sorttable
     steps:
       - uses: actions/checkout@v7
 
@@ -399,7 +420,32 @@ jobs:
           done
           grep -qx '# CONFIG_FUNCTION_TRACER is not set' .work/linux/.config
 
-      - name: Build and expose the configured provider symbol table
+      - name: Identify the provider build toolchain
+        id: provider-toolchain
+        env:
+          CROSS_COMPILE: ${{ needs.pin.outputs.cross_compile }}
+        run: |
+          set -euo pipefail
+          fingerprint=$({
+            printf '%s\n' "$ImageOS" "$IMAGE_KERNEL_FRAGMENT"
+            gcc --version
+            ld --version
+            "${CROSS_COMPILE}gcc" --version
+            "${CROSS_COMPILE}ld" --version
+          } | sha256sum)
+          echo "digest=${fingerprint%% *}" >> "$GITHUB_OUTPUT"
+
+      # Integration patches change built-in provider exports; fragment pins alone
+      # cannot safely identify the symbol table. No partial-key fallback is safe.
+      - name: Restore configured provider artifacts
+        id: provider-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.PROVIDER_CACHE_PATHS }}
+          key: vmlinux-artifacts-v1-${{ runner.os }}-${{ needs.pin.outputs.arch }}-${{ needs.pin.outputs.commit }}-${{ env.IMAGE_PIPELINE_COMMIT }}-${{ hashFiles('configs/rk3588-media-island.fragment', '.work/rk3588-edge.fragment', '.work/linux/.config', 'integration/*.patch', 'include/uapi/linux/*.h', 'drivers/**/Kconfig', 'drivers/**/Makefile') }}-${{ steps.provider-toolchain.outputs.digest }}
+
+      - name: Build the configured provider symbol table
+        if: steps.provider-cache.outputs.cache-hit != 'true'
         env:
           ARCH: ${{ needs.pin.outputs.arch }}
           CROSS_COMPILE: ${{ needs.pin.outputs.cross_compile }}
@@ -408,6 +454,10 @@ jobs:
           export PATH="/usr/lib/ccache:$PATH"
           make -C .work/linux -j"$(nproc)" vmlinux
           make -C .work/linux -j"$(nproc)" modules_prepare
+
+      - name: Expose the configured provider symbol table
+        run: |
+          set -euo pipefail
           [ -s .work/linux/vmlinux.symvers ]
           cp .work/linux/vmlinux.symvers .work/linux/Module.symvers
 
@@ -467,6 +517,14 @@ jobs:
       # is: no island compatible string may appear in a mainline of_match_table.
       - name: No island compatible collides with a mainline of_match_table
         run: python3 scripts/check-dt-ownership.py --kernel-tree .work/linux
+
+      # Save only after the gates pass, before pristine-tree cleanup deletes it.
+      - name: Save configured provider artifacts
+        if: steps.provider-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.PROVIDER_CACHE_PATHS }}
+          key: ${{ steps.provider-cache.outputs.cache-primary-key }}
 
       # Cache the PRISTINE tree, never a patched or built one: the staged island
       # source and the applied integration patches would poison the next run's
