@@ -639,7 +639,8 @@ static int jpgdec_probe(struct platform_device *pdev)
 					dev_name(dev), mpp);
 	if (ret) {
 		dev_err(dev, "register interrupter runtime failed\n");
-		return -EINVAL;
+		mpp_dev_remove(mpp);
+		return ret;
 	}
 
 	mpp->session_max_buffers = JPGDEC_SESSION_MAX_BUFFERS;

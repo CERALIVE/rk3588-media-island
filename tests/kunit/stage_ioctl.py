@@ -104,6 +104,30 @@ def stage(tree: Path) -> None:
         (DRIVERS / "rga3/rga_drv.c", RGA_DRV),
         (DRIVERS / "rga3/rga_job.c", RGA_JOB),
     ))
+    # Keep both preprocessor arms: selecting duplicate power definitions by
+    # name would hide whether the production PM build is actually exercised.
+    power_source = (DRIVERS / "rga3/rga_drv.c").read_text()
+    power = re.findall(
+        r"^#ifndef RGA_DISABLE_PM\nint rga_power_enable\(.*?^#endif[^\n]*",
+        power_source, re.MULTILINE | re.DOTALL,
+    )
+    if len(power) != 1:
+        raise DefinitionError("RGA power block", len(power))
+    (tests / "runtime_pm_rga_power.inc").write_text(power[0] + "\n")
+    emit(tests / "runtime_pm_rga_jobs.inc", ((DRIVERS / "rga3/rga_job.c", (
+        "rga_job_run", "rga_job_next", "rga_request_scheduler_abort",
+        "rga_request_scheduler_job_abort",
+    )),))
+    jpeg_source = (DRIVERS / "mpp/mpp_jpgdec.c").read_text()
+    jpeg_types = re.findall(
+        r"^struct jpgdec_dev \{.*?^\};", jpeg_source, re.MULTILINE | re.DOTALL,
+    )
+    if len(jpeg_types) != 1:
+        raise DefinitionError("jpgdec_dev", len(jpeg_types))
+    (tests / "runtime_pm_jpeg_types.inc").write_text(jpeg_types[0] + "\n")
+    emit(tests / "runtime_pm_jpeg_probe.inc", (
+        (DRIVERS / "mpp/mpp_jpgdec.c", ("jpgdec_probe",)),
+    ))
     for filename, directive in (
         ("Kconfig", 'source "drivers/video/rockchip/kunit/Kconfig"'),
         ("Makefile", "obj-y += rockchip/kunit/"),
@@ -126,6 +150,17 @@ def self_test() -> None:
         except DefinitionError:
             continue
         raise AssertionError("missing or duplicate definition was accepted")
+    probe = definition((DRIVERS / "rga3/rga_drv.c").read_text(), "rga_drv_probe")
+    policy = (
+        r"pm_runtime_set_autosuspend_delay\(dev,\s*2000\);.*?"
+        r"pm_runtime_use_autosuspend\(dev\);.*?"
+        r"pm_runtime_enable\(scheduler->dev\);.*?"
+        r"pm_runtime_resume_and_get\(scheduler->dev\)"
+    )
+    assert re.search(policy, probe, re.DOTALL), "RGA probe must configure autosuspend before get"
+    for call in ("set_autosuspend_delay", "use_autosuspend", "enable"):
+        mutant = probe.replace(f"pm_runtime_{call}(", f"removed_{call}(")
+        assert not re.search(policy, mutant, re.DOTALL), f"missing {call} was accepted"
     print("ioctl staging self-test: PASS")
 
 

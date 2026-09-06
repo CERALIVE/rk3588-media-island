@@ -509,7 +509,8 @@ int rga_power_disable(struct rga_scheduler_t *scheduler)
 	clk_bulk_disable_unprepare(scheduler->num_clks, scheduler->clks);
 
 	pm_relax(scheduler->dev);
-	pm_runtime_put_sync_suspend(scheduler->dev);
+	pm_runtime_mark_last_busy(scheduler->dev);
+	pm_runtime_put_autosuspend(scheduler->dev);
 
 	return 0;
 }
@@ -1675,6 +1676,8 @@ static int rga_drv_probe(struct platform_device *pdev)
 	scheduler->num_clks = ret;
 
 	/* PM init */
+	pm_runtime_set_autosuspend_delay(dev, 2000);
+	pm_runtime_use_autosuspend(dev);
 	device_init_wakeup(dev, true);
 	pm_runtime_enable(scheduler->dev);
 
@@ -1726,7 +1729,7 @@ static int rga_drv_probe(struct platform_device *pdev)
 #ifndef RGA_DISABLE_PM
 	clk_bulk_disable_unprepare(scheduler->num_clks, scheduler->clks);
 
-	pm_runtime_put_sync(dev);
+	pm_runtime_put_sync_suspend(dev);
 #endif /* #ifndef RGA_DISABLE_PM */
 
 	/*
@@ -1772,15 +1775,17 @@ err_disable_pm:
 #ifndef RGA_DISABLE_PM
 	device_init_wakeup(dev, false);
 	pm_runtime_disable(dev);
+	pm_runtime_dont_use_autosuspend(dev);
 #endif
 	return ret;
 
 #ifndef RGA_DISABLE_PM
 pm_put:
-	pm_runtime_put_sync(dev);
+	pm_runtime_put_sync_suspend(dev);
 pm_disable:
 	device_init_wakeup(dev, false);
 	pm_runtime_disable(dev);
+	pm_runtime_dont_use_autosuspend(dev);
 #endif /* #ifndef RGA_DISABLE_PM */
 
 	return ret;
@@ -1802,8 +1807,10 @@ static void rga_drv_remove(struct platform_device *pdev)
 		rga_request_scheduler_shutdown(scheduler);
 
 #ifndef RGA_DISABLE_PM
+	pm_runtime_suspend(&pdev->dev);
 	device_init_wakeup(&pdev->dev, false);
 	pm_runtime_disable(&pdev->dev);
+	pm_runtime_dont_use_autosuspend(&pdev->dev);
 #endif /* #ifndef RGA_DISABLE_PM */
 
 	up_write(&rga_drvdata->rwsem);

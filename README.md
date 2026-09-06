@@ -180,6 +180,12 @@ functions with bounded user-copy fixtures, rather than opening real device nodes
 See [`docs/IOCTL-BOUNDARY-TESTS.md`](docs/IOCTL-BOUNDARY-TESTS.md) for the complete
 case table, reproduction commands, and the explicit hardware/uaccess limits.
 
+The [runtime-PM audit](docs/RUNTIME-PM-AUDIT.md) traces all eleven island nodes
+and every PM acquisition/error exit. Hardware devices use a 2000 ms autosuspend
+policy; the service and encoder CCU are software-only exceptions. RGA cancellation
+releases power by job ownership, and failed JPEG IRQ registration unwinds common
+PM setup. UML regressions exercise those paths without touching physical boards.
+
 ## Versioning
 
 CalVer, `YYYY.MINOR.PATCH`, matching the rest of the CeraLive stack. The tag is

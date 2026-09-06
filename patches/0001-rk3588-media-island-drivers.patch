@@ -11365,10 +11365,10 @@ index 0000000000000000000000000000000000000000..0f3aa7c93edc7aa7ea653702664dd18a
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_jpgdec.c b/drivers/video/rockchip/mpp/mpp_jpgdec.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..18b8e823d81ef0a74d48c38e86cc44ff58e580a3
+index 0000000000000000000000000000000000000000..a00ea44450a9e8fdddc13c2ba5f3d3cd5285a45d
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_jpgdec.c
-@@ -0,0 +1,675 @@
+@@ -0,0 +1,676 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2020 Rockchip Electronics Co., Ltd.
@@ -12010,7 +12010,8 @@ index 0000000000000000000000000000000000000000..18b8e823d81ef0a74d48c38e86cc44ff
 +					dev_name(dev), mpp);
 +	if (ret) {
 +		dev_err(dev, "register interrupter runtime failed\n");
-+		return -EINVAL;
++		mpp_dev_remove(mpp);
++		return ret;
 +	}
 +
 +	mpp->session_max_buffers = JPGDEC_SESSION_MAX_BUFFERS;
@@ -45504,10 +45505,10 @@ index 0000000000000000000000000000000000000000..2eabff20024a5b2cea7138a428b2daf7
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_drv.c b/drivers/video/rockchip/rga3/rga_drv.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..9022acb4af6095661072d7be6d01de6760d99eac
+index 0000000000000000000000000000000000000000..09a21037f8c0dad8b246abe8841e5cd58805e8f4
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_drv.c
-@@ -0,0 +1,2013 @@
+@@ -0,0 +1,2020 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -46019,7 +46020,8 @@ index 0000000000000000000000000000000000000000..9022acb4af6095661072d7be6d01de67
 +	clk_bulk_disable_unprepare(scheduler->num_clks, scheduler->clks);
 +
 +	pm_relax(scheduler->dev);
-+	pm_runtime_put_sync_suspend(scheduler->dev);
++	pm_runtime_mark_last_busy(scheduler->dev);
++	pm_runtime_put_autosuspend(scheduler->dev);
 +
 +	return 0;
 +}
@@ -47185,6 +47187,8 @@ index 0000000000000000000000000000000000000000..9022acb4af6095661072d7be6d01de67
 +	scheduler->num_clks = ret;
 +
 +	/* PM init */
++	pm_runtime_set_autosuspend_delay(dev, 2000);
++	pm_runtime_use_autosuspend(dev);
 +	device_init_wakeup(dev, true);
 +	pm_runtime_enable(scheduler->dev);
 +
@@ -47236,7 +47240,7 @@ index 0000000000000000000000000000000000000000..9022acb4af6095661072d7be6d01de67
 +#ifndef RGA_DISABLE_PM
 +	clk_bulk_disable_unprepare(scheduler->num_clks, scheduler->clks);
 +
-+	pm_runtime_put_sync(dev);
++	pm_runtime_put_sync_suspend(dev);
 +#endif /* #ifndef RGA_DISABLE_PM */
 +
 +	/*
@@ -47282,15 +47286,17 @@ index 0000000000000000000000000000000000000000..9022acb4af6095661072d7be6d01de67
 +#ifndef RGA_DISABLE_PM
 +	device_init_wakeup(dev, false);
 +	pm_runtime_disable(dev);
++	pm_runtime_dont_use_autosuspend(dev);
 +#endif
 +	return ret;
 +
 +#ifndef RGA_DISABLE_PM
 +pm_put:
-+	pm_runtime_put_sync(dev);
++	pm_runtime_put_sync_suspend(dev);
 +pm_disable:
 +	device_init_wakeup(dev, false);
 +	pm_runtime_disable(dev);
++	pm_runtime_dont_use_autosuspend(dev);
 +#endif /* #ifndef RGA_DISABLE_PM */
 +
 +	return ret;
@@ -47312,8 +47318,10 @@ index 0000000000000000000000000000000000000000..9022acb4af6095661072d7be6d01de67
 +		rga_request_scheduler_shutdown(scheduler);
 +
 +#ifndef RGA_DISABLE_PM
++	pm_runtime_suspend(&pdev->dev);
 +	device_init_wakeup(&pdev->dev, false);
 +	pm_runtime_disable(&pdev->dev);
++	pm_runtime_dont_use_autosuspend(&pdev->dev);
 +#endif /* #ifndef RGA_DISABLE_PM */
 +
 +	up_write(&rga_drvdata->rwsem);
@@ -48998,10 +49006,10 @@ index 0000000000000000000000000000000000000000..aeace228cdddeaed86017ed0dca1d8c1
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_job.c b/drivers/video/rockchip/rga3/rga_job.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..d41588da1013b730a1fbc0bce306fa28d482d780
+index 0000000000000000000000000000000000000000..aa828362c12deae51e9e050c7b1d3ac30e7ea07a
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_job.c
-@@ -0,0 +1,2101 @@
+@@ -0,0 +1,2100 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -50035,7 +50043,6 @@ index 0000000000000000000000000000000000000000..d41588da1013b730a1fbc0bce306fa28
 +{
 +	int i;
 +	unsigned long flags;
-+	enum rga_scheduler_status scheduler_status;
 +	int running_abort_count = 0, todo_abort_count = 0;
 +	struct rga_scheduler_t *scheduler = NULL;
 +	struct rga_job *job, *job_q;
@@ -50066,7 +50073,6 @@ index 0000000000000000000000000000000000000000..d41588da1013b730a1fbc0bce306fa28
 +		if (scheduler->running_job) {
 +			if (request->id == scheduler->running_job->request_id) {
 +				job = scheduler->running_job;
-+				scheduler_status = scheduler->status;
 +				scheduler->running_job = NULL;
 +				scheduler->status = RGA_SCHEDULER_ABORT;
 +				job->ret = -ECANCELED;
@@ -50094,7 +50100,8 @@ index 0000000000000000000000000000000000000000..d41588da1013b730a1fbc0bce306fa28
 +		if (removed)
 +			atomic_sub(removed, &rga_drvdata->telemetry_queue_depth);
 +
-+		if (job && scheduler_status == RGA_SCHEDULER_WORKING)
++		/* A restarted job owns power even while the reset status is ABORT. */
++		if (job)
 +			rga_power_disable(scheduler);
 +		mutex_unlock(&scheduler->job_mutex);
 +	}
