@@ -175,6 +175,11 @@ must demonstrate before it may be ticked is
 The tracefs event schemas, cumulative debugfs trees, and byte-frozen procfs
 formats are documented in [`docs/TELEMETRY.md`](docs/TELEMETRY.md).
 
+The direct MPP/RGA ioctl suites compile byte-preserved handler and session
+functions with bounded user-copy fixtures, rather than opening real device nodes.
+See [`docs/IOCTL-BOUNDARY-TESTS.md`](docs/IOCTL-BOUNDARY-TESTS.md) for the complete
+case table, reproduction commands, and the explicit hardware/uaccess limits.
+
 ## Versioning
 
 CalVer, `YYYY.MINOR.PATCH`, matching the rest of the CeraLive stack. The tag is

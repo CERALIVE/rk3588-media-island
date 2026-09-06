@@ -86,6 +86,7 @@ rk3588-media-island/
 | Build the modules | [`README.md`](README.md) → "Building the modules" |
 | MPP static-analysis dispositions and instrumented KUnit coverage | [`docs/HARDENING-FINDINGS.md`](docs/HARDENING-FINDINGS.md) — helper tests are not silicon validation |
 | Linux 7.2 modernization and proof boundaries | [`docs/MODERNIZATION.md`](docs/MODERNIZATION.md) |
+| Direct ioctl boundary KUnit, source staging, and coverage limits | [`docs/IOCTL-BOUNDARY-TESTS.md`](docs/IOCTL-BOUNDARY-TESTS.md) |
 | Add a compat shim | `drivers/video/rockchip/mpp/compat/` — and add its row to `docs/COMPAT.md`, or the lint refuses the build |
 | Change a device-tree node's owner | `integration/` — and update the `docs/OWNERSHIP.md` row in the same change |
 
