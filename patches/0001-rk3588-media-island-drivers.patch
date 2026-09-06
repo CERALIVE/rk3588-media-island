@@ -12801,10 +12801,10 @@ index 0000000000000000000000000000000000000000..8e000a4fecd51644a16f931f7d15a192
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_request_bounds.h b/drivers/video/rockchip/mpp/mpp_request_bounds.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..9153a0da20553ced13bf5ba30ba05a777ad2f819
+index 0000000000000000000000000000000000000000..2e9c5f7fb4ee86e591e6420d5242c376303e6718
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_request_bounds.h
-@@ -0,0 +1,182 @@
+@@ -0,0 +1,188 @@
 +/* SPDX-License-Identifier: (GPL-2.0+ OR MIT) */
 +#ifndef __ROCKCHIP_MPP_REQUEST_BOUNDS_H__
 +#define __ROCKCHIP_MPP_REQUEST_BOUNDS_H__
@@ -12865,6 +12865,12 @@ index 0000000000000000000000000000000000000000..9153a0da20553ced13bf5ba30ba05a77
 +static inline int mpp_iova_offset_check(size_t mapped_len, u32 offset)
 +{
 +	return mapped_len && offset < mapped_len ? 0 : -EINVAL;
++}
++
++static inline u32 mpp_rcb_sram_size(u32 requested, u64 available)
++{
++	/* Clamp the resource-sized span before narrowing to the RCB's u32 size. */
++	return min_t(u64, requested, available);
 +}
 +
 +static inline int mpp_req_buffer_check(u32 offset, u32 size, u32 base,
@@ -14931,7 +14937,7 @@ index 0000000000000000000000000000000000000000..f02af64d28642a6231668ad5f8dfb280
 +EXPORT_SYMBOL(rockchip_rkvdec_driver);
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvdec2.c b/drivers/video/rockchip/mpp/mpp_rkvdec2.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..69c58759ebb36d717fcc2df513a9adb828ce28cc
+index 0000000000000000000000000000000000000000..b9ed2bc80072d18a59839c3348190f07c3ebb06b
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvdec2.c
 @@ -0,0 +1,2353 @@
@@ -14949,6 +14955,7 @@ index 0000000000000000000000000000000000000000..69c58759ebb36d717fcc2df513a9adb8
 +#include "mpp_debug.h"
 +#include "mpp_common.h"
 +#include "mpp_iommu.h"
++#include "mpp_request_bounds.h"
 +
 +#include "mpp_rkvdec2_link.h"
 +
@@ -16831,8 +16838,7 @@ index 0000000000000000000000000000000000000000..69c58759ebb36d717fcc2df513a9adb8
 +			&sram_start, &sram_end);
 +		return -ENOMEM;
 +	}
-+	sram_size = sram_end - sram_start;
-+	sram_size = rcb_size < sram_size ? rcb_size : sram_size;
++	sram_size = mpp_rcb_sram_size(rcb_size, sram_end - sram_start);
 +	/* in a CCU cluster this is the shared domain; reject overlapping windows */
 +	if (dec->ccu) {
 +		ret = mpp_iommu_shared_domain_reserve_window(&dec->ccu->iommu,
@@ -22408,10 +22414,10 @@ index 0000000000000000000000000000000000000000..039752db69c71b3befeade39a91d81bf
 +};
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc2.c b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..e26418b5cf284ec6a6a7f489e13cfa34a91f613e
+index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1b1e3352c
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
-@@ -0,0 +1,3846 @@
+@@ -0,0 +1,3845 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
@@ -25875,8 +25881,7 @@ index 0000000000000000000000000000000000000000..e26418b5cf284ec6a6a7f489e13cfa34
 +			&sram_start, &sram_end);
 +		return -ENOMEM;
 +	}
-+	sram_size = sram_end - sram_start;
-+	sram_size = sram_used < sram_size ? sram_used : sram_size;
++	sram_size = mpp_rcb_sram_size(sram_used, sram_end - sram_start);
 +	/* in a CCU cluster this is the shared domain; reject overlapping windows */
 +	if (enc->ccu) {
 +		ret = mpp_iommu_shared_domain_reserve_window(&enc->ccu->iommu,

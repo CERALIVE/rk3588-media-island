@@ -182,7 +182,20 @@ static void media_map_lifetime_test(struct kunit *test)
 	__free_page(page);
 }
 
+static void mpp_rcb_sram_size_clamps_before_narrowing_test(struct kunit *test)
+{
+	KUNIT_EXPECT_EQ(test, mpp_rcb_sram_size(8192, 4096), 4096U);
+	KUNIT_EXPECT_EQ(test, mpp_rcb_sram_size(4096, 8192), 4096U);
+	KUNIT_EXPECT_EQ(test, mpp_rcb_sram_size(4096, 4096), 4096U);
+	KUNIT_EXPECT_EQ(test, mpp_rcb_sram_size(4096, 0), 0U);
+	KUNIT_EXPECT_EQ(test, mpp_rcb_sram_size(0, U64_MAX), 0U);
+	KUNIT_EXPECT_EQ(test, mpp_rcb_sram_size(4096, 1ULL << 32), 4096U);
+	KUNIT_EXPECT_EQ(test, mpp_rcb_sram_size(8192, (1ULL << 32) + 4096), 8192U);
+	KUNIT_EXPECT_EQ(test, mpp_rcb_sram_size(U32_MAX, U64_MAX), U32_MAX);
+}
+
 static struct kunit_case mpp_request_bounds_cases[] = {
+	KUNIT_CASE(mpp_rcb_sram_size_clamps_before_narrowing_test),
 	KUNIT_CASE(media_map_lifetime_test),
 	KUNIT_CASE(media_request_size_rejects_overflow_test),
 	KUNIT_CASE(mpp_req_shape_rejects_wrap_test),

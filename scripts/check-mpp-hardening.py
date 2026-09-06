@@ -86,6 +86,8 @@ def evaluate_0015(sources: Sources) -> tuple[Result, ...]:
     power_on = between(sources.common, "int mpp_power_on(", "int mpp_power_off(")
     finish = between(sources.common, "int mpp_task_finish(", "int mpp_task_finalize(")
     reset = between(sources.common, "int mpp_dev_reset(", "void mpp_task_run_begin(")
+    reset_once = optional_between(sources.common, "static int mpp_dev_reset_once(", "int mpp_dev_reset(")
+    recover = optional_between(sources.common, "int mpp_hw_recover(", "static int mpp_dev_reset_once(")
     return (
         Result("required clock acquisition errors propagate", init.count("if (ret)\n\t\treturn ret;") >= 3),
         Result("reset acquisition errors propagate", init.count("IS_ERR(") >= 3 and "PTR_ERR(" in init),
@@ -93,7 +95,15 @@ def evaluate_0015(sources: Sources) -> tuple[Result, ...]:
         Result("runtime PM and clock failures propagate", "pm_runtime_resume_and_get" in power_on and "return ret" in power_on),
         Result("partial clock enable unwinds", ordered(clk_on, "goto err_core", "clk_disable_unprepare(enc->hclk_info.clk)")),
         Result("finish and recovery reset errors propagate", "ret = mpp->dev_ops->finish" in finish and "reset_ret = mpp_dev_reset" in finish),
-        Result("hardware reset error propagates", "reset_ret = mpp->hw_ops->reset" in reset and "return reset_ret" in reset),
+        Result("hardware reset error propagates", all((
+            "reset_ret = mpp->hw_ops->reset(mpp);" in reset_once,
+            "ret = mpp_iommu_refresh(mpp->iommu_info, mpp->dev);" in reset_once,
+            "return reset_ret ? reset_ret : ret;" in reset_once,
+            "return mpp_hw_recover(mpp, mpp_dev_reset_once, NULL);" in reset,
+            ordered(recover, "ret = recover(mpp, context);", "mpp->recovery_result = ret;"),
+            ordered(recover.partition("ret = recover(mpp, context);")[2],
+                    "mpp->recovery_result = ret;", "return ret;"),
+        ))),
     )
 
 
@@ -172,7 +182,23 @@ def self_test() -> int:
     for mutation in mutations:
         if all(result.passed for result in evaluate_0014(mutation)):
             return 1
-    print("mpp-hardening self-test: pass:3 fail:0 total:3")
+    if not evaluate_0015(sources)[-1].passed:
+        print("FAIL: reset checker rejects the current production return chain")
+        return 1
+    reset_mutations = (
+        ("reset_ret = mpp->hw_ops->reset(mpp);", "mpp->hw_ops->reset(mpp);"),
+        ("return reset_ret ? reset_ret : ret;", "return reset_ret;"),
+        ("return mpp_hw_recover(mpp, mpp_dev_reset_once, NULL);", "return 0;"),
+        ("ret = recover(mpp, context);", "recover(mpp, context); ret = 0;"),
+    )
+    for original, replacement in reset_mutations:
+        if original not in sources.common:
+            return 1
+        mutation = replace(sources, common=sources.common.replace(original, replacement, 1))
+        if evaluate_0015(mutation)[-1].passed:
+            print(f"FAIL: reset checker accepts mutation of {original}")
+            return 1
+    print("mpp-hardening self-test: pass:8 fail:0 total:8")
     return 0
 
 

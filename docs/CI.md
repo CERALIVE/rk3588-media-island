@@ -600,6 +600,11 @@ hold while the module build is skipped.
 3. **Smatch is conditional.** The plan requires it when a suitable runner
    package is installable. This workflow currently gates sparse and coccinelle;
    it does not claim a smatch result.
+   The local MPP sweep's instrumented UML/QEMU results and every static-analysis
+   disposition are in [`HARDENING-FINDINGS.md`](HARDENING-FINDINGS.md). The MPP
+   reset-error source checker follows the post-modernization wrapper, recovery
+   callback and hardware-reset implementation; its self-test rejects swallowed
+   errors at each boundary, including the IOMMU-refresh fallback.
 4. **Integration patches are context-sensitive.** They apply with verbose
    `git apply`; there is no fuzzy re-anchor layer. A Linux pin change that moves
    a hunk is intentionally a red build and an explicit source update.

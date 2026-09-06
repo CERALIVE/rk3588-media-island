@@ -149,6 +149,12 @@ configuration the device does not run proves the wrong thing.
 
 ## Testing
 
+The MPP code-quality sweep and its per-finding dispositions are recorded in
+[`docs/HARDENING-FINDINGS.md`](docs/HARDENING-FINDINGS.md). Instrumented UML/QEMU
+KUnit covers production helpers; full RK3588 driver runtime coverage still needs
+a physical board boot. The SRAM sizing regression checks both encoder and decoder
+use of a shared clamp before narrowing a resource-sized span to `u32`.
+
 | Tier | Runs where | Proves |
 |---|---|---|
 | `tests/kunit/` | CI, no hardware | MPP request boundaries and deterministic task/session recovery, plus RGA request validation and fence terminal states |

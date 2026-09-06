@@ -12,6 +12,7 @@
 #include "mpp_debug.h"
 #include "mpp_common.h"
 #include "mpp_iommu.h"
+#include "mpp_request_bounds.h"
 
 #include "mpp_rkvdec2_link.h"
 
@@ -1894,8 +1895,7 @@ static int rkvdec2_alloc_rcbbuf(struct platform_device *pdev, struct rkvdec2_dev
 			&sram_start, &sram_end);
 		return -ENOMEM;
 	}
-	sram_size = sram_end - sram_start;
-	sram_size = rcb_size < sram_size ? rcb_size : sram_size;
+	sram_size = mpp_rcb_sram_size(rcb_size, sram_end - sram_start);
 	/* in a CCU cluster this is the shared domain; reject overlapping windows */
 	if (dec->ccu) {
 		ret = mpp_iommu_shared_domain_reserve_window(&dec->ccu->iommu,
