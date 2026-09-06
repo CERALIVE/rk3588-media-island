@@ -86,6 +86,19 @@ cells ran with fallback/dropped/layout-rejection counters at zero and scored
 40.80 dB and 45.24 dB respectively. Rock 5B+ remained network-unreachable and
 is not inferred from this result.
 
+### 2026-09-06 — Orange Pi 5+, merged PR #150 candidate, island `v2026.9.2`
+
+Kernel `7.2.0-ceralive-rk3588 #ceralive1 SMP PREEMPT @1788664077`, pipeline
+`98f9f198`: full Kconfig closure and RAUC/three-core RGA ownership passed; HDMI
+H.264/H.265 starts failed converter selection, so full todos 36/37/38/42 remain
+unqualified.
+[Detailed observations, commands and evidence](qualification/orange-pi-98f9f198-2026-09-06.md).
+USB-audio-only follow-up at 04:30–04:37 UTC: newly attached DJI MIC MINI
+(`2ca3:4011`) passed bounded 48 kHz stereo capture and appeared as an enabled
+External source in CeraUI. This supersedes its earlier audio NO-DEVICE result,
+not the independent video/recovery/benchmark qualification gaps. This entry
+records a candidate and a follow-up; it ticks no qualification leg.
+
 ### Phase-7 encoder hygiene prerequisites
 
 `tests/board/idr-latency.sh` provides a twenty-request engine IPC driver and an

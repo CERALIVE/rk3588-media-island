@@ -82,6 +82,7 @@ rk3588-media-island/
 | Look up a pinned upstream SHA | [`docs/REFERENCES.md`](docs/REFERENCES.md) |
 | See whether mainline has caught up on a block | [`docs/UPSTREAM-STATUS.md`](docs/UPSTREAM-STATUS.md) |
 | Know what a board must demonstrate before a tick | [`docs/BOARD-QUALIFICATION.md`](docs/BOARD-QUALIFICATION.md) |
+| Orange Pi merged PR #150 candidate evidence (OTA/ownership pass, HDMI converter failure, incomplete recovery/benchmark qualification) | [`docs/qualification/orange-pi-98f9f198-2026-09-06.md`](docs/qualification/orange-pi-98f9f198-2026-09-06.md); ten-class inventory in `tests/board/usb-matrix.yaml` |
 | RGA probe version-return / raster-mode regressions and their hardware limits | [`tests/board/README.md`](tests/board/README.md) — `make -C tests/board selftest` includes intercepted-ioctl regressions |
 | Measure forced-IDR latency | `tests/board/idr-latency.sh` — local engine IPC requester plus offline NAL/PTS scorer; collector and same-host clock requirements in [`tests/board/README.md`](tests/board/README.md#forced-idr-measurement). Self-test is not board proof. |
 | Look up a fault control, its counter, its errno, its call site or the row that consumes it | [`docs/FAULT-SEAM-CONTRACT.md`](docs/FAULT-SEAM-CONTRACT.md) — the authoritative table, plus the `T4` vocabulary every ledger cell is written in |
