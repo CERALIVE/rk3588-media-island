@@ -1,8 +1,8 @@
 # Linux 7.2 modernization
 
-Source changes are UAPI-frozen. KUnit runs on UML; it does not prove a flashed
-board. Hardware deployment and the after-change cost comparison are separate
-drills, not part of this source series.
+Source changes are UAPI-frozen. KUnit runs on UML and is distinct from board
+evidence. The owner-authorized matching-config module experiment now includes a
+real Rock 5B+ camera A/B measurement; its limits and failed cost gate are below.
 
 | Item | Source status | Proof |
 |---|---|---|
@@ -12,7 +12,7 @@ drills, not part of this source series.
 | (d) Deferred resource diagnostics | Named probe errors for clocks, interrupts, IOMMU and power domains; provider deferrals propagated | `media_probe_names_deferred_resource_test` checks the kernel's stored deferred-probe reason names iommus provider and aclk_vcodec, retaining -EPROBE_DEFER; UML 61/61 |
 | (e) Request sizing | Checked multiplication; variable-sized RGA request/pool/job arrays use kvzalloc with kvfree on every exit | `media_request_size_rejects_overflow_test`: SIZE_MAX / sizeof(u64) + 1 returns -EINVAL and clears the size; 64 KiB boundary accepted. UML: 55/55 passed |
 | (f) iosys_map | Raw mapping state replaced; legacy dma-buf vmap and PDE_DATA branches removed | `media_map_lifetime_test` covers page mapping cleanup; `media_mapping_preserves_exporter_map_test` uses a real dma-buf exporter and checks its I/O map survives until the exact unmap and is then cleared. UML 62/62; selected MPP/RGA objects sparse C=2 with -Wsparse-error clean; raw-vmap/PDE_DATA grep empty |
-| (g) Mapping cost decision | UNMEASURABLE ON THIS BOARD: no perf binary; Rock also lacks exposed trace events and an available hardware encoder | [Baseline transcript](MODERNIZATION-BASELINE.md). No percentage inferred; no iommu_map_sg change made, and NOT-WORTH-IT is not claimed |
+| (g) Mapping cost decision | NOT-WORTH-IT on the measured steady-state MPP camera workload; no iommu_map_sg change | [Board experiment](MODERNIZATION-BASELINE.md#item-g-measured-below-threshold-on-this-workload): 0 of 412 attributed setup samples, 0.00% observed cycle-period share; sampling is not a claim of universally zero mapping time |
 
 ## Fault logging
 
@@ -48,8 +48,9 @@ changed here. KUnit explicitly enables the real implementation rather than its
 vfree-only stub.
 
 The live timeout → `/sys/class/devcoredump/devcd*/data` → five-minute kernel
-expiry drill is **deferred until a modified kernel is deployed**. UML tests
-submission/ownership and the sysfs link, not the board timeout or expiry timer.
+expiry drill remains **unrun**. The board follow-up exercises normal encoding
+with the modified MPP module, not fault injection or expiry. UML tests prove
+submission/ownership and the sysfs link; they do not fill that hardware gap.
 
 The dedicated encoder result-wait timeout and the decoder link/soft-CCU/hard-CCU
 timeout and IOMMU paths also capture through `mpp_dump_task`. MMIO is sampled
@@ -77,7 +78,7 @@ An absent optional clock remains optional; a DT-named clock whose provider is
 deferred must defer the decoder/JPEG probe instead of silently continuing with
 a NULL clock. A missing IOMMU provider device and deferred provider IRQ also
 retain their deferral. Invalid/missing IOMMU phandles remain configuration errors.
-The deliberately dangling-phandle board drill remains a post-flash exercise.
+The deliberately dangling-phandle board drill remains a separate, unrun exercise.
 
 ## Recovery ordering
 
@@ -102,25 +103,61 @@ stop/mask/reset/IOMMU/restore sequence rather than losing those differences in a
 generic bulk call. The common task-run boundary advances epochs for linked tasks
 as well as the default worker.
 
-These unit proofs exercise recovery ownership, not silicon reset efficacy. The
-post-flash reset/fault drill must still establish the latter.
+These unit proofs exercise recovery ownership, not silicon reset efficacy. A
+dedicated reset/fault drill must still establish the latter.
 
-## Cost gate — PARTIAL
+## Board compatibility: matching modules were actually inserted
 
-On 2026-09-05 the live Rock 5B+ was reachable at its corrected address, but had
-no `/dev/mpp_service`, no loaded island modules, and no `mpph264enc` factory.
-No module was loaded and no board state was changed to make a measurement work.
+The initial factory/module absence did not make the board unusable. The full
+`/proc/config.gz` was captured; both PR modules were built against the same pinned
+Linux commit using the board's GCC 14.2.0-19/binutils 2.44. Normal insertion with
+exact matching vermagic succeeded for **MPP (exit 0)**. Both encoder cores, both
+decoder cores and JPGDEC probed, `/dev/mpp_service` appeared, and a fresh private
+GStreamer registry exposed the hardware factories.
 
-Orange Pi 5+ did complete a real, pre-change 1080p60 H.264 encode: 1,200 source
-buffers, EOS, **20.430 s elapsed, 6.322 s user CPU, 5.402 s system CPU**.
-This uses Bash's `time` resource accounting because `perf` is absent. The exact
-command, kernel identity, output and limits are in [MODERNIZATION-BASELINE.md](MODERNIZATION-BASELINE.md).
+**RGA insertion exited 1, `Bad address`:** its init reported
+`rga_iommu_bind, binding map scheduler failed!` and `rga iommu bind failed!`.
+The live DT has `rockchip,rk3588-rga3` / `rockchip,rk3588-rga` compatibles, whereas
+the island expects its `rockchip,rga3_core*` / `rockchip,rga2_core0` identities.
+No mapping scheduler binds. This is a DT ownership-integration mismatch, **not**
+an ABI, CRC, missing-symbol or mainline-version mismatch. Force-loading would
+not change it and the board has `CONFIG_MODULE_FORCE_LOAD=n` anyway.
 
-**PARTIAL: baseline measured; after-change comparison deferred to a future
-board-flash drill.** No modified module or kernel was deployed. There is no
-measured delta and no ≤1% acceptance claim. This single run is not a variance
-study and cannot attribute an iommu_map fraction; a controlled before/after
-campaign on the same board and kernel configuration remains required.
+The recorded image provenance pins the same Linux base and island v2026.9.0;
+the board had installed `rk_vcodec.ko` and older `rga3.ko`, not an absence of all
+island source. Kernel stamp `@1788474771` matches the image-builder commit date,
+not the Linux commit date. Exact provenance, config delta, hashes, insertion
+commands and kernel messages are in [MODERNIZATION-BASELINE.md](MODERNIZATION-BASELINE.md).
+
+## Cost gate — measured, NOT PASSED
+
+Perf 6.12.107 was installed after working around the board's captive-portal
+download failure with SHA-256-verified Debian packages transferred over SSH.
+The real HDMI camera was captured on `/dev/video1` at 3840×2160 NV16/59.94 Hz,
+software-converted to 1920×1080 NV12, and hardware-encoded with `mpph264enc`.
+Before/after used independently built `10894bc` / `0ec331c` MPP modules on the
+same running kernel/config/toolchain, with CPU affinity 4–7 and unchanged
+performance governors.
+
+Three trials per variant were retained. One pre-PR trial produced 599 of 600
+frames and remains a failed frame-count check. The equal-frame trial means were
+**8418.555 ms before** (n=2) and **8637.150 ms after** (n=3) of perf task-clock:
+an observed **+2.596586%**, above 1%. The valid baseline spans **5.044215%**,
+so this pilot does not isolate a causal modernization cost. It is not acceptable
+to claim the budget passed or assign the difference to a particular item.
+
+The whole-series qualification also remains incomplete: RGA could not bind,
+the software conversion/live scene affects CPU cost, and per-process task-clock
+does not include all asynchronous kernel workers. See the full table, frame
+failures, profiling method and scope in
+[MODERNIZATION-BASELINE.md](MODERNIZATION-BASELINE.md). The earlier Orange-only
+baseline and blanket "after comparison unavailable" conclusion are superseded
+by this real but non-qualifying Rock experiment.
+
+The test-owned MPP module was unloaded successfully at the end, restoring the
+initial unloaded state. Perf remains installed; the expected out-of-tree kernel
+taint persists until reboot. No reboot, driver override, persistent module
+replacement, DTB update or boot-state change was performed.
 
 ## Review corrections and source wiring proof
 
@@ -139,4 +176,5 @@ The failing call sites blame to the original import; the PR's scaling-list
 changes introduce no additional diagnostic. This is out of scope by policy,
 not an unfinished modernization requirement. See
 [RKVDEC-V1-DIAGNOSTICS.md](RKVDEC-V1-DIAGNOSTICS.md) for exact base/PR lines,
-compiler errors and blame evidence. No dormant-client fix or enablement was made.
+compiler errors and blame evidence. No additional dormant-client port fix or
+enablement was made in the follow-up.
