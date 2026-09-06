@@ -655,7 +655,7 @@ static int rkvdec2_isr(struct mpp_dev *mpp)
 
 	/* FIXME use a spin lock here */
 	if (!mpp_task) {
-		dev_err(mpp->dev, "no current task\n");
+		mpp_fault(mpp, "no current task\n");
 		return IRQ_HANDLED;
 	}
 	mpp_task->hw_cycles = mpp_read(mpp, RKVDEC_PERF_WORKING_CNT);
@@ -689,7 +689,7 @@ static int rkvdec_vdpu383_isr(struct mpp_dev *mpp)
 
 	/* FIXME use a spin lock here */
 	if (!mpp_task) {
-		dev_err(mpp->dev, "no current task\n");
+		mpp_fault(mpp, "no current task\n");
 		return IRQ_HANDLED;
 	}
 	mpp_task->hw_cycles = mpp_read(mpp, RKVDEC_PERF_WORKING_CNT);
@@ -1224,21 +1224,21 @@ static int rkvdec2_init(struct mpp_dev *mpp)
 	mpp->grf_info = &mpp->srv->grf_infos[MPP_DRIVER_RKVDEC];
 
 	/* Get clock info from dtsi */
-	ret = mpp_get_clk_info(mpp, &dec->aclk_info, "aclk_vcodec");
+	ret = mpp_get_optional_clk_info(mpp, &dec->aclk_info, "aclk_vcodec");
 	if (ret)
-		mpp_err("failed on clk_get aclk_vcodec\n");
-	ret = mpp_get_clk_info(mpp, &dec->hclk_info, "hclk_vcodec");
+		return ret;
+	ret = mpp_get_optional_clk_info(mpp, &dec->hclk_info, "hclk_vcodec");
 	if (ret)
-		mpp_err("failed on clk_get hclk_vcodec\n");
-	ret = mpp_get_clk_info(mpp, &dec->core_clk_info, "clk_core");
+		return ret;
+	ret = mpp_get_optional_clk_info(mpp, &dec->core_clk_info, "clk_core");
 	if (ret)
-		mpp_err("failed on clk_get clk_core\n");
-	ret = mpp_get_clk_info(mpp, &dec->cabac_clk_info, "clk_cabac");
+		return ret;
+	ret = mpp_get_optional_clk_info(mpp, &dec->cabac_clk_info, "clk_cabac");
 	if (ret)
-		mpp_err("failed on clk_get clk_cabac\n");
-	ret = mpp_get_clk_info(mpp, &dec->hevc_cabac_clk_info, "clk_hevc_cabac");
+		return ret;
+	ret = mpp_get_optional_clk_info(mpp, &dec->hevc_cabac_clk_info, "clk_hevc_cabac");
 	if (ret)
-		mpp_err("failed on clk_get clk_hevc_cabac\n");
+		return ret;
 	/* Set default rates */
 	mpp_set_clk_info_rate_hz(&dec->aclk_info, CLK_MODE_DEFAULT, 300 * MHZ);
 	mpp_set_clk_info_rate_hz(&dec->core_clk_info, CLK_MODE_DEFAULT, 200 * MHZ);
@@ -1485,34 +1485,34 @@ static int rkvdec2_sip_reset(struct mpp_dev *mpp)
 int rkvdec2_reset(struct mpp_dev *mpp)
 {
 	struct rkvdec2_dev *dec = to_rkvdec2_dev(mpp);
+	int ret = 0;
 
 	mpp_debug_enter();
 
 	/* cru reset */
 	if (dec->rst_a && dec->rst_h) {
+		struct reset_control_bulk_data assert_order[] = {
+			{ .rstc = dec->rst_niu_a }, { .rstc = dec->rst_niu_h },
+			{ .rstc = dec->rst_a }, { .rstc = dec->rst_h },
+			{ .rstc = dec->rst_core }, { .rstc = dec->rst_cabac },
+			{ .rstc = dec->rst_hevc_cabac },
+		};
+		struct reset_control_bulk_data deassert_order[] = {
+			{ .rstc = dec->rst_hevc_cabac }, { .rstc = dec->rst_cabac },
+			{ .rstc = dec->rst_core }, { .rstc = dec->rst_h },
+			{ .rstc = dec->rst_a }, { .rstc = dec->rst_niu_a },
+			{ .rstc = dec->rst_niu_h },
+		};
+
 		mpp_debug(DEBUG_RESET, "cru reset in\n");
 		mpp_pmu_idle_request(mpp, true);
-		mpp_safe_reset(dec->rst_niu_a);
-		mpp_safe_reset(dec->rst_niu_h);
-		mpp_safe_reset(dec->rst_a);
-		mpp_safe_reset(dec->rst_h);
-		mpp_safe_reset(dec->rst_core);
-		mpp_safe_reset(dec->rst_cabac);
-		mpp_safe_reset(dec->rst_hevc_cabac);
-		udelay(5);
-		mpp_safe_unreset(dec->rst_niu_h);
-		mpp_safe_unreset(dec->rst_niu_a);
-		mpp_safe_unreset(dec->rst_a);
-		mpp_safe_unreset(dec->rst_h);
-		mpp_safe_unreset(dec->rst_core);
-		mpp_safe_unreset(dec->rst_cabac);
-		mpp_safe_unreset(dec->rst_hevc_cabac);
+		ret = media_reset_cycle(ARRAY_SIZE(assert_order), assert_order, deassert_order);
 		mpp_pmu_idle_request(mpp, false);
 		mpp_debug(DEBUG_RESET, "cru reset out\n");
 	}
 	mpp_debug_leave();
 
-	return 0;
+	return ret;
 }
 
 static int rkvdec_vdpu383_reset(struct mpp_dev *mpp)
@@ -1533,7 +1533,7 @@ static int rkvdec_vdpu383_reset(struct mpp_dev *mpp)
 					 irq_status & 0x800,
 					 0, 200);
 	if (ret)
-		dev_err(mpp->dev, "reset timeout\n");
+		mpp_fault(mpp, "reset timeout\n");
 	/* clear reset ready status bit */
 	writel(link->info->ip_reset_mask, link->reg_base + link->info->status_base);
 
@@ -1780,6 +1780,8 @@ static int rkvdec2_ccu_remove(struct device *dev)
 
 static int rkvdec2_ccu_probe(struct platform_device *pdev)
 {
+	struct media_resets resets = {};
+	int ret, i;
 	struct rkvdec2_ccu *ccu;
 	struct resource *res;
 	struct device *dev = &pdev->dev;
@@ -1817,10 +1819,15 @@ static int rkvdec2_ccu_probe(struct platform_device *pdev)
 	}
 
 	ccu->aclk_info.clk = devm_clk_get(dev, "aclk_ccu");
-	if (!ccu->aclk_info.clk)
-		mpp_err("failed on clk_get ccu aclk\n");
+	if (IS_ERR(ccu->aclk_info.clk))
+		return media_probe_error(dev, PTR_ERR(ccu->aclk_info.clk), "aclk_ccu");
 
-	ccu->rst_a = devm_reset_control_get(dev, "video_ccu");
+	ret = media_resets_get(dev, &resets);
+	if (ret)
+		return ret;
+	for (i = 0; i < resets.count; i++)
+		if (!strcmp(resets.controls[i].id, "video_ccu"))
+			ccu->rst_a = resets.controls[i].rstc;
 	if (ccu->rst_a)
 		mpp_safe_unreset(ccu->rst_a);
 	else
@@ -2245,6 +2252,16 @@ static void rkvdec2_shutdown(struct platform_device *pdev)
 		mpp_dev_shutdown(pdev);
 }
 
+static int rkvdec2_pm_reset_once(struct mpp_dev *mpp, void *context)
+{
+	int ret, reset_ret = 0;
+
+	if (mpp->hw_ops->reset)
+		reset_ret = mpp->hw_ops->reset(mpp);
+	ret = mpp_iommu_refresh(mpp->iommu_info, mpp->dev);
+	return reset_ret ? reset_ret : ret;
+}
+
 static int __maybe_unused rkvdec2_runtime_suspend(struct device *dev)
 {
 	if (strstr(dev_name(dev), "ccu")) {
@@ -2267,9 +2284,7 @@ static int __maybe_unused rkvdec2_runtime_suspend(struct device *dev)
 		 * to ensure hardware is fully idle,
 		 * reset and wait for reset ready before suspend.
 		 */
-		if (mpp->hw_ops->reset)
-			mpp->hw_ops->reset(mpp);
-		ret = mpp_iommu_refresh(mpp->iommu_info, mpp->dev);
+		ret = mpp_hw_recover(mpp, rkvdec2_pm_reset_once, NULL);
 		if (ret) {
 			dev_err(dev, "failed to refresh iommu: %d\n", ret);
 			if (mpp->is_irq_startup) {

@@ -14,6 +14,7 @@
 #include "rga_common.h"
 #include "rga_request_validation.h"
 #include "rga_trace.h"
+#include "../mpp/media_request_size.h"
 
 enum rga_acquire_fence_state {
 	RGA_ACQUIRE_FENCE_NONE,
@@ -37,9 +38,9 @@ static void rga_job_free(struct rga_job *job)
 		job->cmd_buf = NULL;
 	}
 
-	kfree(job->task_buffers);
+	kvfree(job->task_buffers);
 	job->task_buffers = NULL;
-	kfree(job->task_list);
+	kvfree(job->task_list);
 	job->task_list = NULL;
 
 	/*
@@ -99,14 +100,40 @@ static u64 rga_telemetry_record_busy(struct rga_scheduler_t *scheduler,
 	return busy_ns;
 }
 
+static void rga_dump_job(struct rga_scheduler_t *scheduler, struct rga_job *job)
+{
+	struct media_dump_record record = { .core = scheduler->core };
+	u32 i;
+
+	if (job) {
+		record.task = job->request_id;
+		record.status = job->intr_status;
+		if (job->cmd_buf) {
+			record.iova = job->cmd_buf->dma_addr;
+			record.span = job->cmd_buf->size;
+		}
+	}
+	media_dump_event(&scheduler->dump, MEDIA_FAULT, record.task, record.status);
+	record.reg_count = MEDIA_DUMP_REGS;
+	for (i = 0; i < record.reg_count; i++)
+		record.regs[i] = rga_read(i * 4, scheduler);
+	media_dump_capture(&scheduler->dump, &record);
+}
+
 void rga_telemetry_reset(struct rga_scheduler_t *scheduler, int reason,
 			 void (*reset)(struct rga_scheduler_t *scheduler))
 {
 	if (!reset)
 		return;
+	if (!media_recovery_claim(&scheduler->recovery,
+				  atomic64_read(&scheduler->recovery.recovery_epoch)))
+		return;
 
 	atomic64_inc(&scheduler->telemetry.resets);
 	trace_rga_reset(scheduler->core, reason);
+	if (scheduler->running_job)
+		rga_dump_job(scheduler, scheduler->running_job);
+	media_dump_event(&scheduler->dump, MEDIA_RESET, 0, reason);
 	reset(scheduler);
 }
 
@@ -187,8 +214,11 @@ static struct rga_job *rga_job_alloc(struct rga_req *task_list, size_t task_coun
 				     struct rga_session *session)
 {
 	int i;
+	size_t bytes;
 	struct rga_job *job = NULL;
 
+	if (media_request_size(task_count, sizeof(*task_list), &bytes))
+		return NULL;
 	job = kzalloc(sizeof(*job), GFP_KERNEL);
 	if (!job)
 		return NULL;
@@ -202,13 +232,13 @@ static struct rga_job *rga_job_alloc(struct rga_req *task_list, size_t task_coun
 	job->timestamp.init = ktime_get();
 	job->pid = current->pid;
 
-	job->task_list = kmemdup_array(task_list, task_count,
-				       sizeof(*task_list), GFP_KERNEL);
+	job->task_list = kvzalloc(bytes, GFP_KERNEL);
 	if (!job->task_list) {
 		rga_job_free(job);
 		return NULL;
 	}
 	job->task_count = task_count;
+	memcpy(job->task_list, task_list, bytes);
 
 	for (i = 0; i < task_count; i++) {
 		if (job->task_list[i].priority > 0) {
@@ -259,6 +289,8 @@ static int rga_job_run(struct rga_job *job, struct rga_scheduler_t *scheduler)
 	set_bit(RGA_JOB_STATE_RUNNING, &job->state);
 	job->telemetry_start = ktime_get();
 	trace_rga_job_started(scheduler->core, job->request_id);
+	media_recovery_started(&scheduler->recovery);
+	media_dump_event(&scheduler->dump, MEDIA_STARTED, job->request_id, 0);
 
 	return ret;
 }
@@ -357,7 +389,8 @@ struct rga_job *rga_job_done(struct rga_scheduler_t *scheduler)
 
 		if (job->ret || test_bit(RGA_JOB_STATE_INTR_ERR, &job->state))
 			atomic64_inc(&scheduler->telemetry.errors);
-		trace_rga_job_done(scheduler->core, job->request_id, busy_ns);
+	trace_rga_job_done(scheduler->core, job->request_id, busy_ns);
+	media_dump_event(&scheduler->dump, MEDIA_DONE, job->request_id, 0);
 	}
 	job->session->last_active = job->timestamp.hw_done;
 	set_bit(RGA_JOB_STATE_DONE, &job->state);
@@ -392,12 +425,12 @@ static int rga_job_timeout_query_state(struct rga_job *job, int orig_ret)
 		return orig_ret;
 	} else if (!test_bit(RGA_JOB_STATE_DONE, &job->state) &&
 		   test_bit(RGA_JOB_STATE_FINISH, &job->state)) {
-		rga_job_err(job, "job hardware has finished, but the software has timeout!\n");
+		rga_job_fault(job, "job hardware has finished, but the software has timeout!\n");
 
 		ret = -EBUSY;
 	} else if (!test_bit(RGA_JOB_STATE_DONE, &job->state) &&
 		   !test_bit(RGA_JOB_STATE_FINISH, &job->state)) {
-		rga_job_err(job, "job hardware has timeout.\n");
+		rga_job_fault(job, "job hardware has timeout.\n");
 
 		if (scheduler->ops->read_status)
 			scheduler->ops->read_status(job, scheduler);
@@ -405,7 +438,7 @@ static int rga_job_timeout_query_state(struct rga_job *job, int orig_ret)
 		ret = -EBUSY;
 	}
 
-	rga_job_err(job, "timeout core[%d]: INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x], WORK_CYCLE[0x%x(%d)]\n",
+	rga_job_fault(job, "timeout core[%d]: INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x], WORK_CYCLE[0x%x(%d)]\n",
 		    scheduler->core,
 		    job->intr_status, job->hw_status, job->cmd_status,
 		    job->work_cycle, job->work_cycle);
@@ -433,6 +466,7 @@ static void rga_job_scheduler_timeout_clean(struct rga_scheduler_t *scheduler)
 		rga_telemetry_record_busy(scheduler, job, false);
 		atomic64_inc(&scheduler->telemetry.errors);
 		trace_rga_job_timeout(scheduler->core, job->request_id);
+		rga_dump_job(scheduler, job);
 
 		scheduler->running_job = NULL;
 		scheduler->status = RGA_SCHEDULER_ABORT;
@@ -581,7 +615,8 @@ int rga_job_commit(struct rga_req *task_list, size_t task_count,
 
 	if (job->task_count > 1) {
 		job->cmd_buf = rga_dma_alloc_coherent(job->scheduler,
-			job->task_count * scheduler->data->cmd_reg_size * sizeof(uint32_t));
+			array_size(job->task_count,
+				   array_size(scheduler->data->cmd_reg_size, sizeof(uint32_t))));
 		if (job->cmd_buf == NULL) {
 			rga_job_err(job, "Failed to allocate coherent memory for multi-task.\n");
 			ret = -ENOMEM;
@@ -597,7 +632,7 @@ int rga_job_commit(struct rga_req *task_list, size_t task_count,
 	}
 
 	job->task_buffers =
-		kzalloc(sizeof(struct rga_job_task_buffers) * job->task_count, GFP_KERNEL);
+		kvzalloc(array_size(job->task_count, sizeof(*job->task_buffers)), GFP_KERNEL);
 	if (!job->task_buffers) {
 		rga_job_err(job, "Failed to allocate memory for channel buffers.\n");
 		ret = -ENOMEM;
@@ -620,12 +655,14 @@ int rga_job_commit(struct rga_req *task_list, size_t task_count,
 	if (ret)
 		goto err_unmap_job_info;
 
-	job->bytes = job->task_count * sizeof(*job->task_list);
+	job->bytes = array_size(job->task_count, sizeof(*job->task_list));
 	atomic64_inc(&job->session->telemetry.tasks);
 	atomic64_add(job->bytes, &job->session->telemetry.bytes);
 	trace_rga_req_queued(job->session->id, job->request_id, job->task_count);
+	media_dump_event(&scheduler->dump, MEDIA_QUEUED, job->request_id, 0);
 	trace_rga_core_selected(job->request_id, scheduler->core,
 				job->task_list[0].core);
+	media_dump_event(&scheduler->dump, MEDIA_SELECTED, job->request_id, 0);
 
 	rga_job_next(scheduler);
 
@@ -1505,7 +1542,7 @@ rga_request_config_locked(struct rga_user_request *user_request,
 	rga_request_get(request);
 	mutex_unlock(&request_manager->lock);
 
-	task_list = kmalloc_array(user_request->task_num, sizeof(struct rga_req), GFP_KERNEL);
+	task_list = kvzalloc(array_size(user_request->task_num, sizeof(*task_list)), GFP_KERNEL);
 	if (task_list == NULL) {
 		rga_req_err(request, "task_req list alloc error!\n");
 		ret = -ENOMEM;
@@ -1513,7 +1550,7 @@ rga_request_config_locked(struct rga_user_request *user_request,
 	}
 
 	if (unlikely(copy_from_user(task_list, u64_to_user_ptr(user_request->task_ptr),
-				    sizeof(struct rga_req) * user_request->task_num))) {
+				    array_size(user_request->task_num, sizeof(*task_list))))) {
 		rga_req_err(request, "rga_user_request task list copy_from_user failed\n");
 		ret = -EFAULT;
 		goto err_free_task_list;
@@ -1540,13 +1577,13 @@ rga_request_config_locked(struct rga_user_request *user_request,
 	request->feature = task_list[0].feature;
 
 	spin_unlock_irqrestore(&request->lock, flags);
-	kfree(old_task_list);
+	kvfree(old_task_list);
 
 		/* The caller atomically follows with submit, or explicitly unlocks. */
 	return request;
 
 err_free_task_list:
-	kfree(task_list);
+	kvfree(task_list);
 err_put_request:
 	mutex_lock(&request_manager->lock);
 	rga_request_put(request);
@@ -1587,7 +1624,7 @@ rga_request_kernel_config_locked(struct rga_user_request *user_request)
 	rga_request_get(request);
 	mutex_unlock(&request_manager->lock);
 
-	task_list = kmalloc_array(user_request->task_num, sizeof(struct rga_req), GFP_KERNEL);
+	task_list = kvzalloc(array_size(user_request->task_num, sizeof(*task_list)), GFP_KERNEL);
 	if (task_list == NULL) {
 		rga_req_err(request, "task_req list alloc error!\n");
 		ret = -ENOMEM;
@@ -1595,7 +1632,7 @@ rga_request_kernel_config_locked(struct rga_user_request *user_request)
 	}
 
 	memcpy(task_list, (void *)(uintptr_t)user_request->task_ptr,
-	       sizeof(struct rga_req) * user_request->task_num);
+	       array_size(user_request->task_num, sizeof(*task_list)));
 
 	mutex_lock(&request->run_lock);
 	mutex_lock(&request->commit_lock);
@@ -1616,13 +1653,13 @@ rga_request_kernel_config_locked(struct rga_user_request *user_request)
 	request->acquire_fence_fd = user_request->acquire_fence_fd;
 
 	spin_unlock_irqrestore(&request->lock, flags);
-	kfree(old_task_list);
+	kvfree(old_task_list);
 
 	/* The caller atomically follows with submit. */
 	return request;
 
 err_free_task_list:
-	kfree(task_list);
+	kvfree(task_list);
 err_put_request:
 	mutex_lock(&request_manager->lock);
 	rga_request_put(request);
@@ -1860,7 +1897,7 @@ int rga_request_free(struct rga_request *request)
 	spin_unlock_irqrestore(&request->lock, flags);
 
 	if (task_list != NULL)
-		kfree(task_list);
+		kvfree(task_list);
 
 	rga_session_put(request->session);
 

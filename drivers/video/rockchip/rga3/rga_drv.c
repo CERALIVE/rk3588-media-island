@@ -20,6 +20,7 @@
 #include "rga_common.h"
 
 #include <linux/string.h>
+#include "../mpp/media_request_size.h"
 
 struct rga_drvdata_t *rga_drvdata;
 
@@ -712,6 +713,7 @@ bool rga_session_get_unless_zero(struct rga_session *session)
 
 static long rga_ioctl_import_buffer(unsigned long arg, struct rga_session *session)
 {
+	size_t bytes;
 	int i;
 	int imported = 0;
 	int ret = 0;
@@ -736,8 +738,9 @@ static long rga_ioctl_import_buffer(unsigned long arg, struct rga_session *sessi
 		return -EFAULT;
 	}
 
-	external_buffer = kmalloc(sizeof(struct rga_external_buffer) * buffer_pool.size,
-				  GFP_KERNEL);
+	if (media_request_size(buffer_pool.size, sizeof(*external_buffer), &bytes))
+		return -EINVAL;
+	external_buffer = kvzalloc(bytes, GFP_KERNEL);
 	if (external_buffer == NULL) {
 		rga_err("external buffer list alloc error!\n");
 		return -ENOMEM;
@@ -745,7 +748,7 @@ static long rga_ioctl_import_buffer(unsigned long arg, struct rga_session *sessi
 
 	if (unlikely(copy_from_user(external_buffer,
 				    u64_to_user_ptr(buffer_pool.buffers_ptr),
-				    sizeof(struct rga_external_buffer) * buffer_pool.size))) {
+				    bytes))) {
 		rga_err("rga_buffer_pool external_buffer list copy_from_user failed\n");
 		ret = -EFAULT;
 
@@ -801,7 +804,7 @@ static long rga_ioctl_import_buffer(unsigned long arg, struct rga_session *sessi
 
 	if (unlikely(copy_to_user(u64_to_user_ptr(buffer_pool.buffers_ptr),
 				  external_buffer,
-				  sizeof(struct rga_external_buffer) * buffer_pool.size))) {
+				  bytes))) {
 		rga_err("rga_buffer_pool external_buffer list copy_to_user failed\n");
 		ret = -EFAULT;
 
@@ -823,13 +826,14 @@ err_rollback_imports:
 	}
 
 err_free_external_buffer:
-	kfree(external_buffer);
+	kvfree(external_buffer);
 	return ret;
 }
 
 static long rga_ioctl_release_buffer(unsigned long arg,
 				     struct rga_session *session)
 {
+	size_t bytes;
 	int i;
 	int ret = 0;
 	struct rga_buffer_pool buffer_pool;
@@ -853,8 +857,9 @@ static long rga_ioctl_release_buffer(unsigned long arg,
 		return -EFAULT;
 	}
 
-	external_buffer = kmalloc(sizeof(struct rga_external_buffer) * buffer_pool.size,
-				  GFP_KERNEL);
+	if (media_request_size(buffer_pool.size, sizeof(*external_buffer), &bytes))
+		return -EINVAL;
+	external_buffer = kvzalloc(bytes, GFP_KERNEL);
 	if (external_buffer == NULL) {
 		rga_err("external buffer list alloc error!\n");
 		return -ENOMEM;
@@ -862,7 +867,7 @@ static long rga_ioctl_release_buffer(unsigned long arg,
 
 	if (unlikely(copy_from_user(external_buffer,
 				    u64_to_user_ptr(buffer_pool.buffers_ptr),
-				    sizeof(struct rga_external_buffer) * buffer_pool.size))) {
+				    bytes))) {
 		rga_err("rga_buffer_pool external_buffer list copy_from_user failed\n");
 		ret = -EFAULT;
 
@@ -883,7 +888,7 @@ static long rga_ioctl_release_buffer(unsigned long arg,
 	}
 
 err_free_external_buffer:
-	kfree(external_buffer);
+	kvfree(external_buffer);
 	return ret;
 }
 
@@ -1558,6 +1563,8 @@ static int init_scheduler(struct rga_scheduler_t *scheduler,
 scheduler_ready:
 	scheduler->ops = match_data->ops;
 	scheduler->dev = dev;
+	media_fault_init(&scheduler->fault_limit);
+	media_recovery_init(&scheduler->recovery);
 
 	mutex_init(&scheduler->job_mutex);
 	scheduler->shutdown = false;
@@ -1569,7 +1576,7 @@ scheduler_ready:
 	atomic64_set(&scheduler->telemetry.errors, 0);
 	atomic64_set(&scheduler->telemetry.resets, 0);
 
-	return 0;
+	return media_dump_init(&scheduler->dump, dev);
 }
 
 static int rga_drv_probe(struct platform_device *pdev)
@@ -1610,6 +1617,9 @@ static int rga_drv_probe(struct platform_device *pdev)
 		dev_err(dev, "init scheduler failed!\n");
 		return ret;
 	}
+	ret = media_resets_get(dev, &scheduler->resets);
+	if (ret)
+		return ret;
 	if (match_data->device_type == RGA_DEVICE_RGA3)
 		dma_caps = rga3_dma_capability();
 	else
@@ -1640,8 +1650,7 @@ static int rga_drv_probe(struct platform_device *pdev)
 	/* there are irq names in dts */
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0) {
-		dev_err(dev, "no irq in dts\n");
-		return irq;
+		return media_probe_error(dev, irq, "interrupts[0]");
 	}
 
 	scheduler->irq = irq;
@@ -1661,8 +1670,7 @@ static int rga_drv_probe(struct platform_device *pdev)
 	/* clk init */
 	ret = devm_clk_bulk_get_all(dev, &scheduler->clks);
 	if (ret < 1) {
-		dev_err(dev, "failed to get clk\n");
-		return ret < 0 ? ret : -EINVAL;
+		return media_probe_error(dev, ret < 0 ? ret : -EINVAL, "clocks");
 	}
 	scheduler->num_clks = ret;
 
@@ -1672,13 +1680,13 @@ static int rga_drv_probe(struct platform_device *pdev)
 
 	ret = pm_runtime_resume_and_get(scheduler->dev);
 	if (ret < 0) {
-		dev_err(dev, "failed to get pm runtime, ret = %d\n", ret);
+		media_probe_error(dev, ret, "power-domains");
 		goto pm_disable;
 	}
 
 	ret = clk_bulk_prepare_enable(scheduler->num_clks, scheduler->clks);
 	if (ret < 0) {
-		dev_err(dev, "failed to enable clk\n");
+		media_probe_error(dev, ret, "clocks (enable)");
 		goto pm_put;
 	}
 #endif /* #ifndef RGA_DISABLE_PM */
@@ -1733,7 +1741,7 @@ static int rga_drv_probe(struct platform_device *pdev)
 		scheduler->iommu_info = rga_iommu_probe(dev);
 		if (IS_ERR(scheduler->iommu_info)) {
 			ret = PTR_ERR(scheduler->iommu_info);
-			dev_err(dev, "failed to attach iommu: %d\n", ret);
+			media_probe_error(dev, ret, "iommus");
 			scheduler->iommu_info = NULL;
 			goto err_disable_pm;
 		}

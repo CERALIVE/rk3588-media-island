@@ -45,6 +45,7 @@
 #include "mpp_dma_policy.h"
 #include "mpp_iommu.h"
 #include "mpp_request_bounds.h"
+#include "media_request_size.h"
 #include "mpp_rkvenc_test.h"
 
 /* input parmater structure for version 1 */
@@ -149,9 +150,33 @@ static void mpp_telemetry_task_error(struct mpp_dev *mpp,
 {
 	if (!mpp_telemetry_mark_once(&task->state, TASK_STATE_ERROR_REPORTED))
 		return;
-
 	atomic64_inc(&mpp->telemetry.errors);
 	trace_mpp_task_error(mpp->core_id, task->task_id, irq_status);
+	media_dump_event(&mpp->dump, MEDIA_FAULT, task->task_id, irq_status);
+}
+
+void mpp_dump_task(struct mpp_dev *mpp, struct mpp_task *task, u32 irq_status)
+{
+	struct media_dump_record record = {
+		.task = task->task_id, .core = mpp->core_id, .status = irq_status,
+	};
+	const struct mpp_hw_info *hw = mpp->var->hw_info;
+	u32 i;
+
+	if (!list_empty(&task->mem_region_list)) {
+		struct mpp_mem_region *mem = list_first_entry(&task->mem_region_list,
+							    struct mpp_mem_region, reg_link);
+		record.iova = mem->iova;
+		record.span = mem->len;
+	}
+	if (pm_runtime_get_if_in_use(mpp->dev) > 0) {
+		record.reg_base = hw->reg_start * 4;
+		record.reg_count = min_t(u32, hw->reg_end - hw->reg_start + 1, MEDIA_DUMP_REGS);
+		for (i = 0; i < record.reg_count; i++)
+			record.regs[i] = mpp_read_relaxed(mpp, record.reg_base + i * 4);
+		pm_runtime_put_autosuspend(mpp->dev);
+	}
+	media_dump_capture(&mpp->dump, &record);
 }
 
 static int
@@ -659,7 +684,7 @@ void mpp_free_task(struct kref *ref)
 	struct mpp_task *task = container_of(ref, struct mpp_task, ref);
 
 	if (!task->session) {
-		mpp_err("task %p, task->session is null.\n", task);
+		pr_err_ratelimited("task %p, task->session is null.\n", task);
 		return;
 	}
 	session = task->session;
@@ -692,27 +717,28 @@ static void mpp_task_timeout_work(struct work_struct *work_s)
 	struct mpp_session *session = task->session;
 
 	if (!session) {
-		mpp_err("task %p, task->session is null.\n", task);
+		pr_err_ratelimited("task %p, task->session is null.\n", task);
 		return;
 	}
 
 	mpp = mpp_get_task_used_device(task, session);
 	if (!mpp) {
-		mpp_err("session %d:%d mpp is null\n", session->device_type, session->index);
+		pr_err_ratelimited("session %d:%d mpp is null\n", session->device_type, session->index);
 		return;
 	}
 	disable_irq(mpp->irq);
 	if (!mpp_task_recovery_claim(&task->state, MPP_TASK_RECOVERY_TIMEOUT)) {
-		mpp_err("session %d:%d task %d has been handled\n",
+		mpp_fault(mpp, "session %d:%d task %d has been handled\n",
 			session->device_type, session->index, task->task_index);
 		enable_irq(mpp->irq);
 		return;
 	}
-	mpp_err("session %d:%d task %d processing time out!\n",
+	mpp_fault(mpp, "session %d:%d task %d processing time out!\n",
 		session->device_type, session->index, task->task_index);
 
 	mpp_task_dump_timing(task, ktime_us_delta(ktime_get(), task->on_create));
 	mpp_telemetry_task_error(mpp, task, task->irq_status);
+	mpp_dump_task(mpp, task, task->irq_status);
 
 	enable_irq(mpp->irq);
 	mpp_taskqueue_trigger_work(mpp);
@@ -806,9 +832,11 @@ mpp_reset_control_get(struct mpp_dev *mpp, enum MPP_RESET_TYPE type, const char 
 	/* check reset whether belone to device alone */
 	index = of_property_match_string(mpp->dev->of_node, "reset-names", name);
 	if (index >= 0) {
-		rst = devm_reset_control_get(mpp->dev, name);
-		if (IS_ERR(rst))
-			return rst;
+		for (index = 0; index < mpp->resets.count; index++)
+			if (!strcmp(mpp->resets.controls[index].id, name)) {
+				rst = mpp->resets.controls[index].rstc;
+				break;
+			}
 		ret = mpp_safe_unreset(rst);
 		if (ret)
 			return ERR_PTR(ret);
@@ -836,8 +864,10 @@ mpp_reset_control_get(struct mpp_dev *mpp, enum MPP_RESET_TYPE type, const char 
 	rst = group->resets[type];
 	if (!rst) {
 		rst = devm_reset_control_get(mpp->dev, shared_name);
-		if (IS_ERR(rst))
+		if (IS_ERR(rst)) {
+			media_probe_error(mpp->dev, PTR_ERR(rst), shared_name);
 			goto out_unlock;
+		}
 		ret = mpp_safe_unreset(rst);
 		if (ret) {
 			rst = ERR_PTR(ret);
@@ -853,17 +883,35 @@ out_unlock:
 	return rst;
 }
 
-int mpp_dev_reset(struct mpp_dev *mpp)
+int mpp_hw_recover(struct mpp_dev *mpp,
+		   int (*recover)(struct mpp_dev *, void *), void *context)
+{
+	int ret;
+	int reason;
+	s64 epoch = atomic64_read(&mpp->recovery.recovery_epoch);
+
+	mutex_lock(&mpp->recovery_lock);
+	reason = atomic_xchg(&mpp->reset_request, 0);
+	if (!media_recovery_claim(&mpp->recovery, epoch)) {
+		ret = mpp->recovery_result;
+		mutex_unlock(&mpp->recovery_lock);
+		return ret;
+	}
+	atomic64_inc(&mpp->telemetry.resets);
+	trace_mpp_reset(mpp->core_id, reason);
+	media_dump_event(&mpp->dump, MEDIA_RESET, 0, reason);
+	ret = recover(mpp, context);
+	mpp->recovery_result = ret;
+	mutex_unlock(&mpp->recovery_lock);
+	return ret;
+}
+
+static int mpp_dev_reset_once(struct mpp_dev *mpp, void *context)
 {
 	int ret;
 	int reset_ret = 0;
-	int reason;
 
-	reason = atomic_xchg(&mpp->reset_request, 0);
-	if (!reason)
-		return 0;
-
-	dev_info(mpp->dev, "resetting...\n");
+	mpp_fault(mpp, "resetting...\n");
 
 	disable_irq(mpp->irq);
 	if (mpp->iommu_info && mpp->iommu_info->got_irq)
@@ -882,8 +930,6 @@ int mpp_dev_reset(struct mpp_dev *mpp)
 	/* FIXME lock resource lock of the other devices in combo */
 	mpp_iommu_down_write(mpp->iommu_info);
 	mpp_reset_down_write(mpp->reset_group);
-	atomic64_inc(&mpp->telemetry.resets);
-	trace_mpp_reset(mpp->core_id, reason);
 
 	if (mpp->hw_ops->reset)
 		reset_ret = mpp->hw_ops->reset(mpp);
@@ -896,7 +942,7 @@ int mpp_dev_reset(struct mpp_dev *mpp)
 	 */
 	ret = mpp_iommu_refresh(mpp->iommu_info, mpp->dev);
 	if (ret)
-		dev_err(mpp->dev, "failed to refresh iommu: %d\n", ret);
+		mpp_fault(mpp, "failed to refresh iommu: %d\n", ret);
 
 	mpp_reset_up_write(mpp->reset_group);
 	mpp_iommu_up_write(mpp->iommu_info);
@@ -905,15 +951,23 @@ int mpp_dev_reset(struct mpp_dev *mpp)
 	if (mpp->iommu_info && mpp->iommu_info->got_irq)
 		enable_irq(mpp->iommu_info->irq);
 
-	dev_info(mpp->dev, "reset done\n");
+	mpp_fault(mpp, "reset done\n");
 
-	if (reset_ret)
-		return reset_ret;
-	return ret;
+	return reset_ret ? reset_ret : ret;
+}
+
+int mpp_dev_reset(struct mpp_dev *mpp)
+{
+	if (!atomic_read(&mpp->reset_request))
+		return 0;
+	return mpp_hw_recover(mpp, mpp_dev_reset_once, NULL);
 }
 
 void mpp_task_run_begin(struct mpp_task *task, u32 timing_en, u32 timeout)
 {
+	struct mpp_dev *mpp = mpp_get_task_used_device(task, task->session);
+
+	media_recovery_started(&mpp->recovery);
 	preempt_disable();
 
 	set_bit(TASK_STATE_START, &task->state);
@@ -1083,6 +1137,7 @@ static int mpp_task_run(struct mpp_dev *mpp,
 	set_bit(TASK_STATE_BUSY_REPORTED, &task->state);
 	atomic_inc(&mpp->telemetry.busy);
 	trace_mpp_task_started(mpp->core_id, task->task_id);
+	media_dump_event(&mpp->dump, MEDIA_STARTED, task->task_id, 0);
 	/* Fault admission is live before a pending codec completion can run. */
 	enable_irq(mpp->irq);
 
@@ -1265,6 +1320,7 @@ again:
 		atomic_inc(&task_mpp->task_count);
 		trace_mpp_core_selected(task->task_id, task_mpp->core_id,
 					queue->core_idle);
+		media_dump_event(&task_mpp->dump, MEDIA_SELECTED, task->task_id, 0);
 		mpp_taskqueue_pending_to_run(queue, task);
 		WARN_ON_ONCE(!mpp_task_recovery_mark_running(&task->state));
 		if (mpp_task_run(task_mpp, task))
@@ -2226,6 +2282,7 @@ static void mpp_msgs_trigger(struct list_head *msgs_list)
 		atomic64_add(task->bytes, &task->session->telemetry.bytes);
 		trace_mpp_task_queued(task->session->index, task->task_id,
 				      task->session->device_type);
+		media_dump_event(&task->session->mpp->dump, MEDIA_QUEUED, task->task_id, 0);
 	}
 
 	if (mpp_prev && queue_prev) {
@@ -2568,7 +2625,10 @@ int mpp_extract_reg_offset_info(struct reg_offset_info *off_inf,
 {
 	int max_size = ARRAY_SIZE(off_inf->elem);
 	int cnt = req->size / sizeof(off_inf->elem[0]);
-	u32 size = cnt * sizeof(off_inf->elem[0]);
+	size_t size;
+
+	if (media_request_size(cnt, sizeof(off_inf->elem[0]), &size))
+		return -EINVAL;
 
 	/*
 	 * Reject a byte count that is not a whole number of elements: the
@@ -2664,7 +2724,7 @@ int mpp_task_finish(struct mpp_session *session,
 	if (mpp->dev_ops->finish)
 		ret = mpp->dev_ops->finish(mpp, task);
 	if (ret) {
-		dev_err(mpp->dev, "task finish failed: %d\n", ret);
+		mpp_fault(mpp, "task finish failed: %d\n", ret);
 		set_bit(TASK_STATE_ABORT, &task->state);
 	}
 	if (ret || atomic_read(&mpp->reset_request) > 0)
@@ -2677,15 +2737,17 @@ int mpp_task_finish(struct mpp_session *session,
 		atomic64_add(busy_ns, &mpp->telemetry.busy_ns);
 		atomic64_inc(&mpp->telemetry.tasks);
 		trace_mpp_task_done(mpp->core_id, task->task_id, busy_ns);
+		media_dump_event(&mpp->dump, MEDIA_DONE, task->task_id, 0);
 	}
 	if (test_and_clear_bit(TASK_STATE_BUSY_REPORTED, &task->state))
 		atomic_dec(&mpp->telemetry.busy);
 
 	mpp_reset_up_read(mpp->reset_group);
 	if (atomic_read(&mpp->reset_request) > 0) {
+		mpp_dump_task(mpp, task, task->irq_status);
 		reset_ret = mpp_dev_reset(mpp);
 		if (reset_ret) {
-			dev_err(mpp->dev, "reset recovery failed: %d\n", reset_ret);
+			mpp_fault(mpp, "reset recovery failed: %d\n", reset_ret);
 			set_bit(TASK_STATE_ABORT, &task->state);
 			if (!ret)
 				ret = reset_ret;
@@ -2743,16 +2805,16 @@ int mpp_task_dump_mem_region(struct mpp_dev *mpp,
 	if (!task)
 		return -EIO;
 
-	mpp_err("--- dump task %d mem region ---\n", task->task_index);
+	mpp_fault(mpp, "--- dump task %d mem region ---\n", task->task_index);
 	if (!list_empty(&task->mem_region_list)) {
 		list_for_each_entry_safe(mem, n,
 					 &task->mem_region_list,
 					 reg_link) {
-			mpp_err("reg[%3d]: %pad, size %lx\n",
+			mpp_fault(mpp, "reg[%3d]: %pad, size %lx\n",
 				mem->reg_idx, &mem->iova, mem->len);
 		}
 	} else {
-		dev_err(mpp->dev, "no memory region mapped\n");
+		mpp_fault(mpp, "no memory region mapped\n");
 	}
 
 	return 0;
@@ -2765,7 +2827,7 @@ int mpp_task_dump_reg(struct mpp_dev *mpp,
 		return -EIO;
 
 	if (mpp_debug_unlikely(DEBUG_DUMP_ERR_REG)) {
-		mpp_err("--- dump task register ---\n");
+		mpp_fault(mpp, "--- dump task register ---\n");
 		if (task->reg) {
 			u32 i;
 			u32 s = task->hw_info->reg_start;
@@ -2774,7 +2836,7 @@ int mpp_task_dump_reg(struct mpp_dev *mpp,
 			for (i = s; i <= e; i++) {
 				u32 reg = i * sizeof(u32);
 
-				mpp_err("reg[%03d]: %04x: 0x%08x\n",
+				mpp_fault(mpp, "reg[%03d]: %04x: 0x%08x\n",
 					i, reg, task->reg[i]);
 			}
 		}
@@ -2789,11 +2851,11 @@ int mpp_task_dump_hw_reg(struct mpp_dev *mpp)
 	u32 s = mpp->var->hw_info->reg_start;
 	u32 e = mpp->var->hw_info->reg_end;
 
-	mpp_err("--- dump hardware register ---\n");
+	mpp_fault(mpp, "--- dump hardware register ---\n");
 	for (i = s; i <= e; i++) {
 		u32 reg = i * sizeof(u32);
 
-		mpp_err("reg[%03d]: %04x: 0x%08x\n",
+		mpp_fault(mpp, "reg[%03d]: %04x: 0x%08x\n",
 				i, reg, readl_relaxed(mpp->reg_base + reg));
 	}
 
@@ -2805,7 +2867,7 @@ void mpp_reg_show(struct mpp_dev *mpp, u32 offset)
 	if (!mpp)
 		return;
 
-	dev_err(mpp->dev, "reg[%03d]: %04x: 0x%08x\n",
+	mpp_fault(mpp, "reg[%03d]: %04x: 0x%08x\n",
 		offset >> 2, offset, mpp_read_relaxed(mpp, offset));
 }
 
@@ -2844,6 +2906,15 @@ int mpp_dev_probe(struct mpp_dev *mpp,
 		mpp->task_capacity = 1;
 
 	mpp->dev = dev;
+	media_fault_init(&mpp->fault_limit);
+	media_recovery_init(&mpp->recovery);
+	mutex_init(&mpp->recovery_lock);
+	ret = media_resets_get(dev, &mpp->resets);
+	if (ret)
+		return ret;
+	ret = media_dump_init(&mpp->dump, dev);
+	if (ret)
+		return ret;
 	mpp->hw_ops = mpp->var->hw_ops;
 	mpp->dev_ops = mpp->var->dev_ops;
 	ret = dma_set_mask_and_coherent(dev,
@@ -2888,8 +2959,7 @@ int mpp_dev_probe(struct mpp_dev *mpp,
 	pm_runtime_enable(dev);
 	mpp->irq = platform_get_irq(pdev, 0);
 	if (mpp->irq < 0) {
-		dev_err(dev, "No interrupt resource found\n");
-		ret = -ENODEV;
+		ret = media_probe_error(dev, mpp->irq, "interrupts[0]");
 		goto failed;
 	}
 
@@ -2918,7 +2988,7 @@ int mpp_dev_probe(struct mpp_dev *mpp,
 	mpp->iommu_info = mpp_iommu_probe(dev);
 	if (IS_ERR(mpp->iommu_info)) {
 		ret = PTR_ERR(mpp->iommu_info);
-		dev_err(dev, "failed to attach iommu: %d\n", ret);
+		media_probe_error(dev, ret, "iommus");
 		mpp->iommu_info = NULL;
 		goto failed;
 	} else {
@@ -2935,13 +3005,13 @@ int mpp_dev_probe(struct mpp_dev *mpp,
 	if (hw_info->reg_id >= 0) {
 		ret = pm_runtime_resume_and_get(dev);
 		if (ret) {
-			dev_err(dev, "pm_runtime_resume_and_get failed: %d\n", ret);
+			media_probe_error(dev, ret, "power-domains");
 			goto failed;
 		}
 		if (mpp->hw_ops->clk_on) {
 			ret = mpp->hw_ops->clk_on(mpp);
 			if (ret) {
-				dev_err(dev, "clk_on failed: %d\n", ret);
+				media_probe_error(dev, ret, "codec clocks (enable)");
 				pm_runtime_put_sync_suspend(dev);
 				goto failed;
 			}
@@ -3229,15 +3299,14 @@ int mpp_get_clk_info(struct mpp_dev *mpp,
 					     "clock-names", name);
 
 	if (index < 0)
-		return -EINVAL;
+		return media_probe_error(mpp->dev, -EINVAL, name);
 
 	clk_info->clk = devm_clk_get(mpp->dev, name);
 	if (IS_ERR(clk_info->clk)) {
 		int ret = PTR_ERR(clk_info->clk);
 
 		clk_info->clk = NULL;
-		return dev_err_probe(mpp->dev, ret,
-				     "failed to get %s clock\n", name);
+		return media_probe_error(mpp->dev, ret, name);
 	}
 	of_property_read_u32_index(mpp->dev->of_node,
 				   "rockchip,normal-rates",
@@ -3249,6 +3318,14 @@ int mpp_get_clk_info(struct mpp_dev *mpp,
 				   &clk_info->advanced_rate_hz);
 
 	return 0;
+}
+
+int mpp_get_optional_clk_info(struct mpp_dev *mpp, struct mpp_clk_info *info,
+			      const char *name)
+{
+	if (of_property_match_string(mpp->dev->of_node, "clock-names", name) < 0)
+		return 0;
+	return mpp_get_clk_info(mpp, info, name);
 }
 
 int mpp_set_clk_info_rate_hz(struct mpp_clk_info *clk_info,

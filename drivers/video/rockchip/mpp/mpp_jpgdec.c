@@ -260,7 +260,7 @@ static int jpgdec_soft_reset(struct mpp_dev *mpp)
 					0, 10);
 
 	if (ret)
-		mpp_err("soft reset failed.");
+		mpp_fault(mpp, "soft reset failed.\n");
 
 	return ret;
 }
@@ -435,12 +435,12 @@ static int jpgdec_init(struct mpp_dev *mpp)
 	struct jpgdec_dev *dec = to_jpgdec_dev(mpp);
 
 	/* Get clock info from dtsi */
-	ret = mpp_get_clk_info(mpp, &dec->aclk_info, "aclk_vcodec");
+	ret = mpp_get_optional_clk_info(mpp, &dec->aclk_info, "aclk_vcodec");
 	if (ret)
-		mpp_err("failed on clk_get aclk_vcodec\n");
-	ret = mpp_get_clk_info(mpp, &dec->hclk_info, "hclk_vcodec");
+		return ret;
+	ret = mpp_get_optional_clk_info(mpp, &dec->hclk_info, "hclk_vcodec");
 	if (ret)
-		mpp_err("failed on clk_get hclk_vcodec\n");
+		return ret;
 	/* Set default rates */
 	mpp_set_clk_info_rate_hz(&dec->aclk_info, CLK_MODE_DEFAULT, 300 * MHZ);
 
@@ -515,7 +515,7 @@ static int jpgdec_isr(struct mpp_dev *mpp)
 
 	/* FIXME use a spin lock here */
 	if (!mpp_task) {
-		dev_err(mpp->dev, "no current task\n");
+		mpp_fault(mpp, "no current task\n");
 		return IRQ_HANDLED;
 	}
 	mpp_task->hw_cycles = mpp_read(mpp, JPGDEC_REG_PERF_WORKING_CNT);
@@ -547,22 +547,25 @@ static int jpgdec_reset(struct mpp_dev *mpp)
 	ret = jpgdec_soft_reset(mpp);
 
 	if (ret && dec->rst_a && dec->rst_h) {
+		struct reset_control_bulk_data assert_order[] = {
+			{ .rstc = dec->rst_a }, { .rstc = dec->rst_h },
+		};
+		struct reset_control_bulk_data deassert_order[] = {
+			{ .rstc = dec->rst_h }, { .rstc = dec->rst_a },
+		};
+
 		mpp_debug(DEBUG_RESET, "reset in\n");
 
 		/* Don't skip this or iommu won't work after reset */
 		mpp_pmu_idle_request(mpp, true);
-		mpp_safe_reset(dec->rst_a);
-		mpp_safe_reset(dec->rst_h);
-		udelay(5);
-		mpp_safe_unreset(dec->rst_a);
-		mpp_safe_unreset(dec->rst_h);
+		ret = media_reset_cycle(ARRAY_SIZE(assert_order), assert_order, deassert_order);
 		mpp_pmu_idle_request(mpp, false);
 
 		mpp_debug(DEBUG_RESET, "reset out\n");
 	}
 	mpp_write(mpp, JPGDEC_REG_INT_EN_BASE, 0);
 
-	return 0;
+	return ret;
 }
 
 static struct mpp_hw_ops jpgdec_v1_hw_ops = {

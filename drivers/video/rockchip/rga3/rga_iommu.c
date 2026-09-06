@@ -275,7 +275,7 @@ static int rga_iommu_intr_fault_handler(struct iommu_domain *iommu, struct devic
 		return 0;
 	}
 
-	rga_job_err(job,
+	rga_job_fault(job,
 		    "IOMMU fault on scheduler[%d], IOVA[0x%lx], STATUS[0x%x]\n",
 		    scheduler->core, iova, status);
 	if (scheduler->ops->irq)
@@ -289,13 +289,13 @@ static int rga_iommu_intr_fault_handler(struct iommu_domain *iommu, struct devic
 	}
 
 	if (status & (ROCKCHIP_IOMMU_FAULT_BUS_ERROR | RGA_IOMMU_IRQ_BUS_ERROR)) {
-		rga_err("RGA IOMMU: bus error! Please check if the memory is invalid or has been freed.\n");
+		rga_fault(scheduler, "RGA IOMMU: bus error! Please check if the memory is invalid or has been freed.\n");
 		job->ret = -EACCES;
 	} else if (status == IOMMU_FAULT_WRITE) {
-		rga_err("RGA IOMMU: write fault! Please check the memory size.\n");
+		rga_fault(scheduler, "RGA IOMMU: write fault! Please check the memory size.\n");
 		job->ret = -EACCES;
 	} else {
-		rga_err("RGA IOMMU: read fault! Please check the memory size.\n");
+		rga_fault(scheduler, "RGA IOMMU: read fault! Please check the memory size.\n");
 		job->ret = -EACCES;
 	}
 

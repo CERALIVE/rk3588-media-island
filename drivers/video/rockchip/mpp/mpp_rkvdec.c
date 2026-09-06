@@ -15,6 +15,8 @@
 #include <linux/gfp.h>
 #include <linux/interrupt.h>
 #include <linux/iopoll.h>
+#include <linux/iosys-map.h>
+#include <linux/overflow.h>
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/of_platform.h>
@@ -459,11 +461,11 @@ static int fill_scaling_list_pps(struct rkvdec_task *task,
 				 int pps_info_size, int sub_addr_offset)
 {
 	struct dma_buf *dmabuf = NULL;
-	struct iosys_map map;
-	u8 *pps = NULL;
+	struct iosys_map map = IOSYS_MAP_INIT_VADDR(NULL);
 	u32 scaling_fd = 0;
 	int ret = 0;
 	u32 base = sub_addr_offset;
+	size_t end;
 
 	dmabuf = dma_buf_get(fd);
 	if (IS_ERR_OR_NULL(dmabuf)) {
@@ -471,20 +473,26 @@ static int fill_scaling_list_pps(struct rkvdec_task *task,
 		return -ENOENT;
 	}
 
-	ret = dma_buf_begin_cpu_access(dmabuf, DMA_FROM_DEVICE);
+	if (offset < 0 || count <= 0 || pps_info_size <= 0 || sub_addr_offset < 0 ||
+	    check_mul_overflow((size_t)(count - 1), (size_t)pps_info_size, &end) ||
+	    check_add_overflow(end, (size_t)offset + sub_addr_offset, &end) ||
+	    end > dmabuf->size || sizeof(u32) > dmabuf->size - end) {
+		ret = -EINVAL;
+		goto access_failed;
+	}
+	ret = dma_buf_begin_cpu_access(dmabuf, DMA_BIDIRECTIONAL);
 	if (ret) {
 		mpp_err("can't access the pps buffer\n");
 		goto access_failed;
 	}
 
-	ret = dma_buf_vmap(dmabuf, &map);
+	ret = dma_buf_vmap_unlocked(dmabuf, &map);
 	if (ret) {
 		mpp_err("can't access the pps buffer\n");
 		goto vmap_failed;
 	}
-	pps = map.vaddr + offset;
 	/* NOTE: scaling buffer in pps, have no offset */
-	memcpy(&scaling_fd, pps + base, sizeof(scaling_fd));
+	iosys_map_memcpy_from(&scaling_fd, &map, offset + base, sizeof(scaling_fd));
 	scaling_fd = le32_to_cpu(scaling_fd);
 	if (scaling_fd > 0) {
 		struct mpp_mem_region *mem_region = NULL;
@@ -502,18 +510,18 @@ static int fill_scaling_list_pps(struct rkvdec_task *task,
 		tmp = mem_region->iova & 0xffffffff;
 		tmp = cpu_to_le32(tmp);
 		mpp_debug(DEBUG_PPS_FILL,
-			  "pps at %p, scaling fd: %3d => %pad + offset %10d\n",
-			  pps, scaling_fd, &mem_region->iova, offset);
+			  "scaling fd: %3d => %pad + offset %10d\n",
+			  scaling_fd, &mem_region->iova, offset);
 
 		/* Fill the scaling list address in each pps entries */
 		for (i = 0; i < count; i++, base += pps_info_size)
-			memcpy(pps + base, &tmp, sizeof(tmp));
+			iosys_map_memcpy_to(&map, offset + base, &tmp, sizeof(tmp));
 	}
 
 task_fd_failed:
-	dma_buf_vunmap(dmabuf, &map);
+	dma_buf_vunmap_unlocked(dmabuf, &map);
 vmap_failed:
-	dma_buf_end_cpu_access(dmabuf, DMA_FROM_DEVICE);
+	dma_buf_end_cpu_access(dmabuf, DMA_BIDIRECTIONAL);
 access_failed:
 	dma_buf_put(dmabuf);
 

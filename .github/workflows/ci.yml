@@ -82,6 +82,7 @@ jobs:
             scripts/check-compat-shims.py \
             scripts/check-dt-ownership.py \
             scripts/check-mpp-hardening.py \
+            scripts/check-modernization.py \
             scripts/check-upstream-freshness.py; do
             printf '=== %s --self-test ===\n' "$tool"
             python3 "$tool" --self-test || rc=1
@@ -568,6 +569,13 @@ jobs:
             "$KERNEL_MIRROR" .work/linux
           mkdir -p .work/linux/drivers/video/rockchip/mpp
           cp drivers/video/rockchip/mpp/mpp_request_bounds.h \
+            drivers/video/rockchip/mpp/media_request_size.h \
+            drivers/video/rockchip/mpp/media_map.h \
+            drivers/video/rockchip/mpp/media_fault.h \
+            drivers/video/rockchip/mpp/media_dump.h \
+            drivers/video/rockchip/mpp/media_recovery.h \
+            drivers/video/rockchip/mpp/media_probe.h \
+            drivers/video/rockchip/mpp/mpp_iommu.h \
             drivers/video/rockchip/mpp/mpp_rkvenc_test.h \
             drivers/video/rockchip/mpp/mpp_capabilities.h \
             drivers/video/rockchip/mpp/mpp_dma_policy.h \

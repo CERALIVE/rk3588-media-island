@@ -29,7 +29,20 @@
  * the mpp_pmu_idle_request() inline below); supply a no-op stub. */
 #include "compat/rockchip_pmu_idle.h"
 #include "mpp_recovery_state.h"
+#include "media_fault.h"
+#include "media_dump.h"
+#include "media_recovery.h"
+#include "media_probe.h"
 #include <uapi/linux/rk-mpp.h>
+
+struct mpp_dev;
+struct mpp_clk_info;
+struct mpp_task;
+void mpp_dump_task(struct mpp_dev *mpp, struct mpp_task *task, u32 irq_status);
+int mpp_hw_recover(struct mpp_dev *mpp,
+		   int (*recover)(struct mpp_dev *, void *), void *context);
+int mpp_get_optional_clk_info(struct mpp_dev *mpp, struct mpp_clk_info *info,
+			      const char *name);
 
 #define MHZ				(1000 * 1000)
 #define MPP_WORK_TIMEOUT_DELAY		(500)
@@ -296,6 +309,12 @@ struct mpp_session_telemetry {
 
 struct mpp_dev {
 	struct device *dev;
+	struct ratelimit_state fault_limit;
+	struct media_dump dump;
+	struct media_recovery recovery;
+	struct mutex recovery_lock;
+	int recovery_result;
+	struct media_resets resets;
 	const struct mpp_dev_var *var;
 	struct mpp_hw_ops *hw_ops;
 	struct mpp_dev_ops *dev_ops;

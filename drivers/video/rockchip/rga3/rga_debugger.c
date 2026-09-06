@@ -971,11 +971,7 @@ void rga_telemetry_remove_session(struct rga_session *session)
 #ifdef CONFIG_ROCKCHIP_RGA_PROC_FS
 static int rga_procfs_open(struct inode *inode, struct file *file)
 {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 	struct rga_debugger_node *node = pde_data(inode);
-#else
-	struct rga_debugger_node *node = PDE_DATA(inode);
-#endif
 
 	return single_open(file, node->info_ent->show, node);
 }
@@ -1134,6 +1130,8 @@ void rga_request_task_debug_info(struct seq_file *m, struct rga_req *req)
 }
 
 #ifdef CONFIG_NO_GKI
+#include "../mpp/media_map.h"
+
 static int rga_dump_image_to_file(struct rga_internal_buffer *dump_buffer,
 				  const char *channel_name,
 				  int task_index,
@@ -1142,14 +1140,15 @@ static int rga_dump_image_to_file(struct rga_internal_buffer *dump_buffer,
 {
 	char file_name[100];
 	struct file *file;
-	size_t size = 0;
+	size_t size = dump_buffer->size;
+	size_t offset = 0;
 	loff_t pos = 0;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 	int ret;
-	struct iosys_map map;
-#endif
-	void *kvaddr = NULL;
-	void *kvaddr_origin = NULL;
+	struct iosys_map map = IOSYS_MAP_INIT_VADDR(NULL);
+	struct dma_buf *dmabuf = NULL;
+
+	if (!size)
+		return -EINVAL;
 
 	switch (dump_buffer->type) {
 	case RGA_DMA_BUFFER:
@@ -1160,50 +1159,37 @@ static int rga_dump_image_to_file(struct rga_internal_buffer *dump_buffer,
 			return -EINVAL;
 		}
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
-		ret = dma_buf_vmap_unlocked(dump_buffer->dma_buffer->dma_buf, &map);
-		kvaddr = ret ? NULL : map.vaddr;
-#else
-		kvaddr = dma_buf_vmap(dump_buffer->dma_buffer->dma_buf);
-#endif
-		if (!kvaddr) {
-			pr_err("can't vmap the dma buffer!\n");
+		dmabuf = dump_buffer->dma_buffer->dma_buf;
+		offset = dump_buffer->dma_buffer->offset;
+		if (offset > dmabuf->size || size > dmabuf->size - offset)
 			return -EINVAL;
+		ret = dma_buf_begin_cpu_access(dmabuf, DMA_FROM_DEVICE);
+		if (ret)
+			return ret;
+		ret = dma_buf_vmap_unlocked(dmabuf, &map);
+		if (ret) {
+			dma_buf_end_cpu_access(dmabuf, DMA_FROM_DEVICE);
+			return ret;
 		}
-
-		kvaddr_origin = kvaddr;
-		kvaddr += dump_buffer->dma_buffer->offset;
 		break;
 	case RGA_VIRTUAL_ADDRESS:
-		kvaddr = vmap(dump_buffer->virt_addr->pages, dump_buffer->virt_addr->page_count,
-			      VM_MAP, pgprot_writecombine(PAGE_KERNEL));
-		if (!kvaddr) {
+		offset = dump_buffer->virt_addr->offset;
+		iosys_map_set_vaddr(&map,
+			vmap(dump_buffer->virt_addr->pages, dump_buffer->virt_addr->page_count,
+			     VM_MAP, pgprot_writecombine(PAGE_KERNEL)));
+		if (iosys_map_is_null(&map)) {
 			pr_err("dump_vaddr vmap error!, 0x%lx\n",
 			       (unsigned long)dump_buffer->virt_addr->addr);
 			return -EFAULT;
 		}
 
-		kvaddr_origin = kvaddr;
-		kvaddr += dump_buffer->virt_addr->offset;
 		break;
 	case RGA_PHYSICAL_ADDRESS:
-		kvaddr = phys_to_virt(dump_buffer->phys_addr);
+		iosys_map_set_vaddr(&map, phys_to_virt(dump_buffer->phys_addr));
 		break;
 	default:
 		pr_err("unsupported memory type[%x]\n", dump_buffer->type);
 		return -EINVAL;
-	}
-
-	size = dump_buffer->size;
-
-	if (kvaddr == NULL) {
-		pr_err("dump addr is NULL!\n");
-		return -EFAULT;
-	}
-
-	if (size <= 0) {
-		pr_err("dump buffer size[%lx] is invalid!\n", (unsigned long)size);
-		return -EFAULT;
 	}
 
 	if (dump_buffer->memory_parm.width == 0 &&
@@ -1225,7 +1211,16 @@ static int rga_dump_image_to_file(struct rga_internal_buffer *dump_buffer,
 
 	file = filp_open(file_name, O_RDWR | O_CREAT | O_TRUNC, 0600);
 	if (!IS_ERR(file)) {
-		kernel_write(file, kvaddr, size, &pos);
+		while (pos < size) {
+			u8 bytes[256];
+			size_t count = min_t(size_t, sizeof(bytes), size - pos);
+			ssize_t written;
+
+			iosys_map_memcpy_from(bytes, &map, offset + pos, count);
+			written = kernel_write(file, bytes, count, &pos);
+			if (written <= 0)
+				break;
+		}
 		pr_info("dump image to: %s\n", file_name);
 		fput(file);
 	} else {
@@ -1235,14 +1230,11 @@ static int rga_dump_image_to_file(struct rga_internal_buffer *dump_buffer,
 	switch (dump_buffer->type) {
 	case RGA_DMA_BUFFER:
 	case RGA_DMA_BUFFER_PTR:
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
-		dma_buf_vunmap_unlocked(dump_buffer->dma_buffer->dma_buf, &map);
-#else
-		dma_buf_vunmap(dump_buffer->dma_buffer->dma_buf, kvaddr_origin);
-#endif
+		dma_buf_vunmap_unlocked(dmabuf, &map);
+		dma_buf_end_cpu_access(dmabuf, DMA_FROM_DEVICE);
 		break;
 	case RGA_VIRTUAL_ADDRESS:
-		vunmap(kvaddr_origin);
+		media_vunmap(&map);
 		break;
 	}
 

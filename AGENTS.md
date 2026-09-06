@@ -84,6 +84,7 @@ rk3588-media-island/
 | Know what a board must demonstrate before a tick | [`docs/BOARD-QUALIFICATION.md`](docs/BOARD-QUALIFICATION.md) |
 | Understand which licence branch applies to a file | [`LICENSE.md`](LICENSE.md) |
 | Build the modules | [`README.md`](README.md) → "Building the modules" |
+| Linux 7.2 modernization and proof boundaries | [`docs/MODERNIZATION.md`](docs/MODERNIZATION.md) |
 | Add a compat shim | `drivers/video/rockchip/mpp/compat/` — and add its row to `docs/COMPAT.md`, or the lint refuses the build |
 | Change a device-tree node's owner | `integration/` — and update the `docs/OWNERSHIP.md` row in the same change |
 
@@ -199,7 +200,7 @@ shell, valid regex, and it matches a backslash and a `t` rather than a tab. That
 defect shipped once here. Reintroducing it leaves shellcheck green and turns the
 harness self-test red; the transcript is [`docs/CI.md`](docs/CI.md) §3.
 
-**The source-dependent gates are live.** Series integrity reconstructs 78 source
+**The source-dependent gates are live.** Series integrity reconstructs 84 source
 files and eight applied integration payloads, shim/UAPI checks inspect the imported
 surface, sparse checks every selected object, and cross-compile asserts exactly
 `rk_vcodec.ko` plus `rga_multicore.ko` and rejects either module if its compiled OF aliases

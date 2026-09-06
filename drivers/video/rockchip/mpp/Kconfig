@@ -4,6 +4,7 @@ config ROCKCHIP_MPP_SERVICE
 	depends on ARCH_ROCKCHIP && ROCKCHIP_IOMMU
 	default m
 	select DMA_SHARED_BUFFER
+	select WANT_DEV_COREDUMP
 	help
 	  Rockchip Media Process Platform service framework. Provides the
 	  /dev/mpp_service character device and the shared task, IOMMU, clock,

@@ -2727,7 +2727,7 @@ static void rga_cmd_to_rga2_cmd(struct rga_scheduler_t *scheduler,
 
 static void rga2_soft_reset(struct rga_scheduler_t *scheduler)
 {
-	u32 i;
+	u32 i = 0;
 	u32 reg;
 	u32 iommu_dte_addr = 0, iommu_int_mask = 0, iommu_auto_gate = 0;
 
@@ -2737,18 +2737,22 @@ static void rga2_soft_reset(struct rga_scheduler_t *scheduler)
 		iommu_auto_gate = rga_read(RGA_IOMMU_AUTO_GATING, scheduler);
 	}
 
-	rga_write(m_RGA2_SYS_CTRL_ACLK_SRESET_P | m_RGA2_SYS_CTRL_CCLK_SRESET_P |
-		  m_RGA2_SYS_CTRL_RST_PROTECT_P,
-		  RGA2_SYS_CTRL, scheduler);
+	if (scheduler->resets.count) {
+		if (media_reset_cycle(scheduler->resets.count, scheduler->resets.controls,
+				      scheduler->resets.controls))
+			i = RGA_RESET_TIMEOUT;
+	} else {
+		rga_write(m_RGA2_SYS_CTRL_ACLK_SRESET_P | m_RGA2_SYS_CTRL_CCLK_SRESET_P |
+			  m_RGA2_SYS_CTRL_RST_PROTECT_P, RGA2_SYS_CTRL, scheduler);
 
-	for (i = 0; i < RGA_RESET_TIMEOUT; i++) {
-		/* RGA_SYS_CTRL */
-		reg = rga_read(RGA2_SYS_CTRL, scheduler) & 1;
+		for (i = 0; i < RGA_RESET_TIMEOUT; i++) {
+			reg = rga_read(RGA2_SYS_CTRL, scheduler) & 1;
 
-		if (reg == 0)
-			break;
+			if (reg == 0)
+				break;
 
-		udelay(1);
+			udelay(1);
+		}
 	}
 
 	if (scheduler->data->mmu == RGA_IOMMU) {
@@ -2763,7 +2767,7 @@ static void rga2_soft_reset(struct rga_scheduler_t *scheduler)
 	}
 
 	if (i == RGA_RESET_TIMEOUT)
-		rga_err("%s[%#x] soft reset timeout.\n",
+		rga_fault(scheduler, "%s[%#x] soft reset timeout.\n",
 			rga_get_core_name(scheduler->core), scheduler->core);
 }
 
@@ -3404,7 +3408,7 @@ static int rga2_irq(struct rga_scheduler_t *scheduler)
 	/* The hardware interrupt top-half don't need to lock the scheduler. */
 	if (job == NULL) {
 		rga2_clear_intr(scheduler);
-		rga_err("core[%d], invalid job, INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x], WORK_CYCLE[0x%x(%d)]\n",
+		rga_fault(scheduler, "core[%d], invalid job, INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x], WORK_CYCLE[0x%x(%d)]\n",
 			scheduler->core, rga_read(RGA2_INT, scheduler),
 			rga_read(RGA2_STATUS2, scheduler), rga_read(RGA2_STATUS1, scheduler),
 			rga_read(RGA2_WORK_CNT, scheduler), rga_read(RGA2_WORK_CNT, scheduler));
@@ -3436,7 +3440,7 @@ static int rga2_irq(struct rga_scheduler_t *scheduler)
 		set_bit(RGA_JOB_STATE_INTR_ERR, &job->state);
 		job->finished_count = cmd_cur_num > 0 ? cmd_cur_num - 1 : 0;
 
-		rga_job_err(job, "irq handler err! INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x], WORK_CYCLE[0x%x(%d)]\n",
+		rga_job_fault(job, "irq handler err! INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x], WORK_CYCLE[0x%x(%d)]\n",
 			job->intr_status, job->hw_status, job->cmd_status,
 			job->work_cycle, job->work_cycle);
 
@@ -3500,37 +3504,37 @@ static int rga2_isr_thread(struct rga_job *job, struct rga_scheduler_t *schedule
 
 	if (test_bit(RGA_JOB_STATE_INTR_ERR, &job->state)) {
 		if (job->hw_status & m_RGA2_STATUS2_RPP_ERROR)
-			rga_job_err(job, "RGA current status: rpp error!\n");
+			rga_job_fault(job, "RGA current status: rpp error!\n");
 		if (job->hw_status & m_RGA2_STATUS2_BUS_ERROR)
-			rga_job_err(job, "RGA current status: bus error!\n");
+			rga_job_fault(job, "RGA current status: bus error!\n");
 
 		if (job->intr_status & m_RGA2_INT_ERROR_INT_FLAG) {
-			rga_job_err(job, "RGA bus error intr, please check your configuration and buffer.\n");
+			rga_job_fault(job, "RGA bus error intr, please check your configuration and buffer.\n");
 			job->ret = -EFAULT;
 		} else if (job->intr_status & m_RGA2_INT_MMU_INT_FLAG) {
-			rga_job_err(job, "mmu failed, please check size of the buffer or whether the buffer has been freed.\n");
+			rga_job_fault(job, "mmu failed, please check size of the buffer or whether the buffer has been freed.\n");
 			job->ret = -EACCES;
 		} else if (job->intr_status & m_RGA2_INT_SCL_ERROR_INTR) {
-			rga_job_err(job, "scale failed, check scale config or formula.\n");
+			rga_job_fault(job, "scale failed, check scale config or formula.\n");
 			job->ret = -EACCES;
 		} else if (job->intr_status & m_RGA2_INT_FBCIN_DEC_ERROR) {
-			rga_job_err(job, "FBC decode failed, please check if the source data is FBC data.\n");
+			rga_job_fault(job, "FBC decode failed, please check if the source data is FBC data.\n");
 			job->ret = -EACCES;
 		} else if (job->intr_status & m_RGA2_INT_CONFIG_ERR) {
-			rga_job_err(job, "reg config error. status[%#x]\n", job->intr_status2);
+			rga_job_fault(job, "reg config error. status[%#x]\n", job->intr_status2);
 			if (job->intr_status2 & m_RGA2_INTR_STATUS2_SRC_DST_RECT_NOT_EQUAL)
-				rga_job_err(job, "reg config error: src_rect != dst_rect.\n");
+				rga_job_fault(job, "reg config error: src_rect != dst_rect.\n");
 			if (job->intr_status2 & m_RGA2_INTR_STATUS2_SRC1_HORI_BND_ERR)
-				rga_job_err(job, "reg config error: src1 horizontal beyond the boundary in overlay.\n");
+				rga_job_fault(job, "reg config error: src1 horizontal beyond the boundary in overlay.\n");
 			if (job->intr_status2 & m_RGA2_INTR_STATUS2_SRC1_VERT_BND_ERR)
-				rga_job_err(job, "reg config error: src1 vertical beyond the boundary in overlay.\n");
+				rga_job_fault(job, "reg config error: src1 vertical beyond the boundary in overlay.\n");
 			if (job->intr_status2 & m_RGA2_INTR_STATUS2_SRC1_ODD_VIOLATION)
-				rga_job_err(job, "reg config error: src1 odd violation in overlay.\n");
+				rga_job_fault(job, "reg config error: src1 odd violation in overlay.\n");
 			job->ret = -EACCES;
 		}
 
 		if (job->ret == 0) {
-			rga_job_err(job, "rga intr error[0x%x]!\n", job->intr_status);
+			rga_job_fault(job, "rga intr error[0x%x]!\n", job->intr_status);
 			job->ret = -EFAULT;
 		}
 	}
