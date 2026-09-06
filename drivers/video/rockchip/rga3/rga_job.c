@@ -879,6 +879,9 @@ int rga_request_check(struct rga_user_request *req)
 {
 	int ret;
 
+	if (req->sync_mode != RGA_BLIT_SYNC && req->sync_mode != RGA_BLIT_ASYNC)
+		return -EINVAL;
+
 	ret = rga_user_request_validate(req->id, req->task_num, req->task_ptr,
 					RGA_TASK_NUM_MAX);
 	if (!ret)
@@ -1500,6 +1503,7 @@ rga_request_config_locked(struct rga_user_request *user_request,
 			  struct rga_session *session)
 {
 	int ret;
+	u32 i;
 	unsigned long flags;
 	struct rga_pending_request_manager *request_manager;
 	struct rga_request *request;
@@ -1554,6 +1558,25 @@ rga_request_config_locked(struct rga_user_request *user_request,
 		rga_req_err(request, "rga_user_request task list copy_from_user failed\n");
 		ret = -EFAULT;
 		goto err_free_task_list;
+	}
+
+	/* Reject unknown selectors before publishing any part of a new task list. */
+	for (i = 0; i < user_request->task_num; i++) {
+		if (task_list[i].core & ~RGA_CORE_MASK) {
+			ret = -EINVAL;
+			goto err_free_task_list;
+		}
+		switch (task_list[i].render_mode) {
+		case BITBLT_MODE:
+		case COLOR_PALETTE_MODE:
+		case COLOR_FILL_MODE:
+		case UPDATE_PALETTE_TABLE_MODE:
+		case UPDATE_PATTEN_BUF_MODE:
+			break;
+		default:
+			ret = -EINVAL;
+			goto err_free_task_list;
+		}
 	}
 
 	mutex_lock(&request->run_lock);

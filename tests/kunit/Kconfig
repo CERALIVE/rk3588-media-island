@@ -61,3 +61,13 @@ config ROCKCHIP_MEDIA_DMA_POLICY_KUNIT_TEST
 	default KUNIT_ALL_TESTS
 	help
 	  Exercise per-block address widths and DMA mapping-size limits.
+
+config ROCKCHIP_MEDIA_IOCTL_KUNIT_TEST
+	bool "Rockchip media direct ioctl boundary tests"
+	depends on KUNIT && 64BIT
+	depends on !COMPAT
+	depends on !ROCKCHIP_MPP_SERVICE && !ROCKCHIP_MULTI_RGA
+	select DMA_SHARED_BUFFER
+	help
+	  Compile the maintained ioctl and session functions with bounded user-copy
+	  fixtures. No hardware driver is registered. Run stage_ioctl.py first.

@@ -588,10 +588,8 @@ jobs:
             drivers/video/rockchip/rga3/include/rga_request_validation.h \
             .work/linux/drivers/video/rockchip/rga3/include/
           cp -a tests/kunit ".work/linux/drivers/video/rockchip/"
-          printf '\nsource "drivers/video/rockchip/kunit/Kconfig"\n' \
-            >>.work/linux/drivers/video/Kconfig
-          printf '\nobj-y += rockchip/kunit/\n' \
-            >>.work/linux/drivers/video/Makefile
+          python3 tests/kunit/stage_ioctl.py --self-test
+          python3 tests/kunit/stage_ioctl.py .work/linux
           ./.work/linux/tools/testing/kunit/kunit.py run \
             --kunitconfig="$PWD/tests/kunit" \
             --build_dir="$PWD/.work/kunit" | tee .work/kunit.log
