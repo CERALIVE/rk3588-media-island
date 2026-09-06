@@ -5,7 +5,8 @@ every one (`cancel-in-progress: true` for the PR gate, `false` for release and
 the watch); `push` constrained to `branches:` because a `pull_request` trigger
 exists; top-level `permissions: contents: read` with per-job escalation only
 where a job genuinely writes; every `uses:` pinned to the current latest major;
-the kernel clone and `ccache` cached; nothing published before the gates run.
+the kernel clone, `ccache`, and configured provider artifacts cached; nothing
+published before the gates run.
 
 **No workflow restates a pinned coordinate.** The kernel tag is read out of
 [`../kernel-pin.env`](../kernel-pin.env) by the `pin` job and passed on as job
@@ -52,10 +53,10 @@ reason worth stating:
    the cache is written.** The staged island source and the applied
    `integration/` patches would otherwise poison the next run's reset — and a
    poisoned cache fails *green*.
-4. **A configured `vmlinux` and `modules_prepare` run before the modules.** The
+4. **A configured `vmlinux` and `modules_prepare` run on a provider-cache miss.** The
    first writes `vmlinux.symvers` but not the external-modpost filename; the
    second writes `scripts/module.lds` but deliberately no symbol table. CI needs
-   both, then checks the symbol dump is non-empty and copies it to
+   both outputs, then always checks the symbol dump is non-empty and copies it to
    `Module.symvers`. The two module builds run without `KBUILD_MODPOST_WARN`:
     `shim-lint` catches a REAL-DEPENDENCY given a stub body, and strict modpost
      catches a declaration with no provider behind it.
@@ -69,6 +70,51 @@ reason worth stating:
    proves every MPP node's sole compatible and every client node's
    `rockchip,skip-pmu-idle-request`, and proves all three RGA nodes carry their
    sole island compatibles.
+
+### Configured provider artifact cache
+
+The expensive provider build has its own exact-match cache, alongside the
+unchanged pristine-kernel and `ccache` caches. It is restored **after** the tree
+is cleaned, current island source and integration patches are staged, and the
+configuration is regenerated and checked. Only an exact hit skips `make vmlinux`
+and `make modules_prepare`; there are no `restore-keys` fallbacks. On both paths,
+`[ -s .work/linux/vmlinux.symvers ]` must pass and the table is copied to
+`Module.symvers` before strict external modpost runs.
+
+The key has this shape:
+
+```text
+vmlinux-artifacts-v1-<runner-os>-<target-arch>-<kernel-commit>-<image-pipeline-commit>-<input-hash>-<toolchain-hash>
+```
+
+The input hash covers the island fragment, the fetched device fragment, the
+freshly resolved `.config`, applied `integration/*.patch`, staged UAPI headers,
+and island Kconfig/Makefiles. The toolchain hash covers the runner's `ImageOS`,
+the device-fragment path, and host/cross GCC and linker version output. Thus a
+kernel pin, either fragment, image-pipeline commit/path, provider patch, build
+configuration, or toolchain change cannot reuse an old provider table. In
+particular, the three pin/fragment inputs alone are **not sufficient**:
+`integration/0002` and `0003` change built-in IOMMU exports. Ignoring those
+patches would defeat the missing-provider regression test in §5, M2b.
+
+Ordinary module implementation, documentation, and test changes reuse the cache
+when those inputs stay unchanged; the key does not contain `github.sha`.
+
+`PROVIDER_CACHE_PATHS` in the workflow is the shared restore/save allowlist:
+`vmlinux`, both root symbol tables, `include/config/`, `include/generated/`,
+`arch/arm64/include/generated/`, the module linker script, and generated host
+helpers (`modpost`, `fixdep`, tracing helpers and their preparation inputs).
+Optional helpers are saved when present. Keeping `vmlinux` also preserves the
+base required if the configuration enables module BTF. The fresh `.config` is
+not overwritten, and no island source, module object, `.ko`, module-local symbol
+table, or DTB is restored. Both modules and board DTBs are built on every run;
+their `-Werror`, module-count/name, OF-alias, and ownership checks are unchanged.
+
+The explicit `actions/cache/save` step runs only after all of this job's checks
+succeed and **before** pristine-tree cleanup removes generated files. This
+keeps build artifacts out of the source cache without losing the provider cache
+at job teardown. Increment the `v1` namespace if the preparation recipe or
+artifact contract changes incompatibly; a miss retains the original full build.
 
 ### The one split gate
 
