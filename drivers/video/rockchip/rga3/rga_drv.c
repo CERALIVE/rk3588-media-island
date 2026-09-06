@@ -954,7 +954,7 @@ static long rga_ioctl_request_submit(unsigned long arg, bool run_enbale,
 	request = rga_request_config_locked(&user_request, session);
 	if (IS_ERR_OR_NULL(request)) {
 		rga_err("request[%d] config failed!\n", user_request.id);
-		return -EFAULT;
+		return IS_ERR(request) ? PTR_ERR(request) : -EFAULT;
 	}
 
 	if (run_enbale) {
@@ -1069,7 +1069,7 @@ static long rga_ioctl_blit(unsigned long arg, uint32_t cmd, struct rga_session *
 	request = rga_request_config_locked(&user_request, session);
 	if (IS_ERR(request)) {
 		rga_err("ID[%d]: config failed!\n", user_request.id);
-		ret = -EFAULT;
+		ret = PTR_ERR(request);
 		goto err_free_request_by_id;
 	}
 

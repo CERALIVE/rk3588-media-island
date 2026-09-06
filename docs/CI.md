@@ -31,7 +31,7 @@ a pin bump would then leave CI proving the series against a kernel nobody ships
 | `pin` | nothing — it *reads* the coordinates out of `kernel-pin.env` and emits them |
 | `pin-equality` | the four mirrored `KERNEL_*` values equal the consumer repository's |
 | `cross-compile-modules` | the pinned tag resolves to both pinned objects; the tree configures the way the device is configured; `vmlinux` supplies provider symbols, `modules_prepare` supplies the final-link script, and configured `vmlinux.symvers` is exposed under the `Module.symvers` filename external modpost reads; exactly `rk_vcodec.ko` and `rga_multicore.ko` link with `-Werror` and publish the OF aliases needed for module autoload; both board DTBs build and pass the ownership/skip-PMU checker; no island `compatible` collides with a mainline `of_match_table` |
-| `kunit` | every suite in `tests/kunit/` passes against the pinned kernel; CI also asserts the telemetry symbol resolved `=y` and the telemetry session-format case appeared in the run |
+| `kunit` | every suite in `tests/kunit/` passes against the pinned kernel; direct ioctl suites stage byte-preserved handler bodies with `tests/kunit/stage_ioctl.py`; CI also asserts the telemetry symbol resolved `=y` and the telemetry session-format case appeared in the run |
 | `static-analysis` | sparse inspects every selected composite object with findings promoted to errors, followed by coccinelle over both island directories; the plan's conditional smatch arm is not enabled without a suitable runner package |
 
 ### The kernel job, in the order it does things

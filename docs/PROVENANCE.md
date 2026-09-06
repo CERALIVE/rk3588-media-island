@@ -132,7 +132,7 @@ to name the donor directly.
 | `drivers/video/rockchip/mpp/hack/mpp_rkvdec2_hack_rk3568.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/hack/mpp_rkvdec2_link_hack_rk3568.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_av1dec.c` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
-| `drivers/video/rockchip/mpp/mpp_common.c` | realized series | same | REBASED | Checked register-offset copy sizing; see MODERNIZATION.md. | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_common.c` | realized series | same | REBASED | Checked register-offset copy sizing; scalar ioctl payload-size enforcement. See MODERNIZATION.md and IOCTL-BOUNDARY-TESTS.md. | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/media_request_size.h` | CeraLive | same | FIRST-PARTY | Shared overflow-checked request sizing, covered by UML KUnit. | `GPL-2.0-only` |
 | `drivers/video/rockchip/mpp/mpp_common.h` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_debug.h` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
@@ -179,11 +179,11 @@ to name the donor directly.
 | `drivers/video/rockchip/rga3/rga_common.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_debugger.c` | realized series | same | REBASED | iosys_map debug dumps; pde_data only. | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_dma_buf.c` | realized series | same | REBASED | Bounded iosys_map CPU reads. | `GPL-2.0` |
-| `drivers/video/rockchip/rga3/rga_drv.c` | realized series | same | REBASED | Replace `strncpy`, annotate ioctl user pointers, make file-local operations static; checked pool sizing and kvzalloc ownership. | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga_drv.c` | realized series | same | REBASED | Replace `strncpy`, annotate ioctl user pointers, make file-local operations static; checked pool sizing and kvzalloc ownership; preserve configuration errno at both ioctl wrappers. | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_fence.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_hw_config.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_iommu.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
-| `drivers/video/rockchip/rga3/rga_job.c` | realized series | same | REBASED | Preserve the trusted in-kernel pointer for sparse; overflow-safe array sizing and kvzalloc ownership. | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga_job.c` | realized series | same | REBASED | Preserve the trusted in-kernel pointer for sparse; overflow-safe array sizing and kvzalloc ownership; reject unknown user sync/core/render selectors before task-list publication. | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_mm.c` | realized series | same | REBASED | Preserve the trusted dma-buf object pointer for sparse; iosys_map staging ownership. | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_policy.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `include/uapi/linux/rk-mpp.h` | realized series | same | VERBATIM |  | `((GPL-2.0+ WITH Linux-syscall-note) OR MIT)` |

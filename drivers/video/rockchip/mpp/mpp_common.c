@@ -1650,6 +1650,20 @@ static int __mpp_process_request(struct mpp_session *session,
 
 	mpp_debug(DEBUG_IOCTL, "cmd %x process\n", req->cmd);
 
+	/* Scalar commands must not access a word outside the declared payload. */
+	switch (req->cmd) {
+	case MPP_CMD_QUERY_HW_SUPPORT:
+	case MPP_CMD_QUERY_HW_ID:
+	case MPP_CMD_QUERY_CMD_SUPPORT:
+	case MPP_CMD_INIT_CLIENT_TYPE:
+	case MPP_CMD_INIT_DRIVER_DATA:
+		if (req->size != sizeof(u32))
+			return -EINVAL;
+		break;
+	default:
+		break;
+	}
+
 	switch (req->cmd) {
 	case MPP_CMD_QUERY_HW_SUPPORT: {
 		u32 hw_support = mpp_service_visible_hw_support(srv);
