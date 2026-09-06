@@ -79,6 +79,19 @@ static void rga_failed_registers_release_power_test(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, atomic_read(&f->pdev->dev.power.usage_count), 0);
 }
 
+static void rga_release_uses_autosuspend_test(struct kunit *test)
+{
+	struct pm_rga_fixture *f = test->priv;
+	struct device *dev = &f->pdev->dev;
+
+	KUNIT_ASSERT_EQ(test, rga_power_enable(&f->scheduler), 0);
+	KUNIT_ASSERT_EQ(test, rga_power_disable(&f->scheduler), 0);
+	KUNIT_EXPECT_EQ(test, atomic_read(&dev->power.usage_count), 0);
+	KUNIT_EXPECT_EQ(test, f->clock_refs, 0);
+	KUNIT_EXPECT_FALSE(test, pm_runtime_suspended(dev));
+	KUNIT_EXPECT_GT(test, pm_runtime_autosuspend_expiration(dev), 0ULL);
+}
+
 static void rga_power_all_balances_test(struct kunit *test)
 {
 	struct pm_rga_fixture *f = test->priv;
@@ -94,6 +107,7 @@ static struct kunit_case pm_rga_cases[] = {
 	KUNIT_CASE(rga_failed_resume_has_no_power_ref_test),
 	KUNIT_CASE(rga_failed_clocks_release_power_test),
 	KUNIT_CASE(rga_failed_registers_release_power_test),
+	KUNIT_CASE(rga_release_uses_autosuspend_test),
 	KUNIT_CASE(rga_power_all_balances_test),
 	{}
 };

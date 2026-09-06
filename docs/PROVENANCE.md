@@ -179,7 +179,7 @@ to name the donor directly.
 | `drivers/video/rockchip/rga3/rga_common.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_debugger.c` | realized series | same | REBASED | iosys_map debug dumps; pde_data only. | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_dma_buf.c` | realized series | same | REBASED | Bounded iosys_map CPU reads. | `GPL-2.0` |
-| `drivers/video/rockchip/rga3/rga_drv.c` | realized series | same | REBASED | Replace `strncpy`, annotate ioctl user pointers, make file-local operations static; checked pool sizing and kvzalloc ownership; preserve configuration errno at both ioctl wrappers. | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga_drv.c` | realized series | same | ADAPTED | Replace `strncpy`, annotate ioctl user pointers, make file-local operations static; checked pool sizing and kvzalloc ownership; preserve configuration errno at both ioctl wrappers; configure and use 2000 ms autosuspend with synchronous probe/teardown (A6). | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_fence.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_hw_config.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_iommu.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
@@ -216,6 +216,7 @@ negative behaviour is also part of the maintained contract.
 | A3 | `mpp/mpp_jpgdec.c` | Bound register translation, publish the translation-table count and propagate offset-validation errors. | JPGDEC is selected, while the replayed shared MPP translator requires explicit array/count bounds after the hardening series. | The shared translator changes contract while retaining equivalent bounds and error propagation. |
 | A4 | `rga3/rga3_reg_info.c` | Enable RGA3 frame-end auto-reset in every submitted job while retaining yisding's deliberate logic-clock setting. | Rockchip commit `58a65098a6e9b2be6a08bccd45aa861850d7b8c6` documents a read-FIFO exception when an upscale frame is followed by a downscale frame at affected resolutions. | A later measured fix prevents cross-frame FIFO state without frame-end auto-reset. |
 | A5 | `mpp/mpp_jpgdec.c` | Unwind common PM/device initialization if IRQ registration fails; preserve the IRQ errno. | RUNTIME-PM-AUDIT.md PM-B02 and direct-probe KUnit. | Replacement probe lifecycle provides equivalent cleanup. |
+| A6 | `rga3/rga_drv.c` | Autosuspend idle domains after 2000 ms while retaining explicit clock gating and immediate probe/error/remove suspension. | RUNTIME-PM-AUDIT.md PM-A01, production-policy mutation checks and real-PM KUnit. | A measured replacement policy preserves idle power management and error balance. |
 | A7 | `rga3/rga_job.c` | Cancel by removed running-job ownership, not the scheduler status left by reset. | RUNTIME-PM-AUDIT.md PM-B01; production reset→next→cancel KUnit reproduces the leak. | Replacement ownership protocol releases exactly one ref per running job. |
 
 ## Integration patches

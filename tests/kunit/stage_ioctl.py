@@ -150,6 +150,17 @@ def self_test() -> None:
         except DefinitionError:
             continue
         raise AssertionError("missing or duplicate definition was accepted")
+    probe = definition((DRIVERS / "rga3/rga_drv.c").read_text(), "rga_drv_probe")
+    policy = (
+        r"pm_runtime_set_autosuspend_delay\(dev,\s*2000\);.*?"
+        r"pm_runtime_use_autosuspend\(dev\);.*?"
+        r"pm_runtime_enable\(scheduler->dev\);.*?"
+        r"pm_runtime_resume_and_get\(scheduler->dev\)"
+    )
+    assert re.search(policy, probe, re.DOTALL), "RGA probe must configure autosuspend before get"
+    for call in ("set_autosuspend_delay", "use_autosuspend", "enable"):
+        mutant = probe.replace(f"pm_runtime_{call}(", f"removed_{call}(")
+        assert not re.search(policy, mutant, re.DOTALL), f"missing {call} was accepted"
     print("ioctl staging self-test: PASS")
 
 
