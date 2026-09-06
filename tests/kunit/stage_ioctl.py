@@ -104,6 +104,20 @@ def stage(tree: Path) -> None:
         (DRIVERS / "rga3/rga_drv.c", RGA_DRV),
         (DRIVERS / "rga3/rga_job.c", RGA_JOB),
     ))
+    # Keep both preprocessor arms: selecting duplicate power definitions by
+    # name would hide whether the production PM build is actually exercised.
+    power_source = (DRIVERS / "rga3/rga_drv.c").read_text()
+    power = re.findall(
+        r"^#ifndef RGA_DISABLE_PM\nint rga_power_enable\(.*?^#endif[^\n]*",
+        power_source, re.MULTILINE | re.DOTALL,
+    )
+    if len(power) != 1:
+        raise DefinitionError("RGA power block", len(power))
+    (tests / "runtime_pm_rga_power.inc").write_text(power[0] + "\n")
+    emit(tests / "runtime_pm_rga_jobs.inc", ((DRIVERS / "rga3/rga_job.c", (
+        "rga_job_run", "rga_job_next", "rga_request_scheduler_abort",
+        "rga_request_scheduler_job_abort",
+    )),))
     jpeg_source = (DRIVERS / "mpp/mpp_jpgdec.c").read_text()
     jpeg_types = re.findall(
         r"^struct jpgdec_dev \{.*?^\};", jpeg_source, re.MULTILINE | re.DOTALL,

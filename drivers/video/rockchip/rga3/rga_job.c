@@ -1031,7 +1031,6 @@ static void rga_request_scheduler_job_abort(struct rga_request *request)
 {
 	int i;
 	unsigned long flags;
-	enum rga_scheduler_status scheduler_status;
 	int running_abort_count = 0, todo_abort_count = 0;
 	struct rga_scheduler_t *scheduler = NULL;
 	struct rga_job *job, *job_q;
@@ -1062,7 +1061,6 @@ static void rga_request_scheduler_job_abort(struct rga_request *request)
 		if (scheduler->running_job) {
 			if (request->id == scheduler->running_job->request_id) {
 				job = scheduler->running_job;
-				scheduler_status = scheduler->status;
 				scheduler->running_job = NULL;
 				scheduler->status = RGA_SCHEDULER_ABORT;
 				job->ret = -ECANCELED;
@@ -1090,7 +1088,8 @@ static void rga_request_scheduler_job_abort(struct rga_request *request)
 		if (removed)
 			atomic_sub(removed, &rga_drvdata->telemetry_queue_depth);
 
-		if (job && scheduler_status == RGA_SCHEDULER_WORKING)
+		/* A restarted job owns power even while the reset status is ABORT. */
+		if (job)
 			rga_power_disable(scheduler);
 		mutex_unlock(&scheduler->job_mutex);
 	}

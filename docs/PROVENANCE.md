@@ -183,7 +183,7 @@ to name the donor directly.
 | `drivers/video/rockchip/rga3/rga_fence.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_hw_config.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_iommu.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
-| `drivers/video/rockchip/rga3/rga_job.c` | realized series | same | REBASED | Preserve the trusted in-kernel pointer for sparse; overflow-safe array sizing and kvzalloc ownership; reject unknown user sync/core/render selectors before task-list publication. | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga_job.c` | realized series | same | ADAPTED | Preserve the trusted in-kernel pointer for sparse; overflow-safe array sizing and kvzalloc ownership; reject unknown user sync/core/render selectors before task-list publication; release a cancelled running job's PM ref regardless of reset status (A7). | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_mm.c` | realized series | same | REBASED | Preserve the trusted dma-buf object pointer for sparse; iosys_map staging ownership. | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_policy.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `include/uapi/linux/rk-mpp.h` | realized series | same | VERBATIM |  | `((GPL-2.0+ WITH Linux-syscall-note) OR MIT)` |
@@ -216,6 +216,7 @@ negative behaviour is also part of the maintained contract.
 | A3 | `mpp/mpp_jpgdec.c` | Bound register translation, publish the translation-table count and propagate offset-validation errors. | JPGDEC is selected, while the replayed shared MPP translator requires explicit array/count bounds after the hardening series. | The shared translator changes contract while retaining equivalent bounds and error propagation. |
 | A4 | `rga3/rga3_reg_info.c` | Enable RGA3 frame-end auto-reset in every submitted job while retaining yisding's deliberate logic-clock setting. | Rockchip commit `58a65098a6e9b2be6a08bccd45aa861850d7b8c6` documents a read-FIFO exception when an upscale frame is followed by a downscale frame at affected resolutions. | A later measured fix prevents cross-frame FIFO state without frame-end auto-reset. |
 | A5 | `mpp/mpp_jpgdec.c` | Unwind common PM/device initialization if IRQ registration fails; preserve the IRQ errno. | RUNTIME-PM-AUDIT.md PM-B02 and direct-probe KUnit. | Replacement probe lifecycle provides equivalent cleanup. |
+| A7 | `rga3/rga_job.c` | Cancel by removed running-job ownership, not the scheduler status left by reset. | RUNTIME-PM-AUDIT.md PM-B01; production reset→next→cancel KUnit reproduces the leak. | Replacement ownership protocol releases exactly one ref per running job. |
 
 ## Integration patches
 

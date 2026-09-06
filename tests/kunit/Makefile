@@ -9,4 +9,4 @@ obj-$(CONFIG_ROCKCHIP_RGA_REQUEST_KUNIT_TEST) += rga_request_validation_test.o
 obj-$(CONFIG_ROCKCHIP_MEDIA_DMA_POLICY_KUNIT_TEST) += media_dma_policy_test.o
 obj-$(CONFIG_ROCKCHIP_MEDIA_DMA_POLICY_KUNIT_TEST) += media_mapping_test.o
 obj-$(CONFIG_ROCKCHIP_MEDIA_IOCTL_KUNIT_TEST) += ioctl_mpp_test.o ioctl_rga_test.o
-obj-$(CONFIG_ROCKCHIP_MEDIA_RUNTIME_PM_KUNIT_TEST) += runtime_pm_jpeg_test.o
+obj-$(CONFIG_ROCKCHIP_MEDIA_RUNTIME_PM_KUNIT_TEST) += runtime_pm_rga_test.o runtime_pm_jpeg_test.o

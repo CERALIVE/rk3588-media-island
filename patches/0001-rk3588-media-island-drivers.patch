@@ -48999,10 +48999,10 @@ index 0000000000000000000000000000000000000000..aeace228cdddeaed86017ed0dca1d8c1
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_job.c b/drivers/video/rockchip/rga3/rga_job.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..d41588da1013b730a1fbc0bce306fa28d482d780
+index 0000000000000000000000000000000000000000..aa828362c12deae51e9e050c7b1d3ac30e7ea07a
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_job.c
-@@ -0,0 +1,2101 @@
+@@ -0,0 +1,2100 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -50036,7 +50036,6 @@ index 0000000000000000000000000000000000000000..d41588da1013b730a1fbc0bce306fa28
 +{
 +	int i;
 +	unsigned long flags;
-+	enum rga_scheduler_status scheduler_status;
 +	int running_abort_count = 0, todo_abort_count = 0;
 +	struct rga_scheduler_t *scheduler = NULL;
 +	struct rga_job *job, *job_q;
@@ -50067,7 +50066,6 @@ index 0000000000000000000000000000000000000000..d41588da1013b730a1fbc0bce306fa28
 +		if (scheduler->running_job) {
 +			if (request->id == scheduler->running_job->request_id) {
 +				job = scheduler->running_job;
-+				scheduler_status = scheduler->status;
 +				scheduler->running_job = NULL;
 +				scheduler->status = RGA_SCHEDULER_ABORT;
 +				job->ret = -ECANCELED;
@@ -50095,7 +50093,8 @@ index 0000000000000000000000000000000000000000..d41588da1013b730a1fbc0bce306fa28
 +		if (removed)
 +			atomic_sub(removed, &rga_drvdata->telemetry_queue_depth);
 +
-+		if (job && scheduler_status == RGA_SCHEDULER_WORKING)
++		/* A restarted job owns power even while the reset status is ABORT. */
++		if (job)
 +			rga_power_disable(scheduler);
 +		mutex_unlock(&scheduler->job_mutex);
 +	}
