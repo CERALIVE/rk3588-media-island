@@ -84,6 +84,7 @@ rk3588-media-island/
 | Know what a board must demonstrate before a tick | [`docs/BOARD-QUALIFICATION.md`](docs/BOARD-QUALIFICATION.md) |
 | Understand which licence branch applies to a file | [`LICENSE.md`](LICENSE.md) |
 | Build the modules | [`README.md`](README.md) → "Building the modules" |
+| MPP static-analysis dispositions and instrumented KUnit coverage | [`docs/HARDENING-FINDINGS.md`](docs/HARDENING-FINDINGS.md) — helper tests are not silicon validation |
 | Linux 7.2 modernization and proof boundaries | [`docs/MODERNIZATION.md`](docs/MODERNIZATION.md) |
 | Add a compat shim | `drivers/video/rockchip/mpp/compat/` — and add its row to `docs/COMPAT.md`, or the lint refuses the build |
 | Change a device-tree node's owner | `integration/` — and update the `docs/OWNERSHIP.md` row in the same change |

@@ -60,6 +60,12 @@ static inline int mpp_iova_offset_check(size_t mapped_len, u32 offset)
 	return mapped_len && offset < mapped_len ? 0 : -EINVAL;
 }
 
+static inline u32 mpp_rcb_sram_size(u32 requested, u64 available)
+{
+	/* Clamp the resource-sized span before narrowing to the RCB's u32 size. */
+	return min_t(u64, requested, available);
+}
+
 static inline int mpp_req_buffer_check(u32 offset, u32 size, u32 base,
 				       u32 max_size, u32 off_s, u32 off_e,
 				       u32 *checked_size)

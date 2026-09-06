@@ -147,12 +147,12 @@ to name the donor directly.
 | `drivers/video/rockchip/mpp/media_dump.h` | CeraLive | — | FIRST-PARTY | Bounded register/event capture and deferred devcoredump ownership. | `GPL-2.0-only` |
 | `drivers/video/rockchip/mpp/media_recovery.h` | CeraLive | — | FIRST-PARTY | Managed reset lists and recovery epoch claims. | `GPL-2.0-only` |
 | `drivers/video/rockchip/mpp/media_probe.h` | CeraLive | — | FIRST-PARTY | Named resource deferral diagnostics. | `GPL-2.0-only` |
-| `drivers/video/rockchip/mpp/mpp_rkvdec2.c` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_rkvdec2.c` | realized series | same | REBASED | Clamp the SRAM resource span before narrowing to the RCB size; see HARDENING-FINDINGS.md. | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_rkvdec2.h` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_rkvdec2_link.c` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_rkvdec2_link.h` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_rkvenc.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
-| `drivers/video/rockchip/mpp/mpp_rkvenc2.c` | realized series | same | REBASED | Separate internal register messages from `__user` requests; preserve address spaces for sparse. | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_rkvenc2.c` | realized series | same | REBASED | Separate internal register messages from `__user` requests; preserve address spaces for sparse; clamp SRAM before narrowing to the RCB size. | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_service.c` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_vdpp.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_vdpu1.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
@@ -288,6 +288,15 @@ examples. Their embedded licence fields are likewise inherited and unchanged:
 rk_vcodec.ko: Dual MIT/GPL
 rga_multicore.ko: GPL
 ```
+
+## MPP analysis-sweep adaptation
+
+The 2026-09-05 MPP analysis sweep adds first-party `mpp_rcb_sram_size()` to the
+existing `drivers/video/rockchip/mpp/mpp_request_bounds.h`, preserving its SPDX
+expression. The encoder and decoder allocation call sites now share this
+64-bit-before-narrowing clamp. Its provenance is this repository's change, not
+an upstream import; regression and finding details are in
+[`HARDENING-FINDINGS.md`](HARDENING-FINDINGS.md).
 
 ## What this document does NOT claim
 

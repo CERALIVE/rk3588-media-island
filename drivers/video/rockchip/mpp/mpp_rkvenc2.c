@@ -3461,8 +3461,7 @@ static int rkvenc2_alloc_rcbbuf(struct platform_device *pdev, struct rkvenc_dev 
 			&sram_start, &sram_end);
 		return -ENOMEM;
 	}
-	sram_size = sram_end - sram_start;
-	sram_size = sram_used < sram_size ? sram_used : sram_size;
+	sram_size = mpp_rcb_sram_size(sram_used, sram_end - sram_start);
 	/* in a CCU cluster this is the shared domain; reject overlapping windows */
 	if (enc->ccu) {
 		ret = mpp_iommu_shared_domain_reserve_window(&enc->ccu->iommu,
