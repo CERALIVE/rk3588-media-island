@@ -11365,10 +11365,10 @@ index 0000000000000000000000000000000000000000..0f3aa7c93edc7aa7ea653702664dd18a
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_jpgdec.c b/drivers/video/rockchip/mpp/mpp_jpgdec.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..18b8e823d81ef0a74d48c38e86cc44ff58e580a3
+index 0000000000000000000000000000000000000000..a00ea44450a9e8fdddc13c2ba5f3d3cd5285a45d
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_jpgdec.c
-@@ -0,0 +1,675 @@
+@@ -0,0 +1,676 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2020 Rockchip Electronics Co., Ltd.
@@ -12010,7 +12010,8 @@ index 0000000000000000000000000000000000000000..18b8e823d81ef0a74d48c38e86cc44ff
 +					dev_name(dev), mpp);
 +	if (ret) {
 +		dev_err(dev, "register interrupter runtime failed\n");
-+		return -EINVAL;
++		mpp_dev_remove(mpp);
++		return ret;
 +	}
 +
 +	mpp->session_max_buffers = JPGDEC_SESSION_MAX_BUFFERS;

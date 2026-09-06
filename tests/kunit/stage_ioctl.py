@@ -104,6 +104,16 @@ def stage(tree: Path) -> None:
         (DRIVERS / "rga3/rga_drv.c", RGA_DRV),
         (DRIVERS / "rga3/rga_job.c", RGA_JOB),
     ))
+    jpeg_source = (DRIVERS / "mpp/mpp_jpgdec.c").read_text()
+    jpeg_types = re.findall(
+        r"^struct jpgdec_dev \{.*?^\};", jpeg_source, re.MULTILINE | re.DOTALL,
+    )
+    if len(jpeg_types) != 1:
+        raise DefinitionError("jpgdec_dev", len(jpeg_types))
+    (tests / "runtime_pm_jpeg_types.inc").write_text(jpeg_types[0] + "\n")
+    emit(tests / "runtime_pm_jpeg_probe.inc", (
+        (DRIVERS / "mpp/mpp_jpgdec.c", ("jpgdec_probe",)),
+    ))
     for filename, directive in (
         ("Kconfig", 'source "drivers/video/rockchip/kunit/Kconfig"'),
         ("Makefile", "obj-y += rockchip/kunit/"),

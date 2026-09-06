@@ -71,3 +71,11 @@ config ROCKCHIP_MEDIA_IOCTL_KUNIT_TEST
 	help
 	  Compile the maintained ioctl and session functions with bounded user-copy
 	  fixtures. No hardware driver is registered. Run stage_ioctl.py first.
+
+config ROCKCHIP_MEDIA_RUNTIME_PM_KUNIT_TEST
+	bool "Rockchip media runtime-PM ownership tests"
+	depends on KUNIT && PM
+	depends on !ROCKCHIP_MPP_SERVICE && !ROCKCHIP_MULTI_RGA
+	help
+	  Exercise maintained RGA power/cancellation and JPEG probe functions
+	  with real runtime-PM devices and fake hardware. Run stage_ioctl.py first.

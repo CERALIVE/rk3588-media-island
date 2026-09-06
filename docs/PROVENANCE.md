@@ -139,7 +139,7 @@ to name the donor directly.
 | `drivers/video/rockchip/mpp/mpp_iep2.c` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_iommu.c` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_iommu.h` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
-| `drivers/video/rockchip/mpp/mpp_jpgdec.c` | donor | same | ADAPTED | Supply the bounds/count contract required by the hardened shared translator and use the 7.2 remove callback. | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_jpgdec.c` | donor | same | ADAPTED | Supply the bounds/count contract required by the hardened shared translator, use the 7.2 remove callback, and unwind common PM setup on failed IRQ registration (A5). | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_jpgenc.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_rkvdec.c` | donor | same | REBASED | Reservation-protected iosys_map PPS access. | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/media_map.h` | CeraLive | same | FIRST-PARTY | Bounded iosys reads and raw-vmap ownership cleanup. | `GPL-2.0-only` |
@@ -215,6 +215,7 @@ negative behaviour is also part of the maintained contract.
 | A2 | `mpp/compat/soc/rockchip/vsi_iommu.h` | Return `-ENODEV` or no-op for an AV1-only provider that this release intentionally omits. | AV1 is `BROKEN`; the manifest drops `drivers/iommu/vsi-iommu.c`; `docs/COMPAT.md` classes this surface STUB-SAFE only for the unselectable client. | AV1 becomes a supported client and the real provider is imported and linked. |
 | A3 | `mpp/mpp_jpgdec.c` | Bound register translation, publish the translation-table count and propagate offset-validation errors. | JPGDEC is selected, while the replayed shared MPP translator requires explicit array/count bounds after the hardening series. | The shared translator changes contract while retaining equivalent bounds and error propagation. |
 | A4 | `rga3/rga3_reg_info.c` | Enable RGA3 frame-end auto-reset in every submitted job while retaining yisding's deliberate logic-clock setting. | Rockchip commit `58a65098a6e9b2be6a08bccd45aa861850d7b8c6` documents a read-FIFO exception when an upscale frame is followed by a downscale frame at affected resolutions. | A later measured fix prevents cross-frame FIFO state without frame-end auto-reset. |
+| A5 | `mpp/mpp_jpgdec.c` | Unwind common PM/device initialization if IRQ registration fails; preserve the IRQ errno. | RUNTIME-PM-AUDIT.md PM-B02 and direct-probe KUnit. | Replacement probe lifecycle provides equivalent cleanup. |
 
 ## Integration patches
 
