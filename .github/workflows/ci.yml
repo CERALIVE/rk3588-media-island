@@ -346,6 +346,7 @@ jobs:
   cross-compile-modules:
     name: cross-compile modules
     needs: [changes, pin, series-integrity, shim-lint, dt-ownership-lint]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     env:
       # Pinned in docs/REFERENCES.md § Image-pipeline coordinate. The device's
@@ -608,6 +609,7 @@ jobs:
   kunit:
     name: kunit
     needs: [changes, pin]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -674,6 +676,7 @@ jobs:
   static-analysis:
     name: static analysis
     needs: [changes, pin]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     env:
       IMAGE_PIPELINE_COMMIT: e6b70f0da06a3ee82c9e0790225c80597ed05ab7
