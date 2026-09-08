@@ -30,6 +30,21 @@ static inline unsigned int mpp_fault_consume_delay(struct mpp_fault_knob *knob)
 	return delay_ms;
 }
 
+static inline bool mpp_fault_consume_targeted(struct mpp_fault_knob *knob,
+					      atomic_t *target,
+					      pid_t session_pid)
+{
+	int observed = atomic_read(target);
+
+	if (observed && observed != session_pid)
+		return false;
+	if (!mpp_fault_consume_flag(knob))
+		return false;
+	/* Do not erase a different selector written while this shot was firing. */
+	atomic_cmpxchg(target, observed, 0);
+	return true;
+}
+
 #if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
 int mpp_rkvenc_test_init(void);
 void mpp_rkvenc_test_exit(void);

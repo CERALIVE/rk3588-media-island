@@ -87,32 +87,16 @@ bool mpp_rkvenc_test_fail_reset(void)
 	return mpp_fault_consume_flag(&fail_reset);
 }
 
-static bool mpp_rkvenc_test_target_matches(pid_t session_pid)
-{
-	int target = atomic_read(&target_session_pid);
-
-	return !target || target == session_pid;
-}
-
-static bool mpp_rkvenc_test_consume_targeted(struct mpp_fault_knob *knob,
-					      pid_t session_pid)
-{
-	if (!mpp_rkvenc_test_target_matches(session_pid))
-		return false;
-	if (!mpp_fault_consume_flag(knob))
-		return false;
-	atomic_set(&target_session_pid, 0);
-	return true;
-}
-
 bool mpp_rkvenc_test_hang_task(pid_t session_pid)
 {
-	return mpp_rkvenc_test_consume_targeted(&hang_task, session_pid);
+	return mpp_fault_consume_targeted(&hang_task, &target_session_pid,
+					  session_pid);
 }
 
 bool mpp_rkvenc_test_inject_iommu_fault(pid_t session_pid)
 {
-	return mpp_rkvenc_test_consume_targeted(&inject_iommu_fault, session_pid);
+	return mpp_fault_consume_targeted(&inject_iommu_fault,
+					  &target_session_pid, session_pid);
 }
 
 unsigned int mpp_rkvenc_test_completion_delay_ms(void)
