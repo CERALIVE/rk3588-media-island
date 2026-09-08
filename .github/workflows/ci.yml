@@ -670,7 +670,7 @@ jobs:
           grep -Fq 'mpp_telemetry_session_stats_test' .work/kunit.log
           grep -Fq 'rockchip-mpp-recovery-state' .work/kunit.log
           grep -Fq 'mpp_task_rejects_claim_before_running_test' .work/kunit.log
-          grep -Fq 'rga-validate (18 subtests)' .work/kunit.log
+          grep -Fq 'rga-validate (20 subtests)' .work/kunit.log
           grep -Fq 'rga_plane_rejects_plane_past_buffer_test' .work/kunit.log
 
   static-analysis:
