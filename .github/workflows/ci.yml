@@ -20,6 +20,51 @@ permissions:
   contents: read
 
 jobs:
+  # Change detection. A documentation-only pull request has nothing for the
+  # gates below to prove, so they skip rather than run to a vacuous green.
+  #
+  # The gating is a JOB-LEVEL `if:`, never a trigger-level `paths:`/
+  # `paths-ignore:`. A trigger filter stops the workflow from starting at all,
+  # and a required check that never reports blocks a merge instead of passing
+  # it -- which is what the always-run summary job at the bottom exists to avoid.
+  #
+  # `code` is an EXCLUSION list -- "every changed file is NOT documentation" --
+  # so this step carries `predicate-quantifier: 'every'`. The quantifier is a
+  # property of the STEP, not of a filter: a positive OR list must live in its
+  # own step under the default `some`, or `every` would turn it into an AND that
+  # no single file can satisfy. There is no separate positive list here on
+  # purpose -- every non-documentation path in this repository is kernel source,
+  # so a second filter would only restate `code` under a different name.
+  changes:
+    name: Change detection
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      # The filter runs on pull requests only. On a push or a manual dispatch
+      # the step is skipped and the fallback keeps `code` true, so those events
+      # keep their full coverage.
+      code: ${{ steps.filter.outputs.code || 'true' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Detect non-documentation changes
+        id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v4
+        with:
+          predicate-quantifier: 'every'
+          filters: |
+            code:
+              - '!**/*.md'
+              - '!docs/**'
+              - '!LICENSE*'
+              - '!.github/ISSUE_TEMPLATE/**'
+              - '!.github/PULL_REQUEST_TEMPLATE.md'
+
   # --------------------------------------------------------------------
   # Cheap gates first. Every one of these answers in seconds, so a mistake
   # fails before the ~2 GB kernel clone rather than after it.
@@ -28,6 +73,8 @@ jobs:
   shellcheck:
     name: shellcheck
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
 
@@ -50,6 +97,8 @@ jobs:
   self-tests:
     name: harness + tooling self-tests
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
 
@@ -104,6 +153,8 @@ jobs:
   series-integrity:
     name: series integrity
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
 
@@ -116,6 +167,8 @@ jobs:
   shim-lint:
     name: shim lint
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
 
@@ -129,6 +182,8 @@ jobs:
   dt-ownership-lint:
     name: dt ownership lint
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
 
@@ -143,6 +198,8 @@ jobs:
   uapi-parity:
     name: uapi parity
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
 
@@ -152,6 +209,8 @@ jobs:
   board-probes:
     name: board probes cross-build
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
 
@@ -182,6 +241,8 @@ jobs:
   action-pins:
     name: action pins (report)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     continue-on-error: true
     steps:
       - uses: actions/checkout@v7
@@ -201,6 +262,8 @@ jobs:
   pin:
     name: resolve kernel pin
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     outputs:
       tag: ${{ steps.read.outputs.tag }}
       tag_object: ${{ steps.read.outputs.tag_object }}
@@ -241,6 +304,8 @@ jobs:
   pin-equality:
     name: pin equality
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v7
 
@@ -280,7 +345,8 @@ jobs:
 
   cross-compile-modules:
     name: cross-compile modules
-    needs: [pin, series-integrity, shim-lint, dt-ownership-lint]
+    needs: [changes, pin, series-integrity, shim-lint, dt-ownership-lint]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     env:
       # Pinned in docs/REFERENCES.md § Image-pipeline coordinate. The device's
@@ -542,7 +608,8 @@ jobs:
 
   kunit:
     name: kunit
-    needs: [pin]
+    needs: [changes, pin]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -608,7 +675,8 @@ jobs:
 
   static-analysis:
     name: static analysis
-    needs: [pin]
+    needs: [changes, pin]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     env:
       IMAGE_PIPELINE_COMMIT: e6b70f0da06a3ee82c9e0790225c80597ed05ab7
@@ -677,3 +745,47 @@ jobs:
             make -C .work/linux ARCH="${{ needs.pin.outputs.arch }}" \
               coccicheck MODE=report M="$dir"
           done
+
+  # The one check a branch-protection rule can require. It runs on every event,
+  # including a docs-only pull request where every gate above skipped, and goes
+  # red whenever a dependency failed or was cancelled. A SKIPPED dependency is a
+  # pass -- that is the whole point of the gating above.
+  #
+  # `action-pins` is deliberately absent: it is `continue-on-error: true` by
+  # design (an action publishing a new major must not turn an unrelated pull
+  # request red), and folding it into the blocking summary would promote that
+  # standing report to a gate by the back door.
+  ci-summary:
+    name: CI summary
+    if: always()
+    needs:
+      - changes
+      - shellcheck
+      - self-tests
+      - series-integrity
+      - shim-lint
+      - dt-ownership-lint
+      - uapi-parity
+      - board-probes
+      - pin
+      - pin-equality
+      - cross-compile-modules
+      - kunit
+      - static-analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any dependency failed or was cancelled
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          echo "dependency results: ${RESULTS}"
+          for result in ${RESULTS}; do
+            case "${result}" in
+              failure|cancelled)
+                echo "::error::a required job reported '${result}'"
+                exit 1
+                ;;
+            esac
+          done
+          echo "every dependency succeeded or was skipped"
