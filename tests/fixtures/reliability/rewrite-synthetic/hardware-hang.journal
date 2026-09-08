@@ -1,0 +1,7 @@
+Jan 01 00:00:00 SYNTHETIC kernel: debugfs: '1234-7' already exists in 'sessions'
+Jan 01 00:00:01 SYNTHETIC kernel: rk-mpp-rewrite: job 41 session 7 timed out after 500 ms
+Jan 01 00:00:01 SYNTHETIC kernel: rk-mpp-rewrite fdbd0000.rkvenc-core: recovery: asserting reset
+Jan 01 00:00:01 SYNTHETIC kernel: rk-mpp-rewrite fdbd0000.rkvenc-core: recovery: reset deasserted
+Jan 01 00:00:01 SYNTHETIC kernel: rk-mpp-rewrite fdbd0000.rkvenc-core: recovery: core online again
+Jan 01 00:00:02 SYNTHETIC kernel: rk-mpp-rewrite: job 41 published result -110
+Jan 01 00:00:03 SYNTHETIC kernel: rk-mpp-rewrite: session 7 released, 0 jobs outstanding

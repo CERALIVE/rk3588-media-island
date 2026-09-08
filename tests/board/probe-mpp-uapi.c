@@ -46,6 +46,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -56,6 +57,14 @@
 #define EXIT_USAGE 2
 #define EXIT_GATED 77
 #define ISLAND_HW_SUPPORT ((1u << 9) | (1u << 13) | (1u << 16))
+/*
+ * The rewrite comparison driver's reference client set, from
+ * island/comparison/rewrite/mpp-rewrite/ABI.rst: RKVENC2 (16), RKVDEC2 (9) and
+ * the AV1 decoder (4), and never JPGDEC (13). It is a self-test reference
+ * only; the live mask depends on which nodes bound, so a board run passes the
+ * measured value with --expect-bits.
+ */
+#define REWRITE_HW_SUPPORT ((1u << 4) | (1u << 9) | (1u << 16))
 
 static const char *const kServiceNodes[] = {
 	"/dev/mpp_service",
@@ -92,6 +101,36 @@ static int mpp_cfg(int fd, uint32_t cmd, uint32_t size, void *data)
 	req.data_ptr = (uint64_t)(uintptr_t)data;
 
 	return ioctl(fd, MPP_IOC_CFG_V1, &req);
+}
+
+/*
+ * hw_support_matches — the one comparison behind both --expect-island and
+ * --expect-bits, so the self-test scores the same arithmetic the board run
+ * uses rather than a re-derivation that can only agree with itself.
+ */
+static bool hw_support_matches(uint32_t actual, uint32_t expected)
+{
+	return actual == expected;
+}
+
+/*
+ * parse_hw_mask — accept 0x-prefixed or decimal, reject anything that is not
+ * a whole 32-bit value. A silently truncated mask would turn the capability
+ * re-probe into a check that always passes.
+ */
+static bool parse_hw_mask(const char *text, uint32_t *out)
+{
+	char *end = NULL;
+	unsigned long value;
+
+	if (text == NULL || *text == '\0')
+		return false;
+	errno = 0;
+	value = strtoul(text, &end, 0);
+	if (errno != 0 || end == NULL || *end != '\0' || value > 0xffffffffUL)
+		return false;
+	*out = (uint32_t)value;
+	return true;
 }
 
 static void report(const char *key, int rc)
@@ -172,6 +211,7 @@ static int self_test(void)
 {
 	struct mpp_request req;
 	uint32_t probe_payload = 0;
+	uint32_t parsed = 0;
 	size_t i;
 
 	printf("self_test=probe-mpp-uapi\n");
@@ -204,6 +244,34 @@ static int self_test(void)
 		return EXIT_FAIL;
 	}
 	printf("request_encoding=ok\n");
+
+	/* Both directions, or the expectation check proves nothing. */
+	if (!hw_support_matches(REWRITE_HW_SUPPORT, REWRITE_HW_SUPPORT) ||
+	    hw_support_matches(ISLAND_HW_SUPPORT, REWRITE_HW_SUPPORT) ||
+	    hw_support_matches(REWRITE_HW_SUPPORT, ISLAND_HW_SUPPORT)) {
+		fprintf(stderr, "FAIL: hw_support comparison is not discriminating\n");
+		return EXIT_FAIL;
+	}
+	if (REWRITE_HW_SUPPORT & (1u << MPP_CLIENT_RKJPEGD)) {
+		fprintf(stderr, "FAIL: the rewrite mask must not claim JPGDEC\n");
+		return EXIT_FAIL;
+	}
+	printf("expect_bits.island=0x%08x\n", ISLAND_HW_SUPPORT);
+	printf("expect_bits.rewrite_reference=0x%08x\n", REWRITE_HW_SUPPORT);
+
+	if (!parse_hw_mask("0x00010210", &parsed) || parsed != REWRITE_HW_SUPPORT ||
+	    !parse_hw_mask("66064", &parsed) || parsed != REWRITE_HW_SUPPORT) {
+		fprintf(stderr, "FAIL: a valid mask was rejected or misparsed\n");
+		return EXIT_FAIL;
+	}
+	if (parse_hw_mask("", &parsed) || parse_hw_mask("0x1zz", &parsed) ||
+	    parse_hw_mask("0x1 ", &parsed) ||
+	    parse_hw_mask("0x100000000", &parsed)) {
+		fprintf(stderr, "FAIL: an invalid mask was accepted\n");
+		return EXIT_FAIL;
+	}
+	printf("expect_bits_parse=ok\n");
+
 	printf("VERDICT: PASS (self-test; no MPP service was contacted)\n");
 	return EXIT_PASS;
 }
@@ -211,9 +279,12 @@ static int self_test(void)
 static void usage(const char *argv0)
 {
 	fprintf(stderr,
-		"usage: %s [--self-test|--expect-island]\n"
+		"usage: %s [--self-test|--expect-island|--expect-bits MASK]\n"
 		"  (no args)    probe /dev/mpp_service on this host\n"
 		"  --expect-island  require exactly RKVENC2+RKVDEC2+JPGDEC\n"
+		"  --expect-bits MASK  require exactly MASK, for a driver whose\n"
+		"               client set is not the island's (the rewrite\n"
+		"               advertises RKVENC2+RKVDEC2+AV1 and never JPGDEC)\n"
 		"  --self-test  verify the ABI encoding with no hardware\n",
 		argv0);
 }
@@ -225,14 +296,23 @@ int main(int argc, char **argv)
 	struct mpp_service_cmd_cap cap;
 	int failures = 0;
 	bool expect_island = false;
+	bool expect_bits = false;
+	uint32_t expect_mask = 0;
 	int fd;
 	size_t i;
 
-	if (argc > 2) {
+	if (argc > 3) {
 		usage(argv[0]);
 		return EXIT_USAGE;
 	}
-	if (argc == 2) {
+	if (argc == 3) {
+		if (strcmp(argv[1], "--expect-bits") != 0 ||
+		    !parse_hw_mask(argv[2], &expect_mask)) {
+			usage(argv[0]);
+			return EXIT_USAGE;
+		}
+		expect_bits = true;
+	} else if (argc == 2) {
 		if (strcmp(argv[1], "--self-test") == 0)
 			return self_test();
 		if (strcmp(argv[1], "--expect-island") == 0)
@@ -258,12 +338,19 @@ int main(int argc, char **argv)
 		report("probe_hw_support", -1);
 		failures++;
 	}
-	if (expect_island && hw_support != ISLAND_HW_SUPPORT) {
+	if (expect_island && !hw_support_matches(hw_support, ISLAND_HW_SUPPORT)) {
 		printf("island_hw_support=mismatch expected=0x%08x actual=0x%08x\n",
 		       ISLAND_HW_SUPPORT, hw_support);
 		failures++;
 	} else if (expect_island) {
 		printf("island_hw_support=exact bitmap=0x%08x\n", hw_support);
+	}
+	if (expect_bits && !hw_support_matches(hw_support, expect_mask)) {
+		printf("expect_bits=mismatch expected=0x%08x actual=0x%08x\n",
+		       expect_mask, hw_support);
+		failures++;
+	} else if (expect_bits) {
+		printf("expect_bits=exact bitmap=0x%08x\n", hw_support);
 	}
 
 	memset(&cap, 0, sizeof(cap));
