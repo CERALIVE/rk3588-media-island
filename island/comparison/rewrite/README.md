@@ -10,11 +10,26 @@ The source coordinate is recorded by
 Its kernel base is `v7.2-rc6`; CeraLive's target remains the independently pinned
 final kernel in `kernel-pin.env`.
 
-This import is not a working kernel port or a board result. The rewrite needs
-its upstream Rockchip/VSI IOMMU provider APIs and MPP UAPI header, which are not
-supplied merely by staging these two directories. Those dependencies must be
-resolved in the separate comparison-only port before compilation or deployment.
-Do not replace a missing provider with a successful no-op.
+`scripts/port-rewrite.py` stages the comparison into a pristine, pinned final
+kernel under this repository's `.work/` directory. It checks the imported file
+set and bytes against the pinned upstream object, then applies the upstream
+rc6-to-rewrite delta for the Rockchip/VSI IOMMU providers, DMA IOVA export and
+MPP UAPI header. Those are real provider implementations, not successful
+no-op stubs. The provider delta applies to final v7.2 without modifying either
+imported driver. `pins.env` identifies every comparison input.
+
+The first strict builds exposed two linkage prerequisites: the upstream
+`include/linux/iommu.h` declaration must accompany the DMA IOVA implementation,
+and RGA's direct ARM64 cache-maintenance calls need module exports.
+`port-arm64-dma.patch` adds only the export header and two GPL exports for the
+existing implementations. It is applied solely to the disposable comparison
+kernel, never to the production series. Neither missing-prototype warnings nor
+unresolved modpost symbols are suppressed.
+
+The staging tool is deliberately not a production-series generator or a board
+installer. It refuses the repository root, escaping symlinks, a dirty kernel
+checkout and a kernel HEAD other than the pinned final commit. It stages no
+new device tree and never modifies `integration/` or `patches/` in this repo.
 
 The comparison must select the rewrite **instead of** the island in an
 `edge-test` kernel, not load competing drivers into a production kernel. The
@@ -34,3 +49,19 @@ The intended measurement is OPi TEST-slot-only, with a protected production
 slot, pre-reboot journals, and restoration to the island afterwards. Until that
 has actually happened, neither `DID-NOT-BOOT` nor a defect reproduction verdict
 may be recorded.
+
+## Compile-only gate
+
+`cross-compile-rewrite` shares the pristine pinned-kernel cache, uses ccache,
+and works in a separate disposable checkout. `scripts/build-rewrite.sh` merges
+the device's edge and edge-test fragments at one pinned image commit, then
+selects rewrite MPP/RGA instead of the three competing production drivers. It
+requires KASAN and lockdep, links the real built-in and modular IOMMU providers,
+and builds both modules with `-Werror` and pinned sparse `-Wsparse-error`.
+The checker-valid probe fails closed if sparse cannot parse this kernel.
+
+The gate's artifacts are `rockchip-mpp-rewrite.ko` and
+`rockchip-rga-rewrite.ko`. A successful compile is not a bootable device image:
+the comparison candidate still needs the non-media platform patches, the
+existing board DT ownership hunks, a sealed slot payload and its RAUC safety
+receipts before any board result may be claimed.

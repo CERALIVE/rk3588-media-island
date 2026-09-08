@@ -1,0 +1,33 @@
+Subject: arm64: expose DMA cache maintenance to the comparison RGA module
+
+The pinned rewrite calls these existing architecture implementations. Mainline
+does not export them, so an otherwise successful module build fails modpost.
+This is a comparison-only module linkage port, not a production kernel change.
+
+diff --git a/arch/arm64/mm/dma-mapping.c b/arch/arm64/mm/dma-mapping.c
+--- a/arch/arm64/mm/dma-mapping.c
++++ b/arch/arm64/mm/dma-mapping.c
+@@ -7,6 +7,7 @@
+ #include <linux/gfp.h>
+ #include <linux/cache.h>
+ #include <linux/dma-map-ops.h>
++#include <linux/export.h>
+ #include <xen/xen.h>
+ 
+ #include <asm/cacheflush.h>
+@@ -19,6 +20,7 @@ void arch_sync_dma_for_device(phys_addr_t paddr, size_t size,
+ 
+ 	dcache_clean_poc_nosync(start, start + size);
+ }
++EXPORT_SYMBOL_GPL(arch_sync_dma_for_device);
+ 
+ void arch_sync_dma_for_cpu(phys_addr_t paddr, size_t size,
+ 			   enum dma_data_direction dir)
+@@ -30,6 +32,7 @@ void arch_sync_dma_for_cpu(phys_addr_t paddr, size_t size,
+ 
+ 	dcache_inval_poc_nosync(start, start + size);
+ }
++EXPORT_SYMBOL_GPL(arch_sync_dma_for_cpu);
+ 
+ void arch_dma_prep_coherent(struct page *page, size_t size)
+ {

@@ -45,7 +45,7 @@ rk3588-media-island/
 ├── integration/                 # applied patches: build hooks, providers, MPP DT ownership
 │   └── pending/                 # linted but unshipped RGA2/RGA3 ownership flips
 ├── patches/                     # GENERATED series — never hand-edited
-├── island/comparison/rewrite/    # measurement-only upstream snapshot; not a port or shipped source
+├── island/comparison/rewrite/    # measurement-only upstream snapshot + isolated port coordinates
 ├── scripts/                     # series generation, provenance, lint tooling
 │   ├── build-series.py          # drivers/ + integration/ -> patches/ ; --check byte-compares
 │   ├── verify-series-parity.py  # the SECOND, independent opinion — never imports the generator
@@ -113,6 +113,9 @@ producer agrees with itself.
 It must never enter `patches/`, `drivers/` or `integration/`. Its README states
 the remaining port and board-proof boundaries; importing it is not evidence of
 a compiled or booted comparison kernel.
+`scripts/port-rewrite.py` applies the pinned real provider delta only to a
+pristine final-kernel checkout under `.work/`; `scripts/build-rewrite.sh` is
+the compile-only gate. Neither installs a kernel or authorizes a board reboot.
 
 **Ownership is a device-tree `compatible` string, and never a Kconfig
 dependency.** Every island-owned node carries exactly ONE `compatible`, matched
