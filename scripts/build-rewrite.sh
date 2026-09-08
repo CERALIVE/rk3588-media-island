@@ -20,6 +20,7 @@ make -C "$kernel" -j"$jobs" defconfig
 "$kernel/scripts/config" --file "$kernel/.config" \
   --disable ROCKCHIP_MPP_SERVICE --disable ROCKCHIP_MULTI_RGA \
   --disable VIDEO_ROCKCHIP_RGA --module ROCKCHIP_MPP_REWRITE \
+  --enable ROCKCHIP_MPP_REWRITE_FAULT_INJECTION \
   --module ROCKCHIP_RGA_REWRITE --enable ROCKCHIP_IOMMU --module VSI_IOMMU \
   --disable LOCALVERSION_AUTO --set-str LOCALVERSION -ceralive-rk3588-test-rewrite
 make -C "$kernel" -j"$jobs" olddefconfig modules_prepare
