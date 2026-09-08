@@ -36,7 +36,7 @@ a pin bump would then leave CI proving the series against a kernel nobody ships
 
 ### The kernel job, in the order it does things
 
-`cross-compile-modules` is the only expensive job, and each step exists for a
+`cross-compile-modules` is the production-module build job, and each step exists for a
 reason worth stating:
 
 1. **Both pinned objects are verified**, not just the commit. A peeled commit
@@ -70,6 +70,28 @@ reason worth stating:
    proves every MPP node's sole compatible and every client node's
    `rockchip,skip-pmu-idle-request`, and proves all three RGA nodes carry their
    sole island compatibles.
+
+### Rewrite comparison gate
+
+`cross-compile-rewrite` is a separate, required compile-only job. It shares the
+pristine pinned-kernel cache and uses a comparison ccache namespace, but never
+writes the cached kernel: a separate checkout receives the rewrite and its
+real provider delta. `island/comparison/rewrite/pins.env` holds the upstream tip,
+rc6 base, image-fragment pin and sparse pin. Both final-kernel objects are
+verified before staging.
+
+`scripts/port-rewrite.py` refuses non-scratch destinations, a dirty or wrong-base
+kernel and any drift from the byte-identical imports. `scripts/build-rewrite.sh`
+merges the edge and sanitizer fragments, requires both rewrite modules and
+KASAN/lockdep, and rejects competing MPP/multi_rga/mainline-RGA selections. It
+links against the real built-in symbol table and modular VSI provider, then
+runs pinned sparse with findings fatal over both rewrite translation units.
+Both compiled modules must publish OF aliases.
+
+This gate produces no release, bootable slot or board verdict. Its staging
+does not change the production source roots, integration patches or generated
+mailboxes; `series-integrity` also runs the independently mutation-tested
+`check-rewrite-exclusion.sh` assertion. No comparison artifact is published.
 
 ### Configured provider artifact cache
 

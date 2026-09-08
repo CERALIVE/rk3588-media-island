@@ -611,6 +611,98 @@ jobs:
   # --------------------------------------------------------------------
   # --------------------------------------------------------------------
 
+  cross-compile-rewrite:
+    name: cross-compile-rewrite
+    needs: [changes, pin, series-integrity, shellcheck]
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read immutable comparison coordinates
+        id: rewrite
+        run: |
+          source island/comparison/rewrite/pins.env
+          echo "commit=$REWRITE_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "base=$REWRITE_BASE" >> "$GITHUB_OUTPUT"
+          echo "repository=$REWRITE_REPOSITORY" >> "$GITHUB_OUTPUT"
+          echo "image=$REWRITE_IMAGE_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "sparse=$REWRITE_SPARSE_COMMIT" >> "$GITHUB_OUTPUT"
+
+      - name: Install comparison build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            bc bison ccache flex gcc-aarch64-linux-gnu kmod libelf-dev \
+            libssl-dev libxml2-dev pkg-config
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ~/.ccache
+          key: ccache-rewrite-${{ runner.os }}-${{ needs.pin.outputs.commit }}-${{ github.sha }}
+          restore-keys: |
+            ccache-rewrite-${{ runner.os }}-${{ needs.pin.outputs.commit }}-
+
+      - name: Share the pristine pinned kernel cache
+        id: kernel-cache
+        uses: actions/cache@v6
+        with:
+          path: .work/linux
+          key: linux-${{ runner.os }}-${{ needs.pin.outputs.commit }}
+
+      - name: Clone the pinned kernel on a cache miss
+        if: steps.kernel-cache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --single-branch --branch "${{ needs.pin.outputs.tag }}" \
+            "${{ needs.pin.outputs.mirror }}" .work/linux
+
+      - name: Verify both pinned kernel objects and make a disposable checkout
+        run: |
+          set -euo pipefail
+          test "$(git -C .work/linux rev-parse 'refs/tags/${{ needs.pin.outputs.tag }}')" = '${{ needs.pin.outputs.tag_object }}'
+          test "$(git -C .work/linux rev-parse 'refs/tags/${{ needs.pin.outputs.tag }}^{commit}')" = '${{ needs.pin.outputs.commit }}'
+          git clone --shared --no-checkout .work/linux .work/linux-rewrite
+          git -C .work/linux-rewrite checkout --detach '${{ needs.pin.outputs.commit }}'
+
+      - name: Fetch the pinned provider delta and stage the comparison
+        env:
+          REWRITE_REPOSITORY: ${{ steps.rewrite.outputs.repository }}
+          REWRITE_BASE: ${{ steps.rewrite.outputs.base }}
+          REWRITE_COMMIT: ${{ steps.rewrite.outputs.commit }}
+        run: |
+          set -euo pipefail
+          git init .work/rewrite-upstream
+          git -C .work/rewrite-upstream fetch --depth 1 "$REWRITE_REPOSITORY" "$REWRITE_BASE" "$REWRITE_COMMIT"
+          python3 scripts/port-rewrite.py --self-test
+          python3 scripts/port-rewrite.py .work/linux-rewrite .work/rewrite-upstream
+
+      - name: Build the pinned sparse checker
+        env:
+          SPARSE_COMMIT: ${{ steps.rewrite.outputs.sparse }}
+        run: |
+          set -euo pipefail
+          git init .work/sparse-rewrite
+          git -C .work/sparse-rewrite fetch --depth 1 \
+            https://git.kernel.org/pub/scm/devel/sparse/sparse.git "$SPARSE_COMMIT"
+          git -C .work/sparse-rewrite checkout --detach "$SPARSE_COMMIT"
+          test "$(git -C .work/sparse-rewrite rev-parse HEAD)" = "$SPARSE_COMMIT"
+          make -C .work/sparse-rewrite -j"$(nproc)" sparse
+
+      - name: Fetch the device and sanitizer fragments at the same pin
+        env:
+          IMAGE_COMMIT: ${{ steps.rewrite.outputs.image }}
+        run: |
+          set -euo pipefail
+          for variant in edge edge-test; do
+            curl -fsSL --retry 2 \
+              "https://raw.githubusercontent.com/CERALIVE/image-building-pipeline/$IMAGE_COMMIT/manifests/kernel/rk3588-$variant.fragment" \
+              -o ".work/rewrite-$variant.fragment"
+          done
+
+      - name: Link both rewrite modules and run sparse with errors fatal
+        run: bash scripts/build-rewrite.sh
+
   kunit:
     name: kunit
     needs: [changes, pin]
@@ -775,6 +867,7 @@ jobs:
       - pin
       - pin-equality
       - cross-compile-modules
+      - cross-compile-rewrite
       - kunit
       - static-analysis
     runs-on: ubuntu-latest
