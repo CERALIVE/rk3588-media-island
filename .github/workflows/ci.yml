@@ -164,6 +164,11 @@ jobs:
       - name: an independent checker agrees, without importing the generator
         run: python3 scripts/verify-series-parity.py
 
+      - name: The measurement rewrite never enters the production series
+        run: |
+          bash scripts/check-rewrite-exclusion.sh --self-test
+          bash scripts/check-rewrite-exclusion.sh
+
   shim-lint:
     name: shim lint
     runs-on: ubuntu-latest
