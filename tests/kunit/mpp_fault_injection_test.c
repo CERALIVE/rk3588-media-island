@@ -36,6 +36,89 @@ static void mpp_fault_delay_is_one_shot_test(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, atomic_read(&knob.consumed), 1);
 }
 
+static void mpp_fault_target_zero_matches_any_test(struct kunit *test)
+{
+	struct mpp_fault_knob knob = {
+		.armed = ATOMIC_INIT(1),
+		.consumed = ATOMIC_INIT(0),
+	};
+	atomic_t target = ATOMIC_INIT(0);
+
+	KUNIT_EXPECT_TRUE(test, mpp_fault_consume_targeted(&knob, &target, 4242));
+	KUNIT_EXPECT_EQ(test, atomic_read(&knob.consumed), 1);
+	KUNIT_EXPECT_EQ(test, atomic_read(&knob.armed), 0);
+}
+
+static void mpp_fault_target_matches_only_named_pid_test(struct kunit *test)
+{
+	struct mpp_fault_knob knob = {
+		.armed = ATOMIC_INIT(1),
+		.consumed = ATOMIC_INIT(0),
+	};
+	atomic_t target = ATOMIC_INIT(100);
+
+	KUNIT_EXPECT_FALSE(test, mpp_fault_consume_targeted(&knob, &target, 101));
+	KUNIT_EXPECT_EQ(test, atomic_read(&knob.armed), 1);
+	KUNIT_EXPECT_EQ(test, atomic_read(&knob.consumed), 0);
+
+	KUNIT_EXPECT_TRUE(test, mpp_fault_consume_targeted(&knob, &target, 100));
+	KUNIT_EXPECT_EQ(test, atomic_read(&knob.consumed), 1);
+}
+
+static void mpp_fault_target_clears_after_consume_test(struct kunit *test)
+{
+	struct mpp_fault_knob knob = {
+		.armed = ATOMIC_INIT(1),
+		.consumed = ATOMIC_INIT(0),
+	};
+	atomic_t target = ATOMIC_INIT(100);
+
+	KUNIT_EXPECT_TRUE(test, mpp_fault_consume_targeted(&knob, &target, 100));
+	KUNIT_EXPECT_EQ(test, atomic_read(&target), 0);
+}
+
+static void mpp_fault_target_does_not_consume_unarmed_test(struct kunit *test)
+{
+	struct mpp_fault_knob knob = {
+		.armed = ATOMIC_INIT(0),
+		.consumed = ATOMIC_INIT(0),
+	};
+	atomic_t target = ATOMIC_INIT(100);
+
+	KUNIT_EXPECT_FALSE(test, mpp_fault_consume_targeted(&knob, &target, 100));
+	KUNIT_EXPECT_EQ(test, atomic_read(&knob.consumed), 0);
+	KUNIT_EXPECT_EQ(test, atomic_read(&target), 100);
+}
+
+static void mpp_fault_target_written_concurrently_is_kept_test(struct kunit *test)
+{
+	struct mpp_fault_knob knob = {
+		.armed = ATOMIC_INIT(1),
+		.consumed = ATOMIC_INIT(0),
+	};
+	atomic_t target = ATOMIC_INIT(100);
+	int observed;
+
+	/*
+	 * mpp_fault_consume_targeted() is three uninterruptible steps with no
+	 * interposition point, so the racing write is replayed between them
+	 * here rather than driven from a second thread that could not be made
+	 * to land inside the window deterministically.
+	 */
+	observed = atomic_read(&target);
+	KUNIT_ASSERT_EQ(test, observed, 100);
+	KUNIT_ASSERT_TRUE(test, mpp_fault_consume_flag(&knob));
+	atomic_set(&target, 200);
+	KUNIT_EXPECT_EQ(test, atomic_cmpxchg(&target, observed, 0), 200);
+	KUNIT_EXPECT_EQ(test, atomic_read(&target), 200);
+
+	/* Unraced, the same helper still clears the selector it observed. */
+	atomic_set(&knob.armed, 1);
+	KUNIT_EXPECT_TRUE(test, mpp_fault_consume_targeted(&knob, &target, 200));
+	KUNIT_EXPECT_EQ(test, atomic_read(&target), 0);
+	KUNIT_EXPECT_EQ(test, atomic_read(&knob.consumed), 2);
+}
+
 static void media_fault_storm_test(struct kunit *test)
 {
 	struct ratelimit_state state;
@@ -92,6 +175,11 @@ static struct kunit_case mpp_fault_injection_cases[] = {
 	KUNIT_CASE(media_fault_storm_test),
 	KUNIT_CASE(mpp_fault_flag_is_one_shot_test),
 	KUNIT_CASE(mpp_fault_delay_is_one_shot_test),
+	KUNIT_CASE(mpp_fault_target_zero_matches_any_test),
+	KUNIT_CASE(mpp_fault_target_matches_only_named_pid_test),
+	KUNIT_CASE(mpp_fault_target_clears_after_consume_test),
+	KUNIT_CASE(mpp_fault_target_does_not_consume_unarmed_test),
+	KUNIT_CASE(mpp_fault_target_written_concurrently_is_kept_test),
 	{}
 };
 
