@@ -84,3 +84,20 @@ including both distinctions. After the fix, NV12→NV16 and NV16→NV12 90-degre
 cells ran with fallback/dropped/layout-rejection counters at zero and scored
 40.80 dB and 45.24 dB respectively. Rock 5B+ remained network-unreachable and
 is not inferred from this result.
+
+### Phase-7 encoder hygiene prerequisites
+
+`tests/board/idr-latency.sh` provides a twenty-request engine IPC driver and an
+offline MPEG-TS NAL/PTS scorer. Follow the input-pad clock and complete-capture
+contract in [`the harness guide`](../tests/board/README.md#forced-idr-measurement).
+Run `--self-test` before a board drill; its software recordings are not board
+evidence. Python 3.11+ must be available on the engine host for the requester.
+
+Composition requires two selectable video inputs, not merely a registered
+`rgacompositor` factory or the `composition` feature token. If UVC is absent,
+the synthetic-secondary fallback must actually be accepted by the engine;
+an IPC refusal is BLOCKED, not a ten-minute composition result. A hand-built
+GStreamer graph does not qualify the engine's session path. The restart leg
+requires a kernel built with `CONFIG_ROCKCHIP_MPP_CERALIVE_TEST` and accessible
+`/sys/kernel/debug/rkvenc-test` controls. No knob means no injected-fault result;
+never substitute a service restart or mock counter for that evidence.

@@ -26,6 +26,7 @@ accepts the earlier Phase-0 layout for retained historical runs.
 | `sample-cores.sh` | did the second encoder core run, and at what per-process fps? | 3(d) dual-core |
 | `count-journal.sh` | how many copy/fallback events happened in a measured window? | 3(b) copy census |
 | `fd-trace.sh` | did a buffer cross this boundary, or was it copied? | 3(b) copy census |
+| `idr-latency.sh` | how many encoder-input frames after each acknowledged IPC request precede the muxed IDR? | Phase 7 encoder hygiene |
 | `encode-psnr-oracle.sh` | is the shipped encoder CLEAN or DIRTY at fixed QP? | 3(e) ENC-CORRUPT |
 | `rga-psnr-oracle.sh` | does the RGA3 crop/scale/transpose victim preserve 600 frames at async depths 2 and 0, above 35 dB mean PSNR? | comparison kernel / todo 26 RGA oracle |
 | `control-encode-per-codec.sh` | does a cold boot encode every supported control codec, with H.265 deliberately first? | todo 9 / board gates 14, 16 and 17 |
@@ -57,6 +58,50 @@ accepts the earlier Phase-0 layout for retained historical runs.
    loaded, nothing under `/sys` is written. Every remote payload is screened by
    `assert_payload_is_read_only` before it is sent, and the whole directory is
    screened by an independent grep in CI (below).
+
+   The Phase-7 `idr-latency.sh --request` arm is explicitly active: it requests
+   keyframes from an already-running engine, locally under the external board
+   lock with `CERALIVE_BOARD_TEST=1`. It does not start or stop that engine or
+   perform fault injection. The caller owns those separate drill operations.
+
+## Forced-IDR measurement
+
+Python 3.11+ is required on the **engine host** for `--request`; scoring can run
+on the development host with Python and `ffprobe`. Self-test additionally needs
+FFmpeg with `libx264` and `libx265`. No package is installed by this harness.
+
+```bash
+bash tests/board/idr-latency.sh --self-test
+CERALIVE_BOARD_TEST=1 bash tests/board/idr-latency.sh \
+  --request /run/cerastream/control.sock /tmp/requests.tsv
+bash tests/board/idr-latency.sh \
+  --score recording.ts input.tsv requests.tsv 324000000
+```
+
+The final argument is the **measured mux PTS offset in 90 kHz ticks**, not a
+constant to copy from this example. The collector must retain every program
+encoder sink-pad buffer in `input.tsv` as `CLOCK_MONOTONIC_nanoseconds<TAB>PTS_90k`.
+Use the same host clock as Python's `time.monotonic_ns()`, and convert input PTS
+using the muxer's timestamp rounding. Capture starts before the first request
+and ends after the last response has produced output. The request file contains
+`id<TAB>send_ns<TAB>ack_ns<TAB>applied`, twenty rows with exclusive file creation.
+There is no input-pad collector or stream recorder inside this tool: the
+calling drill supplies those artifacts, plus per-frame DMA-BUF tracing.
+
+Scoring requires exact input/output PTS sequence equality modulo 2^33 and no
+B-frame reordering. It reads AVC type 5 or HEVC types 19/20 from Annex-B packet
+NALs, not ffprobe's generic keyframe flag (HEVC CRA is not IDR). Multiple slices
+of one picture are allowed; mixed slice kinds and ambiguous pictures are refused.
+The first input at or after request **send** time is latency frame 1; later
+frames count upward. Missing IDRs remain null/FAIL, and every value above 1
+remains FAIL. A rejected acknowledgement or incomplete trace cannot pass.
+
+For a hardware forced-keyframe claim, retain the encoder GOP configuration and
+ensure scheduled IDRs cannot coincide with the request windows; this scorer
+detects IDRs but cannot infer why the encoder generated one. The software
+self-test deliberately uses known periodic GOPs to prove the parser and score,
+then a real local Unix socket peer to prove RPC framing and acknowledgements.
+Neither fixture is a hardware-latency or zero-copy result.
 
 ---
 
