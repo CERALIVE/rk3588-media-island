@@ -116,6 +116,13 @@ a compiled or booted comparison kernel.
 `scripts/port-rewrite.py` applies the pinned real provider delta only to a
 pristine final-kernel checkout under `.work/`; `scripts/build-rewrite.sh` is
 the compile-only gate. Neither installs a kernel or authorizes a board reboot.
+The comparison-only `fault-injection/` overlay extends the adopted four-control
+seam to nine controls without changing either snapshot directory. The hooks patch
+and two headers are digest-pinned; session allocation fails at validated initial
+`INIT_CLIENT_TYPE`, never `open()`. `check-fault-seam-parity.sh` checks debugfs and
+harness inventories; `--ktap-log` also requires every arm64-QEMU seam case and its
+production case-name counterpart. See the overlay README for lifetime reasoning,
+intentional semantic differences and the ten upstream full-suite failures.
 
 **Ownership is a device-tree `compatible` string, and never a Kconfig
 dependency.** Every island-owned node carries exactly ONE `compatible`, matched
@@ -204,6 +211,7 @@ remaining deferred inputs live in [`docs/CI.md`](docs/CI.md).
 | `pin-equality` | The four mirrored `KERNEL_*` values equal the consumer's |
 | `cross-compile-modules` | Both pinned kernel objects resolve; the tree configures the way the device is configured; `vmlinux` supplies provider symbols, `modules_prepare` supplies the module linker script, and `vmlinux.symvers` is exposed as the `Module.symvers` external modpost requires; the two arm64 modules link with `-Werror` and expose their required OF aliases; both supported board DTBs build and pass `tests/dt/check-dtb-ownership.sh`; no island `compatible` collides with a mainline `of_match_table` |
 | `kunit` | Builds the MPP request-boundary, fault/lifecycle, session-teardown, DMA policy, fence, RGA request-validation, capability, telemetry-format, direct ioctl, and runtime-PM ownership suites against the pinned tree |
+| `kunit-rewrite-fault` | Stages the digest-pinned overlay, executes `rk-mpp-rewrite-fault` under arm64 QEMU/lockdep with `-Werror`, scans diagnostics and checks case-name parity; not upstream full-suite or silicon clearance |
 | `static-analysis` | sparse with findings promoted to errors plus coccinelle over every selected island object; smatch remains conditional on a suitable runner package |
 | `upstream-watch` | Nothing — it opens or updates ONE issue and never edits a pin or dispatches a build |
 

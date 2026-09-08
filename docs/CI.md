@@ -32,6 +32,8 @@ a pin bump would then leave CI proving the series against a kernel nobody ships
 | `pin-equality` | the four mirrored `KERNEL_*` values equal the consumer repository's |
 | `cross-compile-modules` | the pinned tag resolves to both pinned objects; the tree configures the way the device is configured; `vmlinux` supplies provider symbols, `modules_prepare` supplies the final-link script, and configured `vmlinux.symvers` is exposed under the `Module.symvers` filename external modpost reads; exactly `rk_vcodec.ko` and `rga_multicore.ko` link with `-Werror` and publish the OF aliases needed for module autoload; both board DTBs build and pass the ownership/skip-PMU checker; no island `compatible` collides with a mainline `of_match_table` |
 | `kunit` | every suite in `tests/kunit/` passes against the pinned kernel; direct ioctl and runtime-PM suites stage byte-preserved production bodies with `tests/kunit/stage_ioctl.py`; the latter use real runtime-PM fixture devices and mutation-check RGA probe policy; CI also asserts the telemetry symbol resolved `=y` and the telemetry session-format case appeared in the run |
+| `kunit-rewrite-fault` | the nine-control overlay's `rk-mpp-rewrite-fault` suite executes under arm64 QEMU/lockdep with `KCFLAGS=-Werror`; the raw log must be diagnostic-free and every registered case plus the production parity pairs must be `ok`; required by `ci-summary` |
+| `self-tests` fault-seam legs | `port-rewrite.py --self-test` proves snapshot/staging/digest/duplicate/no-seam behavior; `check-fault-seam-parity.sh` checks the source/harness name sets, and `--self-test` rejects renamed knobs, unknown consumers and incomplete/failing/skipped KTAP fixtures without requiring QEMU |
 | `static-analysis` | sparse inspects every selected composite object with findings promoted to errors, followed by coccinelle over both island directories; the plan's conditional smatch arm is not enabled without a suitable runner package |
 
 ### The kernel job, in the order it does things
@@ -87,6 +89,26 @@ KASAN/lockdep, and rejects competing MPP/multi_rga/mainline-RGA selections. It
 links against the real built-in symbol table and modular VSI provider, then
 runs pinned sparse with findings fatal over both rewrite translation units.
 Both compiled modules must publish OF aliases.
+
+`kunit-rewrite-fault` shares the pristine kernel cache but stages a separate
+checkout. Both kernel objects are checked; provider coordinates and overlay
+digests come from `pins.env`. It invokes the overlay's `run-kunit.sh` and feeds
+its raw `test.log` to the parity gate, preserving the log and resolved config as
+artifacts even on failure. The existing `kunit` job independently runs the
+production UML suite. The bash parity entry point uses a standard-library Python
+parser; it does not import the staging tool or series generator.
+Its self-test also executes the required summary's actual shell step: code-job
+skips, failures and cancellations must fail; documentation-only skips may pass.
+Duplicate suite results or summaries in a KTAP receipt are rejected.
+
+The focused seam run is **not** a passing upstream full-suite run. The adopted
+base records ten pre-existing `rk_mpp_rewrite` failures as **NOT-OURS baseline
+debt**, unchanged here. KASAN is off for this QEMU recipe because the inherited
+GCC 16 fixtures exceed its frame-warning limit; lockdep stays enabled, warnings
+stay fatal, and the separate module-build gate retains its KASAN configuration.
+Probe/client-init errno-helper tests are not OF/uaccess/board validation; the
+clock case additionally executes real runtime-PM unwind. Full scope is in the
+[overlay README](../island/comparison/rewrite/fault-injection/README.md).
 
 This gate produces no release, bootable slot or board verdict. Its staging
 does not change the production source roots, integration patches or generated

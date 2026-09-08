@@ -18,6 +18,14 @@ MPP UAPI header. Those are real provider implementations, not successful
 no-op stubs. The provider delta applies to final v7.2 without modifying either
 imported driver. `pins.env` identifies every comparison input.
 
+The [fault-injection overlay](fault-injection/README.md) is applied only **after**
+that snapshot check and `port-arm64-dma.patch`. Its nine controls share the
+production debugfs names plus a comparison-only `sessions` directory. Three
+SHA-256 pins protect the hooks patch and two headers. `--no-fault-seam` omits
+the overlay entirely; neither mode edits the frozen snapshot directories.
+The required arm64-QEMU fault-suite job is separate from the module build and
+does not claim the ten pre-existing upstream full-suite failures are fixed.
+
 The first strict builds exposed two linkage prerequisites: the upstream
 `include/linux/iommu.h` declaration must accompany the DMA IOVA implementation,
 and RGA's direct ARM64 cache-maintenance calls need module exports.

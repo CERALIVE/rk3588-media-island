@@ -1,0 +1,23 @@
+# Synthetic complete passing suite with one required selector case missing.
+KTAP version 1
+1..1
+    KTAP version 1
+    # Subtest: rk-mpp-rewrite-fault
+    1..14
+    ok 1 rk_mpp_fault_service_attach_once_kunit
+    ok 2 rk_mpp_fault_ccu_attach_once_kunit
+    ok 3 rk_mpp_fault_irq_request_once_kunit
+    ok 4 rk_mpp_fault_clock_enable_once_kunit
+    ok 5 rk_mpp_fault_session_alloc_once_kunit
+    ok 6 rk_mpp_fault_target_zero_matches_any_kunit
+    ok 7 rk_mpp_fault_target_matches_only_named_pid_kunit
+    ok 8 rk_mpp_fault_target_clears_after_consume_kunit
+    ok 9 rk_mpp_fault_target_does_not_consume_unarmed_kunit
+    ok 10 rk_mpp_fault_hang_once_kunit
+    ok 11 rk_mpp_fault_target_and_lease_kunit
+    ok 12 rk_mpp_fault_iommu_once_kunit
+    ok 13 rk_mpp_fault_reset_after_pulse_kunit
+    ok 14 rk_mpp_fault_retained_completion_kunit
+# rk-mpp-rewrite-fault: pass:14 fail:0 skip:0 total:14
+# Totals: pass:14 fail:0 skip:0 total:14
+ok 1 rk-mpp-rewrite-fault

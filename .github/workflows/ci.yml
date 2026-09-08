@@ -85,7 +85,8 @@ jobs:
           # following sourced file", which is unavoidable for a runtime-resolved
           # `source lib/harness-lib.sh`, and -x follows the ones it can.
           shellcheck -S style -e SC1091 -x \
-            tests/board/*.sh tests/board/lib/*.sh scripts/*.sh
+            tests/board/*.sh tests/board/lib/*.sh scripts/*.sh \
+            island/comparison/rewrite/fault-injection/run-kunit.sh
 
   # SHELLCHECK IS NOT ENOUGH, AND THIS JOB IS WHY IT EXISTS SEPARATELY.
   # The harness bootstrap found a real defect shellcheck cannot see: an ERE
@@ -146,6 +147,9 @@ jobs:
           bash scripts/check-telemetry-contract.sh || rc=1
           printf '=== scripts/check-telemetry-contract.sh --self-test ===\n'
           bash scripts/check-telemetry-contract.sh --self-test || rc=1
+          python3 scripts/port-rewrite.py --self-test || rc=1
+          bash scripts/check-fault-seam-parity.sh || rc=1
+          bash scripts/check-fault-seam-parity.sh --self-test || rc=1
           printf '=== scripts/vendor-backlog.sh --self-test ===\n'
           bash scripts/vendor-backlog.sh --self-test || rc=1
           exit "$rc"
@@ -703,6 +707,73 @@ jobs:
       - name: Link both rewrite modules and run sparse with errors fatal
         run: bash scripts/build-rewrite.sh
 
+  kunit-rewrite-fault:
+    name: kunit rewrite fault parity
+    needs: [changes, pin]
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install arm64 toolchain, QEMU and kernel dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            bc bison ccache device-tree-compiler flex gcc-aarch64-linux-gnu \
+            kmod libelf-dev libssl-dev qemu-system-arm
+          echo /usr/lib/ccache >> "$GITHUB_PATH"
+          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+
+      - name: Cache ccache
+        uses: actions/cache@v6
+        with:
+          path: ~/.ccache
+          key: ccache-rewrite-fault-${{ runner.os }}-${{ needs.pin.outputs.commit }}-${{ github.sha }}
+          restore-keys: |
+            ccache-rewrite-fault-${{ runner.os }}-${{ needs.pin.outputs.commit }}-
+
+      - name: Share the pristine pinned kernel cache
+        id: kernel-cache
+        uses: actions/cache@v6
+        with:
+          path: .work/linux
+          key: linux-${{ runner.os }}-${{ needs.pin.outputs.commit }}
+
+      - name: Clone the pinned kernel on a cache miss
+        if: steps.kernel-cache.outputs.cache-hit != 'true'
+        run: |
+          GIT_MASTER=1 git clone --depth 1 --single-branch --branch "${{ needs.pin.outputs.tag }}" \
+            "${{ needs.pin.outputs.mirror }}" .work/linux
+
+      - name: Verify both kernel objects and stage a separate comparison checkout
+        run: |
+          set -euo pipefail
+          test "$(GIT_MASTER=1 git -C .work/linux rev-parse 'refs/tags/${{ needs.pin.outputs.tag }}')" = '${{ needs.pin.outputs.tag_object }}'
+          test "$(GIT_MASTER=1 git -C .work/linux rev-parse 'refs/tags/${{ needs.pin.outputs.tag }}^{commit}')" = '${{ needs.pin.outputs.commit }}'
+          GIT_MASTER=1 git clone --shared --no-checkout .work/linux .work/linux-rewrite-fault
+          GIT_MASTER=1 git -C .work/linux-rewrite-fault checkout --detach '${{ needs.pin.outputs.commit }}'
+          source island/comparison/rewrite/pins.env
+          GIT_MASTER=1 git init .work/rewrite-upstream
+          GIT_MASTER=1 git -C .work/rewrite-upstream fetch --depth 1 "$REWRITE_REPOSITORY" "$REWRITE_BASE" "$REWRITE_COMMIT"
+          python3 scripts/port-rewrite.py .work/linux-rewrite-fault .work/rewrite-upstream
+
+      - name: Execute fault suite with lockdep and verify case-name parity
+        run: |
+          set -euo pipefail
+          bash island/comparison/rewrite/fault-injection/run-kunit.sh \
+            .work/linux-rewrite-fault .work/rewrite-fault-kunit rk-mpp-rewrite-fault
+          bash scripts/check-fault-seam-parity.sh --ktap-log .work/rewrite-fault-kunit/test.log
+
+      - name: Preserve the kernel log and resolved configuration
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rewrite-fault-kunit
+          include-hidden-files: true
+          path: |
+            .work/rewrite-fault-kunit/test.log
+            .work/rewrite-fault-kunit/.config
+
   kunit:
     name: kunit
     needs: [changes, pin]
@@ -845,8 +916,8 @@ jobs:
 
   # The one check a branch-protection rule can require. It runs on every event,
   # including a docs-only pull request where every gate above skipped, and goes
-  # red whenever a dependency failed or was cancelled. A SKIPPED dependency is a
-  # pass -- that is the whole point of the gating above.
+  # red whenever a dependency failed or was cancelled. A skipped dependency is
+  # allowed only when changes classified the event as documentation-only.
   #
   # `action-pins` is deliberately absent: it is `continue-on-error: true` by
   # design (an action publishing a new major must not turn an unrelated pull
@@ -869,12 +940,14 @@ jobs:
       - cross-compile-modules
       - cross-compile-rewrite
       - kunit
+      - kunit-rewrite-fault
       - static-analysis
     runs-on: ubuntu-latest
     steps:
-      - name: Fail if any dependency failed or was cancelled
+      - name: Fail on failed, cancelled or unexpectedly skipped dependencies
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
+          CODE_CHANGED: ${{ needs.changes.outputs.code }}
         run: |
           set -euo pipefail
           echo "dependency results: ${RESULTS}"
@@ -884,6 +957,12 @@ jobs:
                 echo "::error::a required job reported '${result}'"
                 exit 1
                 ;;
+              skipped)
+                if [ "${CODE_CHANGED}" = true ]; then
+                  echo "::error::a required code job was skipped"
+                  exit 1
+                fi
+                ;;
             esac
           done
-          echo "every dependency succeeded or was skipped"
+          echo "every dependency succeeded or had a docs-only skip"

@@ -1,0 +1,230 @@
+Comparison-only fault overlay; frozen snapshot is the baseline, never edited.
+
+Adopts the four-control base without changing its existing runtime hooks.
+Differences from production: reset is RKVENC2-only (production's is generic MPP);
+hang precedes IOMMU when both are armed; IOMMU uses fixed 0xfffff000, the real
+registered domain/device and the real handler (not physical fault IRQ delivery).
+Production mpp_rkvenc2.c actually passes NULL as domain; we deliberately do not.
+Delay is after DONE-list detachment with the transferred job reference, outside
+the session mutex, rather than before production's pending-list removal.
+PID identity is task_pid_nr(current), equal to production current->pid, not TGID.
+
+Added checks precede attachment/IRQ/clock/session-state publication and retain
+the existing identity-unlock and PM-put error paths. Session injection belongs
+only to validated initial RKVENC INIT_CLIENT_TYPE, never open(). No new locks,
+session fields, activation references or register leases are introduced.
+Superseded base lines: Kconfig's four-control help only; headers are additive.
+README supersessions and fixture proof limits are recorded in fault-injection/README.md.
+diff --git a/drivers/video/rockchip/mpp-rewrite/Kconfig b/drivers/video/rockchip/mpp-rewrite/Kconfig
+index ad0f81a..8676134 100644
+--- a/drivers/video/rockchip/mpp-rewrite/Kconfig
++++ b/drivers/video/rockchip/mpp-rewrite/Kconfig
+@@ -13,6 +13,17 @@ config ROCKCHIP_MPP_REWRITE
+ 	  execution paths used by current MPP consumers while leaving
+ 	  unsupported BSP-only commands as explicit errors.
+ 
++config ROCKCHIP_MPP_REWRITE_FAULT_INJECTION
++	bool "Comparison-only RKVENC2 fault injection"
++	depends on ROCKCHIP_MPP_REWRITE && DEBUG_FS
++	default n
++	help
++	  Nine one-shot debugfs controls for encoder probe/CCU/IRQ attachment,
++	  clock enable, initial client-type attachment, timeout, software IOMMU
++	  fault delivery, post-pulse reset failure and retained completion.
++	  Never enable in production. These controls can interrupt streams
++	  and quarantine hardware until the driver is reloaded.
++
+ config ROCKCHIP_MPP_REWRITE_KUNIT_TEST
+ 	bool "KUnit tests for Rockchip MPP service compatibility rewrite" if !KUNIT_ALL_TESTS
+ 	depends on ROCKCHIP_MPP_REWRITE=y && KUNIT
+diff --git a/drivers/video/rockchip/mpp-rewrite/mpp_rewrite.c b/drivers/video/rockchip/mpp-rewrite/mpp_rewrite.c
+index bbced93..b25f1f3 100644
+--- a/drivers/video/rockchip/mpp-rewrite/mpp_rewrite.c
++++ b/drivers/video/rockchip/mpp-rewrite/mpp_rewrite.c
+@@ -62,6 +62,8 @@
+ #include <soc/rockchip/vsi_iommu.h>
+ #include <uapi/linux/rk-mpp.h>
+ 
++#include "mpp_rewrite_fault.h"
++
+ static_assert(sizeof(struct mpp_request) == 24);
+ static_assert(offsetof(struct mpp_request, data_ptr) == 16);
+ 
+@@ -1098,6 +1100,7 @@ struct rk_mpp_reset_domain {
+ };
+ 
+ struct rk_mpp_service {
++	struct rk_mpp_fault_controls fault;
+ 	struct miscdevice miscdev;
+ 	struct dentry *debugfs_root;
+ 	struct proc_dir_entry *procfs_root;
+@@ -1204,6 +1207,8 @@ struct rk_mpp_service {
+ };
+ 
+ struct rk_mpp_session {
++	pid_t opener_pid;
++	struct dentry *fault_debugfs;
+ 	struct rk_mpp_service *srv;
+ 	struct mutex lock;
+ 	struct mutex explicit_map_lock; /* serializes DMA mappings and affinity */
+@@ -17457,6 +17462,8 @@ rk_mpp_reset_domain_recovery_pulse(struct rk_mpp_hw *hw, u64 *epoch)
+ 	fsleep(10);
+ 	domain->reset_domain_deassert_count++;
+ 	ret = rk_mpp_reset_domain_deassert(hw);
++	if (hw->match == &rk_mpp_rkvenc2_core && rk_mpp_fault_consume(&hw->srv->fault.reset))
++		ret = -EIO;
+ out_finish:
+ 	atomic_dec(&hw->reset_pulse_active);
+ 	rk_mpp_reset_domain_finish(hw, ret);
+@@ -17572,6 +17579,10 @@ static int rk_mpp_hw_power_on(struct rk_mpp_hw *hw)
+ 		goto err_pm_put;
+ 	}
+ 
++	ret = rk_mpp_fault_clock_enable(&hw->srv->fault,
++				       hw->match == &rk_mpp_rkvenc2_core);
++	if (ret)
++		goto err_pm_put;
+ 	ret = clk_bulk_prepare_enable(hw->num_clks, hw->clks);
+ 	if (ret)
+ 		goto err_pm_put;
+@@ -21375,6 +21386,18 @@ static int rk_mpp_rkvenc2_publish_and_start(struct rk_mpp_job *job,
+ 		rk_mpp_hw_cancel_timeout(hw);
+ 		return ret;
+ 	}
++	if (IS_ENABLED(CONFIG_ROCKCHIP_MPP_REWRITE_FAULT_INJECTION)) {
++		struct rk_mpp_fault_controls *fault = &hw->srv->fault;
++		pid_t opener = job->session->opener_pid;
++
++		if (rk_mpp_fault_targeted(fault, &fault->hang, opener))
++			return 0;
++		if (hw->iommu_domain && hw->iommu_fault_handler_registered &&
++		    hw->iommu_provider != RK_MPP_IOMMU_NONE &&
++		    rk_mpp_fault_targeted(fault, &fault->iommu, opener))
++			rk_mpp_iommu_fault_handler(hw->iommu_domain, hw->dev,
++						   0xfffff000UL, IOMMU_FAULT_READ, hw->srv);
++	}
+ 	/* Publish the register image and watchdog generation before START. */
+ 	wmb();
+ 	writel(start_value, hw->regs[0] + RK_MPP_RKVENC_START_BASE);
+@@ -23490,6 +23513,9 @@ static int rk_mpp_session_poll_job(struct rk_mpp_session *session, u32 flags)
+ 			mutex_unlock(&session->lock);
+ 			if (!ret)
+ 				ret = rk_mpp_job_copy_readback(job);
++			/* The detached list reference pins the job, imports and session. */
++			if (job->client_type == RK_MPP_DEVICE_RKVENC)
++				rk_mpp_fault_completion_wait(&session->srv->fault);
+ 			rk_mpp_job_put(job);
+ 			return ret;
+ 		}
+@@ -23953,22 +23979,28 @@ static int rk_mpp_process_request(struct rk_mpp_session *session,
+ 	case MPP_CMD_INIT_CLIENT_TYPE:
+ 		if (get_user(value, (u32 __user *)req->data))
+ 			return -EFAULT;
+ 		if (value >= RK_MPP_DEVICE_BUTT ||
+ 		    !(rk_mpp_get_hw_support(session->srv) & BIT(value)))
+ 			return -EINVAL;
+ 		mutex_lock(&session->lock);
+ 		if (session->initialized && session->client_type != value) {
+ 			mutex_unlock(&session->lock);
+ 			return -EBUSY;
+ 		}
++		ret = rk_mpp_fault_session_alloc(&session->srv->fault,
++			!session->initialized && value == RK_MPP_DEVICE_RKVENC);
++		if (ret) {
++			mutex_unlock(&session->lock);
++			return ret;
++		}
+ 		session->client_type = value;
+ 		session->initialized = true;
+ 		mutex_unlock(&session->lock);
+ 		if (batch)
+ 			batch->cur_job = NULL;
+ 		return 0;
+ 	case MPP_CMD_INIT_DRIVER_DATA:
+ 		if (!rk_mpp_session_initialized(session))
+ 			return -EINVAL;
+ 		if (get_user(value, (u32 __user *)req->data))
+ 			return -EFAULT;
+@@ -24270,6 +24302,9 @@ static int rk_mpp_open(struct inode *inode, struct file *filp)
+ 
+ 	session->srv = &rk_mpp_srv;
+ 	session->id = (u32)atomic_inc_return(&rk_mpp_srv.next_session_id);
++	session->opener_pid = task_pid_nr(current);
++	session->fault_debugfs = rk_mpp_fault_session_open(&rk_mpp_srv.fault,
++							 session->opener_pid, session->id);
+ 	session->client_type = RK_MPP_DEVICE_BUTT;
+ 	mutex_init(&session->lock);
+ 	mutex_init(&session->explicit_map_lock);
+@@ -24292,6 +24327,7 @@ static int rk_mpp_release(struct inode *inode, struct file *filp)
+ 
+ 	rk_mpp_session_abort_jobs(session, RK_MPP_TRANSITION_SESSION_CLOSE);
+ 	rk_mpp_session_release_imports(session);
++	debugfs_remove_recursive(session->fault_debugfs);
+ 	rk_mpp_session_put(session);
+ 	filp->private_data = NULL;
+ 
+@@ -24826,6 +24862,10 @@ static int rk_mpp_hw_probe(struct platform_device *pdev)
+ 	hw->dev = dev;
+ 	hw->srv = &rk_mpp_srv;
+ 	hw->match = match;
++	ret = rk_mpp_fault_service_attach(&hw->srv->fault,
++					 match == &rk_mpp_rkvenc2_core);
++	if (ret)
++		return ret;
+ 	hw->genpd_attached = !IS_ERR_OR_NULL(dev->pm_domain) &&
+ 			     of_property_present(dev->of_node,
+ 						 "power-domains");
+@@ -24972,6 +25012,10 @@ static int rk_mpp_hw_probe(struct platform_device *pdev)
+ 	if (match->ops && match->ops->irq) {
+ 		if (hw->irq < 0)
+ 			return -ENODEV;
++		ret = rk_mpp_fault_irq_request(&hw->srv->fault,
++					      match == &rk_mpp_rkvenc2_core);
++		if (ret)
++			return ret;
+ 		ret = devm_request_threaded_irq(dev, hw->irq, rk_mpp_hw_irq,
+ 						rk_mpp_hw_irq_thread,
+ 						IRQF_ONESHOT, dev_name(dev), hw);
+@@ -25023,6 +25067,10 @@ static int rk_mpp_hw_probe(struct platform_device *pdev)
+ 					       hw->ccu_node, hw->core_mask);
+ 	if (ret)
+ 		goto err_unlock_identity;
++	ret = rk_mpp_fault_ccu_attach(&hw->srv->fault,
++		match == &rk_mpp_rkvenc2_core && hw->ccu_node);
++	if (ret)
++		goto err_unlock_identity;
+ 	ret = rk_mpp_hw_init_cluster_locked(hw);
+ 	if (ret)
+ 		goto err_unlock_identity;
+@@ -25427,6 +25475,11 @@ static int rk_mpp_runtime_register(void)
+ 	ret = rk_mpp_create_procfs(&rk_mpp_srv);
+ 	if (ret)
+ 		goto err_deregister_misc;
++	ret = rk_mpp_fault_debugfs_init(&rk_mpp_srv.fault);
++	if (ret) {
++		rk_mpp_remove_procfs(&rk_mpp_srv);
++		goto err_deregister_misc;
++	}
+ 
+ 	rk_mpp_srv.debugfs_root = debugfs_create_dir("rk_mpp_rewrite", NULL);
+ 	debugfs_create_file("state", 0400, rk_mpp_srv.debugfs_root,
+@@ -25577,6 +25630,7 @@ static void rk_mpp_runtime_unregister(void)
+ 		return;
+ 
+ 	rk_mpp_runtime_registered = false;
++	debugfs_remove_recursive(rk_mpp_srv.fault.root);
+ 	rk_mpp_remove_procfs(&rk_mpp_srv);
+ 	debugfs_remove_recursive(rk_mpp_srv.debugfs_root);
+ 	misc_deregister(&rk_mpp_srv.miscdev);
+@@ -25588,6 +25642,11 @@ static void rk_mpp_runtime_unregister(void)
+ 	WRITE_ONCE(rk_mpp_srv.debug_ready, false);
+ }
+ 
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_REWRITE_KUNIT_TEST) && \
++	IS_ENABLED(CONFIG_ROCKCHIP_MPP_REWRITE_FAULT_INJECTION)
++#include "mpp_rewrite_fault_test.h"
++#endif
++
+ static int __init rk_mpp_init(void)
+ {
+ 	return rk_mpp_runtime_register();
