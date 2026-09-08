@@ -26280,10 +26280,10 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +};
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc_test.c b/drivers/video/rockchip/mpp/mpp_rkvenc_test.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..4d3f873dce2bad8ef309edc2aeacbe4813f5d0a9
+index 0000000000000000000000000000000000000000..d99779d12337764fef0ff41970fe68fa5c55b8ea
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvenc_test.c
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,105 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +#include <linux/debugfs.h>
 +#include <linux/err.h>
@@ -26373,32 +26373,16 @@ index 0000000000000000000000000000000000000000..4d3f873dce2bad8ef309edc2aeacbe48
 +	return mpp_fault_consume_flag(&fail_reset);
 +}
 +
-+static bool mpp_rkvenc_test_target_matches(pid_t session_pid)
-+{
-+	int target = atomic_read(&target_session_pid);
-+
-+	return !target || target == session_pid;
-+}
-+
-+static bool mpp_rkvenc_test_consume_targeted(struct mpp_fault_knob *knob,
-+					      pid_t session_pid)
-+{
-+	if (!mpp_rkvenc_test_target_matches(session_pid))
-+		return false;
-+	if (!mpp_fault_consume_flag(knob))
-+		return false;
-+	atomic_set(&target_session_pid, 0);
-+	return true;
-+}
-+
 +bool mpp_rkvenc_test_hang_task(pid_t session_pid)
 +{
-+	return mpp_rkvenc_test_consume_targeted(&hang_task, session_pid);
++	return mpp_fault_consume_targeted(&hang_task, &target_session_pid,
++					  session_pid);
 +}
 +
 +bool mpp_rkvenc_test_inject_iommu_fault(pid_t session_pid)
 +{
-+	return mpp_rkvenc_test_consume_targeted(&inject_iommu_fault, session_pid);
++	return mpp_fault_consume_targeted(&inject_iommu_fault,
++					  &target_session_pid, session_pid);
 +}
 +
 +unsigned int mpp_rkvenc_test_completion_delay_ms(void)
@@ -26407,10 +26391,10 @@ index 0000000000000000000000000000000000000000..4d3f873dce2bad8ef309edc2aeacbe48
 +}
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc_test.h b/drivers/video/rockchip/mpp/mpp_rkvenc_test.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..9df851e3be19aa07b0fe69bd3fc6d0ac2a1f5db3
+index 0000000000000000000000000000000000000000..cb56132a9ea510e015484595fbbea222bc9072c4
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvenc_test.h
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,74 @@
 +/* SPDX-License-Identifier: GPL-2.0-only */
 +#ifndef __MPP_RKVENC_TEST_H__
 +#define __MPP_RKVENC_TEST_H__
@@ -26441,6 +26425,21 @@ index 0000000000000000000000000000000000000000..9df851e3be19aa07b0fe69bd3fc6d0ac
 +
 +	atomic_inc(&knob->consumed);
 +	return delay_ms;
++}
++
++static inline bool mpp_fault_consume_targeted(struct mpp_fault_knob *knob,
++					      atomic_t *target,
++					      pid_t session_pid)
++{
++	int observed = atomic_read(target);
++
++	if (observed && observed != session_pid)
++		return false;
++	if (!mpp_fault_consume_flag(knob))
++		return false;
++	/* Do not erase a different selector written while this shot was firing. */
++	atomic_cmpxchg(target, observed, 0);
++	return true;
 +}
 +
 +#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
