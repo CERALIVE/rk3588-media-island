@@ -34,6 +34,7 @@ accepts **both** layouts, so the move is a `git mv` with no edits.
 | `count-journal.sh` | how many copy/fallback events happened in a measured window? | 3(b) copy census |
 | `fd-trace.sh` | did a buffer cross this boundary, or was it copied? | 3(b) copy census |
 | `encode-psnr-oracle.sh` | is the shipped encoder CLEAN or DIRTY at fixed QP? | 3(e) ENC-CORRUPT |
+| `rga-psnr-oracle.sh` | does the RGA3 crop/scale/transpose victim preserve 600 frames at async depths 2 and 0, above 35 dB mean PSNR? | comparison kernel / todo 26 RGA oracle |
 | `control-encode-per-codec.sh` | does a cold boot encode every supported control codec, with H.265 deliberately first? | todo 9 / board gates 14, 16 and 17 |
 | `rkvenc-fault-campaign.sh` | do the canonical malformed ioctls keep their exact errno while the known BASE-only harness case stays honestly red? | todo 9 |
 | `run-baseline.sh` | all five, written into the baseline document and the ledger | 3(a)–(e) |
@@ -67,6 +68,30 @@ accepts **both** layouts, so the move is a `git mv` with no edits.
 ---
 
 ## Running the self-tests
+
+The RGA oracle's `--self-test` uses real software FFmpeg to distinguish identical,
+corrupt, truncated and extra-frame output. Its hardware arm runs **locally on the
+board**, under the external board lock, with `CERALIVE_BOARD_TEST=1` and a
+checksum-pinned 1920×1080 H.264 input containing at least 600 frames:
+
+```bash
+CERALIVE_BOARD_TEST=1 FFMPEG=/path/to/rkmpp-enabled-ffmpeg \
+  bash tests/board/rga-psnr-oracle.sh --input /path/to/input.h264 \
+  --sha256 <input-sha256> --out /tmp/new-rga-oracle-run
+```
+
+The victim uses RGA3 core 0, crops 960×540 at (160,90), scales to 640×360,
+rotates clockwise and encodes HEVC at 3 Mbit/s. Software scoring compares the
+decoded 360×640 output with the crop/bicubic-scale/transpose reference. The
+35 dB mean-PSNR bar comes from
+[`ffmpeg-suite.sh` at the pinned upstream record](https://github.com/yisding/rock-5b-ysp/blob/ca3da04280c48c004e522c15f31862bf88a2d1b9/kernel-drivers/tests/ffmpeg-suite.sh#L712-L747);
+600 frames and the depth-0 control are CeraLive's comparison requirements.
+This is an end-to-end victim, not an isolated RGA-only score: decoder or encoder
+corruption can also make it red. Command failure or missing frames is
+`INCOMPLETE`, never `NOT-REPRODUCED`. The output directory must be new; each
+command, software version, bitstream, decoded file and scoring log is retained.
+The calling locked session must capture stdout and the surrounding kernel journal.
+No hardware result is claimed by creating or self-testing this harness.
 
 ```bash
 cd docs/media-island/phase0/harness
