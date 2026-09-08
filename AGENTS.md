@@ -45,6 +45,7 @@ rk3588-media-island/
 ├── integration/                 # applied patches: build hooks, providers, MPP DT ownership
 │   └── pending/                 # linted but unshipped RGA2/RGA3 ownership flips
 ├── patches/                     # GENERATED series — never hand-edited
+├── island/comparison/rewrite/    # measurement-only upstream snapshot; not a port or shipped source
 ├── scripts/                     # series generation, provenance, lint tooling
 │   ├── build-series.py          # drivers/ + integration/ -> patches/ ; --check byte-compares
 │   ├── verify-series-parity.py  # the SECOND, independent opinion — never imports the generator
@@ -106,6 +107,12 @@ directory and byte-compares. Change the source, then regenerate — never the ot
 way round. An independent parity checker exists as a second opinion and must not
 import the generator: a checker sharing the producer's code proves only that the
 producer agrees with itself.
+
+**The rewrite comparison is outside the production source roots.**
+`island/comparison/rewrite/` holds an unmodified, pinned measurement snapshot.
+It must never enter `patches/`, `drivers/` or `integration/`. Its README states
+the remaining port and board-proof boundaries; importing it is not evidence of
+a compiled or booted comparison kernel.
 
 **Ownership is a device-tree `compatible` string, and never a Kconfig
 dependency.** Every island-owned node carries exactly ONE `compatible`, matched
