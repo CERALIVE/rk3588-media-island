@@ -132,7 +132,7 @@ to name the donor directly.
 | `drivers/video/rockchip/mpp/hack/mpp_rkvdec2_hack_rk3568.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/hack/mpp_rkvdec2_link_hack_rk3568.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_av1dec.c` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
-| `drivers/video/rockchip/mpp/mpp_common.c` | realized series | same | REBASED | Checked register-offset copy sizing; scalar ioctl payload-size enforcement. See MODERNIZATION.md and IOCTL-BOUNDARY-TESTS.md. | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_common.c` | realized series | same | REBASED | Checked register-offset copy sizing; scalar ioctl size enforcement with the zero-size/offset/flags discovery exception for HW_SUPPORT and CMD_SUPPORT. See MODERNIZATION.md and IOCTL-BOUNDARY-TESTS.md. | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/media_request_size.h` | CeraLive | same | FIRST-PARTY | Shared overflow-checked request sizing, covered by UML KUnit. | `GPL-2.0-only` |
 | `drivers/video/rockchip/mpp/mpp_common.h` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_debug.h` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |

@@ -191,6 +191,9 @@ success alone does not qualify hardware latency or DMA-BUF direct import.
 
 The direct MPP/RGA ioctl suites compile byte-preserved handler and session
 functions with bounded user-copy fixtures, rather than opening real device nodes.
+MPP coverage includes the legacy zero-size discovery queries, their precise
+offset/flag boundary and checked-word pointer access; other scalar sizes and
+unimplemented clients retain their rejection tests.
 See [`docs/IOCTL-BOUNDARY-TESTS.md`](docs/IOCTL-BOUNDARY-TESTS.md) for the complete
 case table, reproduction commands, and the explicit hardware/uaccess limits.
 

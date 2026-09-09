@@ -95,6 +95,12 @@ rk3588-media-island/
 
 ## KEY FACTS
 
+**MPP discovery has a narrow legacy scalar shape.** HW_SUPPORT and CMD_SUPPORT
+accept size/offset/flags all zero and still access one checked user `u32`.
+Other scalar commands require size four; unsupported clients and wrong-hardware
+register ranges remain rejected. This is an ioctl compatibility fix, separate
+from idle-fault instrumentation. See `docs/IOCTL-BOUNDARY-TESTS.md`.
+
 **Idle IOMMU instrumentation is test-only and not board-qualified.** The optional
 `inject_iommu_fault_idle_ms` control owns delayed work in each encoder's device
 context, serializes enqueue with disable, cancels before teardown/system sleep,

@@ -59,12 +59,14 @@ is not duplicated. Pointer wrap cases use `ULONG_MAX`/`U64_MAX`.
 | MPP translation table | zero payload, one `u16`, maximum 80 `u16` | `0`, nonempty successful copies publish the correct element count |
 | MPP translation table | maximum +1 byte, maximum +1 element, odd byte count, `UINT_MAX`, high bit | `-EINVAL` |
 | MPP translation table | declared two elements with one supplied; null/wrapped payload pointer | Existing `-EINVAL` ABI |
-| MPP scalar output | QUERY_HW_SUPPORT sizes 0, 1, 3, 5, `UINT_MAX`, high bit, with a mapped 4-byte buffer | `-EINVAL`; one envelope copy, no payload access, sentinel unchanged |
-| MPP scalar output | size 4, valid pointer | `0`, truthful zero capabilities on this no-device fixture |
+| MPP scalar output | QUERY_HW_SUPPORT sizes 1, 3, 5, `UINT_MAX`, high bit, with a mapped 4-byte buffer | `-EINVAL`; one envelope copy, no payload access, sentinel unchanged |
+| MPP scalar output | size 4, or legacy size/offset/flags all zero, valid pointer | `0`, truthful zero capabilities on this no-device fixture |
 | MPP scalar output | size 4, null/wrapped pointer or actual buffer only 3 bytes | `-EFAULT` |
-| MPP scalar inputs | QUERY_HW_ID, QUERY_CMD_SUPPORT, INIT_CLIENT_TYPE, INIT_DRIVER_DATA with sizes 0, 1, 3, 5, `UINT_MAX`, high bit | `-EINVAL` before payload access |
+| MPP scalar inputs | QUERY_HW_ID, INIT_CLIENT_TYPE, INIT_DRIVER_DATA with sizes 0, 1, 3, 5, `UINT_MAX`, high bit; QUERY_CMD_SUPPORT with the same nonzero invalid sizes | `-EINVAL` before payload access |
+| MPP legacy discovery | HW_SUPPORT/CMD_SUPPORT size zero with nonzero offset or flags | `-EINVAL`, no payload access, sentinel unchanged |
+| MPP legacy discovery | HW_SUPPORT/CMD_SUPPORT size/offset/flags zero with null/wrapped pointer or only three accessible bytes | Existing checked-word errors: `-EFAULT` for HW_SUPPORT, `-EINVAL` for CMD_SUPPORT |
 | MPP command-support query | exact word containing INIT_BASE | `0`, returns INIT_BUTT |
-| MPP client index | unprobed 0, DEVICE_BUTT, `UINT_MAX`, high bit | `-EINVAL` |
+| MPP client index | unprobed 0, 0x12, 0x13, DEVICE_BUTT, `UINT_MAX`, high bit, each with size four | `-EINVAL` |
 | RGA outer envelopes | all eight RGA_IOC commands, each with null/wrapped pointer or structure short by one byte | `-EFAULT` |
 | RGA outer command | unknown ioctl | Existing `-EINVAL` ABI |
 | RGA CONFIG task array | 1 and maximum 256 complete descriptors | `0`, session kref remains 2 (file + request) |
@@ -93,6 +95,40 @@ field or treat an unknown userspace allocation length as kernel knowledge.
 
 ## Findings and red proof
 
+### Legacy discovery correction (2026-09-09)
+
+The original IOCTL-B01 check below incorrectly classified two established query
+shapes as malformed. Installed `librockchip-mpp1 1.5.0-1`, built from
+[`tsukumijima/mpp-rockchip@194af181db3a02a095c01db84e176d972e19b216`](https://github.com/tsukumijima/mpp-rockchip/tree/194af181db3a02a095c01db84e176d972e19b216),
+sends HW_SUPPORT and CMD_SUPPORT with size, offset and flags all zero. Their
+payload remains one accessible `u32`. Its native descriptor is the existing
+24-byte layout, not a new ABI or a compat32 envelope.
+
+Rejecting discovery clears the library's hardware-ID census. The H.264 HAL then
+defaults from unknown ID zero to VEPU541 instead of selecting VEPU580 for
+`0x50603312`. On Rock, emulating only those query rejections reproduced both
+size-four INIT_CLIENT_TYPE failures for absent clients 0x12/0x13 and the encoder
+stall: a VEPU541 batch starting with 780 bytes at offset 0x10004 is outside the
+VEPU580 register map and is correctly rejected. Normal discovery on the same
+board/library completed the 30-frame encode. The unsupported-client and
+register-range rejections are not additional kernel defects and remain intact.
+
+The corrected contract admits the observed zero-size shape only for these two
+query commands, with offset and flags zero. Size-four handling is unchanged.
+All other zero-size scalar commands and all nonzero malformed sizes retain
+their no-payload-access rejection. The compatibility branch does not identify
+or trust an executable: every caller receives the same shape validation and
+the existing `get_user`/`put_user` checks. Zero in this legacy shape means an
+implicit word, not permission to read an inaccessible buffer.
+
+The corrected tests first failed three of nine ioctl cases on the previous
+driver. Coverage retains every earlier malformed nonzero-size, pointer,
+canary, allocation and lifecycle assertion, and adds nonzero-offset/flag
+rejections for the legacy shape plus the observed unimplemented client values.
+This production ABI correction is independent of test-only idle-IOMMU work.
+
+### Original boundary-hardening receipt (historical)
+
 Baseline `cb5302b` with the first new tests, before driver edits:
 
 ```text
@@ -117,7 +153,7 @@ self-tests also passed; the separate full CI run remains the module-link gate.
 
 | Finding | Fix |
 |---|---|
-| IOCTL-B01 — scalar requests disregard their declared payload size | Require exactly `sizeof(u32)` before the five scalar command paths access user data |
+| IOCTL-B01 — scalar requests disregard their declared payload size | Require exactly `sizeof(u32)`, except the two precisely bounded legacy discovery queries documented above |
 | IOCTL-B02 — unknown selectors enter RGA request state | Check sync mode in `rga_request_check`; check every copied task's core mask and render opcode before publishing a replacement task list |
 | IOCTL-B03 — RGA wrappers erase specific configuration errno | Preserve `PTR_ERR` at request/config and legacy wrappers; retain `-EFAULT` for actual copy failures |
 
