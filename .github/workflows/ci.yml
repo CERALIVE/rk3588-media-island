@@ -639,6 +639,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             bc bison ccache flex gcc-aarch64-linux-gnu kmod libelf-dev \
             libssl-dev libxml2-dev pkg-config
+          echo /usr/lib/ccache >> "$GITHUB_PATH"
+          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
 
       - name: Cache ccache
         uses: actions/cache@v6

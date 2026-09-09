@@ -235,6 +235,11 @@ Three workflows: `ci.yml` (the PR gate), `release.yml` (`workflow_dispatch`, wit
 issue-only). Per-job detail, the mutation transcripts, and the honest list of
 remaining deferred inputs live in [`docs/CI.md`](docs/CI.md).
 
+`cross-compile-rewrite` activates the compiler wrappers through `GITHUB_PATH`
+and sets `CCACHE_DIR=$HOME/.ccache` through `GITHUB_ENV` before restoring its
+comparison cache. Installing ccache and declaring a cache action alone does not
+make compiler invocations use it; see [`docs/CI.md`](docs/CI.md)'s rewrite gate.
+
 | Job | Asserts |
 |-----|---------|
 | `shellcheck` | Every tracked shell script lints clean at `-S style` (only `SC1091` excluded) |

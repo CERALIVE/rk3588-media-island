@@ -83,6 +83,13 @@ real provider delta. `island/comparison/rewrite/pins.env` holds the upstream tip
 rc6 base, image-fragment pin and sparse pin. Both final-kernel objects are
 verified before staging.
 
+The dependency-install step adds `/usr/lib/ccache` to `GITHUB_PATH` and writes
+`CCACHE_DIR=$HOME/.ccache` to `GITHUB_ENV` before the cache restore. Later build
+steps therefore invoke the compiler wrappers and populate the same directory
+the cache action saves. A cold run must show a successful `Post Cache ccache`
+save rather than a missing-path warning; a later run can restore that cache via
+the kernel-scoped prefix. A successful save alone does not prove a speedup.
+
 `scripts/port-rewrite.py` refuses non-scratch destinations, a dirty or wrong-base
 kernel and any drift from the byte-identical imports. `scripts/build-rewrite.sh`
 merges the edge and sanitizer fragments, requires both rewrite modules and
