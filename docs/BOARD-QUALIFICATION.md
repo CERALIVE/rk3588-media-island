@@ -116,3 +116,20 @@ bypassed. The board remained on protected production A, good/2, with B good/3;
 final bundle identity, package set and service states matched preflight, and the
 final board-wrapper check reported idle (exit 0). No install, reboot, fault,
 unit-control or config change occurred. No B8 tick or recovery PASS is earned.
+
+### RUN-2 — B8 Rock 5B+ staging capacity blocked (2026-09-09 UTC)
+
+| Board | Observed kernel / intended candidate | Island release intended | Leg | Verdict | Ledger |
+|---|---|---|---|---|---|
+| Rock 5B+ | `7.2.0-ceralive-rk3588` / unbooted `linux-image-7.2.0-ceralive-rk3588-test`, image `3333237dbd769401b90d483adf51707831c42c97` | `v2026.9.2` (candidate not installed) | B8 | `SKIPPED(staging-capacity)` — 0/16 matrix rows and 0/5 control rows executed | [Rock phase-4 RUN-2](https://github.com/CERALIVE/ceralive/blob/docs/media-island-ledger-evidence/docs/media-island/ledger/rock-5b-plus/phase4.md#run-2--healthy-board-admission-staging-capacity-blocked-2026-09-09-utc) |
+
+The approved binaries were reused without rebuilding and both host self-tests
+printed PASS. Fresh locked preflight confirmed protected production A booted,
+activated and good, B inactive/good, and budgets A=3/B=3. The bundle requires
+1,240,414,328 bytes; prescribed `/tmp` staging has only 1,073,737,728 available.
+No Rock-specific authorization for persistent staging or tmpfs resizing was
+present, so nothing was transferred or installed. Final production identity,
+six-package set and service states matched preflight; the lock was released and
+the final wrapper check was idle, exit 0. No reboot, configuration write, unit
+control or fault stimulus occurred. No board-drill exit code, counter delta,
+candidate tuple, restoration-drill PASS or B8 tick is claimed.
