@@ -37,7 +37,8 @@ accepts **both** layouts, so the move is a `git mv` with no edits.
 | `rga-psnr-oracle.sh` | does the RGA3 crop/scale/transpose victim preserve 600 frames at async depths 2 and 0, above 35 dB mean PSNR? | comparison kernel / todo 26 RGA oracle |
 | `control-encode-per-codec.sh` | does a cold boot encode every supported control codec, with H.265 deliberately first? | todo 9 / board gates 14, 16 and 17 |
 | `rkvenc-fault-campaign.sh` | do the canonical malformed ioctls keep their exact errno while the known BASE-only harness case stays honestly red? | todo 9 |
-| `fault-controls-probe.sh` | do the five fault controls no matrix row consumes actually fire, exactly once, with their documented errno and a recovering device? | fault-seam parity / the five non-matrix controls |
+| `fault-matrix.sh --driver island\|rewrite\|auto` | do the sixteen fault rows leave the device recovered, with the armed one-shot consumed exactly once and the healthy session's throughput intact? The `--driver` profile selects which seam is expected: `island` keeps every island assertion, `rewrite` keeps them and additionally LABELS the telemetry the rewrite does not publish rather than scoring it | fault-seam parity / the 16-row matrix; both campaigns and the rewrite comparison |
+| `fault-controls-probe.sh` | do the five fault controls no matrix row consumes actually fire, exactly once, with their documented errno and a recovering device? Same `--driver` profiles; `--row idle-iommu-fault` is the separate, explicit-only idle experiment | fault-seam parity / the five non-matrix controls |
 | `run-baseline.sh` | all five, written into the baseline document and the ledger | 3(a)–(e) |
 
 ---
@@ -77,6 +78,13 @@ accepts **both** layouts, so the move is a `git mv` with no edits.
    and the driver directory are read off the bus at run time, so no board
    device-node address is spelled anywhere in this directory and the literal
    screen below stays empty.
+
+   This paragraph is itself screened. The exception is described here in prose
+   precisely because the acceptance gate below greps every byte of this
+   directory, documentation included — so the two write kinds are named by what
+   they do (arm a seam knob; detach and reattach one core through its driver's
+   bus attributes) rather than by a literal a reader could paste into a script.
+   Both campaigns of 2026-09-09 exercised this path and the screen stayed empty.
 
    Nothing else is touched: no unit is controlled, no module is loaded or
    unloaded, and the core is reattached from a `trap` on every exit path,
@@ -247,6 +255,30 @@ against, and because two of these facts contradict assumptions in the plan.
   `c_RkRgaBlit()` then returns **-19 (`-ENODEV`)** and leaves the destination
   untouched. An application that gates on the init return value alone believes
   RGA is available. That is the A2 answer, and it is a trap worth remembering.
+
+---
+
+## Where the fault-drill fixtures live
+
+The two fault drills score against different fixture sources, and the difference
+is worth stating because only one of them is committed.
+
+- **`tests/fixtures/reliability/orange-pi-5-plus/`** — real captures from that
+  board, and what `fault-matrix.sh --self-test` scores its **island** profile
+  against.
+- **`tests/fixtures/reliability/rewrite-synthetic/`** — hand-written, and clearly
+  labelled as such in its own README. It exists so the matrix's **rewrite**
+  profile is scored in both directions on a host with no board, because the
+  profile most likely to be wrong would otherwise go unexercised. No number in
+  it may be quoted as a measurement; the real rewrite numbers live in the root
+  ledger's phase-3 comparison.
+- **`fault-controls-probe.sh` has no committed fixture directory.** Its
+  `--self-test` builds a synthetic one-shot seam — a shell "driver", not a fake
+  device — in a fresh `mktemp -d` on every run, then scores both directions
+  against it, including deliberately wrong counters, a missing firing or state
+  file, a failed recovery, a journal report and a busy admission. There is no
+  `tests/fixtures/fault-controls/` directory, and adding one would only freeze
+  what the drill already generates deterministically.
 
 ---
 

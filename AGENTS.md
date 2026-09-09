@@ -83,6 +83,10 @@ rk3588-media-island/
 | Look up a pinned upstream SHA | [`docs/REFERENCES.md`](docs/REFERENCES.md) |
 | See whether mainline has caught up on a block | [`docs/UPSTREAM-STATUS.md`](docs/UPSTREAM-STATUS.md) |
 | Know what a board must demonstrate before a tick | [`docs/BOARD-QUALIFICATION.md`](docs/BOARD-QUALIFICATION.md) |
+| Look up a fault control, its counter, its errno, its call site or the row that consumes it | [`docs/FAULT-SEAM-CONTRACT.md`](docs/FAULT-SEAM-CONTRACT.md) — the authoritative table, plus the `T4` vocabulary every ledger cell is written in |
+| Run the 16-row fault matrix on a board, on either seam | `tests/board/fault-matrix.sh --driver island\|rewrite` — `--self-test` scores both profiles on committed fixtures and still prints `16 MPP rows registered` |
+| Prove the five controls no matrix row consumes, or the explicit-only idle-window row | `tests/board/fault-controls-probe.sh` (`--row all` is the five; `--row idle-iommu-fault` is the separate experiment) |
+| Read what those drills actually measured on silicon | [`docs/FAULT-CAMPAIGN.md`](docs/FAULT-CAMPAIGN.md) → "Fault-seam contract and the 2026-09 campaigns" |
 | Understand which licence branch applies to a file | [`LICENSE.md`](LICENSE.md) |
 | Build the modules | [`README.md`](README.md) → "Building the modules" |
 | MPP static-analysis dispositions and instrumented KUnit coverage | [`docs/HARDENING-FINDINGS.md`](docs/HARDENING-FINDINGS.md) — helper tests are not silicon validation |
@@ -107,6 +111,26 @@ and records PM status at callback time without resuming the device. Its probe is
 explicitly `fault-controls-probe.sh --row idle-iommu-fault`, never a matrix row
 or part of the five-control `--row all` sweep. See `docs/FAULT-CAMPAIGN.md` for
 the direct-callback boundary and current proof limits.
+
+**The fault seam has a written contract, and both drivers share its debugfs
+names on purpose.** [`docs/FAULT-SEAM-CONTRACT.md`](docs/FAULT-SEAM-CONTRACT.md)
+is the authoritative table: nine controls plus the `target_session_pid`
+selector, each one's consumed counter, injected effect, errno and call sites on
+both seams, the harness row that consumes it, the sixteen matrix rows, and the
+`T4` literals a ledger cell may carry. Two of its findings drive everything
+downstream — the matrix arms only FOUR controls, because
+`rkvenc-invalid-ioctl --all-malformed` skips `session-allocation-failure`
+(`NOT-IN-MATRIX`), and the other five had never been board-proven on the island
+at all, which is why `fault-controls-probe.sh` exists.
+
+`/sys/kernel/debug/rkvenc-test` is deliberately the SAME path on the production
+seam and on the comparison overlay. That is not an oversight and must not be
+"disambiguated": identical names are what let one harness score both drivers and
+what `check-fault-seam-parity.sh` enforces. The two can never collide on one
+kernel, because the rewrite's `ROCKCHIP_MPP_REWRITE` carries
+`depends on !ROCKCHIP_MPP_SERVICE` (`island/comparison/rewrite/mpp-rewrite/Kconfig:5`)
+and the overlay `#error`s if both seam symbols are enabled — the exclusivity is
+Kconfig's, so the shared name is safe by construction rather than by convention.
 
 **`kernel-pin.env` is a MIRROR, not a decision.** Its four `KERNEL_*` values are
 byte-identical to `rk3588-kernel-patches/kernel-pin.env`, and a `pin-equality` CI
@@ -279,6 +303,10 @@ pin bump would otherwise leave CI proving the series against a kernel nobody shi
   lint; keeping the mainline drivers built is what makes every flip reversible
 - Don't give an island-owned node two `compatible` strings. Which driver wins is
   module load order, which is not a design
+- Don't edit a byte under `island/comparison/rewrite/{mpp-rewrite,rga-rewrite}/`
+  — comparison-only instrumentation is an overlay patch applied by
+  `port-rewrite.py`, and `check-fault-seam-parity.sh` keeps its debugfs names
+  identical to the production seam
 - Don't hand-edit `patches/` — regenerate from `drivers/` and `integration/`
 - Don't make the parity checker import the series generator; it is deliberately
   the second, independent opinion
