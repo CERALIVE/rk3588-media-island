@@ -146,6 +146,8 @@ Neither fixture is a hardware-latency or zero-copy result.
 
 The clock-enable row re-captures its journal after the recovery encode; its
 self-test rejects a report emitted only during that otherwise successful encode.
+It accepts the driver's numeric `clk_on failed: -5` diagnostic as well as the
+symbolic/strerror forms, but not an unrelated `-5` or a different numeric errno.
 
 The optional idle-window experiment is explicit-only:
 `fault-controls-probe.sh --row idle-iommu-fault --driver island`.
