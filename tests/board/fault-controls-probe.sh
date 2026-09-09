@@ -1172,12 +1172,12 @@ st_option_values() {
 }
 
 st_journal_captures() (
-	local row mode capture fail_at got want rc=0 file
+	local row mode capture capture_error_at got want rc=0 file
 	JOURNAL_FN=st_capture
 	st_capture() {
 		capture=$((capture + 1))
 		fx_journal "$@" || return 1
-		((capture == fail_at)) || return 0
+		((capture == capture_error_at)) || return 0
 		case "$mode" in
 		status) return 1 ;;
 		empty-status) : >"$2"; return 1 ;;
@@ -1188,12 +1188,12 @@ st_journal_captures() (
 		esac
 	}
 	st_reset session-alloc
-	capture=0; fail_at=1; mode=error-status
+	capture=0; capture_error_at=1; mode=error-status
 	st_capture 0 "$OUT/hook.journal"; got=$?
 	[[ $got == 1 && $capture == 1 && $(<"$OUT/hook.journal") == 'journal read failed' ]] || return "$FAIL"
 	for row in "${ROWS[@]}" idle-iommu-fault; do
-		for fail_at in 1 2; do
-			[[ $fail_at == 1 || $row == clock-enable || $row == idle-iommu-fault ]] || continue
+		for capture_error_at in 1 2; do
+			[[ $capture_error_at == 1 || $row == clock-enable || $row == idle-iommu-fault ]] || continue
 			for mode in status empty-status error-status error-message missing directory; do
 				st_reset "$row"
 				capture=0
@@ -1206,7 +1206,7 @@ st_journal_captures() (
 				want='journal-unreadable'
 				[[ $mode != *status ]] || want='journal-capture'
 				(drill) >"$ST_WORK/capture-result" 2>&1; got=$?
-				printf 'self-test=journal-capture row=%s capture=%s mode=%s want=1 got=%s\n' "$row" "$fail_at" "$mode" "$got"
+				printf 'self-test=journal-capture row=%s capture=%s mode=%s want=1 got=%s\n' "$row" "$capture_error_at" "$mode" "$got"
 				[[ $got == "$FAIL" ]] || rc=1
 				grep -q "row=$row verdict=FAIL reason=$want" "$ST_WORK/capture-result" || rc=1
 				if grep -Eq 'verdict=(PASS|SURVIVE)' "$ST_WORK/capture-result"; then rc=1; fi
