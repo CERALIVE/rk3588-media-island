@@ -3053,6 +3053,10 @@ failed:
 
 int mpp_dev_remove(struct mpp_dev *mpp)
 {
+	/* Drain counter readers before the client context is freed by devres. */
+	debugfs_remove_recursive(mpp->telemetry_dir);
+	mpp->telemetry_dir = NULL;
+
 	/* The hardware exit path may free resources used by the fault callback. */
 	mpp_iommu_quiesce_fault_handler(mpp->iommu_info);
 

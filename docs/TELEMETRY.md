@@ -75,7 +75,7 @@ trace events carry that scheduler's hardware core mask. `queue_depth` counts
 pending, not running, jobs and is decremented on dispatch, cancellation, and
 shutdown.
 
-Core counters are cumulative for the lifetime of the module object. `busy_ns`
+Core counters are cumulative for the lifetime of their device context. `busy_ns`
 spans successful hardware submission through completion for MPP, and through
 completion, timeout, cancellation, or shutdown for RGA. Core `tasks` counts jobs
 that reached hardware completion, including completion with an IRQ error.
@@ -86,6 +86,14 @@ yet finished; recovery drills require it to return to zero. Session `tasks`
 counts accepted submissions, while session `bytes`
 counts imported MPP buffer extents or RGA command bytes. Reads use atomic
 snapshots; IRQ and worker updates never take a telemetry lock.
+MPP device removal drains per-core debugfs readers and clears the directory
+handle before devres releases that context. Subsequent reads through an already
+open counter file return `-EIO` instead of accessing freed storage. On partial
+telemetry initialization failure, service unwind unregisters clients before
+removing their parent tree. The module-static `rkvenc-test` counters are separate.
+`tests/kunit/mpp_debugfs_test.c` covers stale reads, removal without registration,
+and partial initialization; the telemetry contract checks probe-unwind ordering.
+
 Every per-session file takes a session reference at open and drops it at
 release. Teardown removes the directory before dropping the owning reference,
 so a reader opened before removal sees a valid final snapshot and no reader can

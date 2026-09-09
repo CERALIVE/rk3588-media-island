@@ -3564,10 +3564,10 @@ index 0000000000000000000000000000000000000000..3ebeecc5719d09a0ff436a9d035d6cf9
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_common.c b/drivers/video/rockchip/mpp/mpp_common.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..ee13c0fa4d0505af242e46c9582242c21f82ebac
+index 0000000000000000000000000000000000000000..8b3648dc07596c3f883a1939ebe1734ca493510a
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_common.c
-@@ -0,0 +1,3506 @@
+@@ -0,0 +1,3510 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -6623,6 +6623,10 @@ index 0000000000000000000000000000000000000000..ee13c0fa4d0505af242e46c9582242c2
 +
 +int mpp_dev_remove(struct mpp_dev *mpp)
 +{
++	/* Drain counter readers before the client context is freed by devres. */
++	debugfs_remove_recursive(mpp->telemetry_dir);
++	mpp->telemetry_dir = NULL;
++
 +	/* The hardware exit path may free resources used by the fault callback. */
 +	mpp_iommu_quiesce_fault_handler(mpp->iommu_info);
 +
@@ -26781,10 +26785,10 @@ index 0000000000000000000000000000000000000000..d0058f199bc7ab5d376dd304539ffa6e
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_service.c b/drivers/video/rockchip/mpp/mpp_service.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..5ef8ac8e2e724dba709dec3b8afc4ad37631a444
+index 0000000000000000000000000000000000000000..af66c0b99f01d0616660f8bc39a6ba4d40a56e89
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_service.c
-@@ -0,0 +1,884 @@
+@@ -0,0 +1,880 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -27136,11 +27140,7 @@ index 0000000000000000000000000000000000000000..5ef8ac8e2e724dba709dec3b8afc4ad3
 +	return 0;
 +
 +fail:
-+	debugfs_remove_recursive(srv->telemetry_root);
-+	srv->telemetry_root = NULL;
-+	srv->telemetry_cores = NULL;
-+	srv->telemetry_sessions = NULL;
-+
++	/* Device teardown must remove its child dentries before the root goes. */
 +	return ret;
 +}
 +
@@ -27581,9 +27581,9 @@ index 0000000000000000000000000000000000000000..5ef8ac8e2e724dba709dec3b8afc4ad3
 +	return 0;
 +
 +fail_telemetry:
-+	mpp_telemetry_remove(srv);
 +	for (i = 0; i < MPP_DRIVER_BUTT; i++)
 +		mpp_remove_driver(srv, i);
++	mpp_telemetry_remove(srv);
 +	mpp_procfs_remove(srv);
 +
 +fail_procfs:

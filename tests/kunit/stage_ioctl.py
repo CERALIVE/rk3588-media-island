@@ -117,6 +117,13 @@ def stage(tree: Path) -> None:
         raise DefinitionError("rga_acquire_fence_state", len(enums))
     (tests / "ioctl_rga_types.inc").write_text(enums[0] + "\n")
     emit(tests / "ioctl_mpp_source.inc", ((common, MPP),))
+    emit(tests / "telemetry_mpp_source.inc", (
+        (DRIVERS / "mpp/mpp_service.c", (
+            "mpp_telemetry_atomic64_get", "mpp_debugfs_create_atomic64",
+            "mpp_telemetry_init", "mpp_telemetry_remove",
+        )),
+        (common, ("mpp_dev_remove",)),
+    ))
     emit(tests / "ioctl_rga_source.inc", (
         (DRIVERS / "rga3/rga_drv.c", RGA_DRV),
         (DRIVERS / "rga3/rga_job.c", RGA_JOB),

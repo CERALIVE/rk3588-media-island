@@ -4,6 +4,7 @@ obj-$(CONFIG_ROCKCHIP_MPP_FAULT_KUNIT_TEST) += mpp_fault_injection_test.o
 obj-$(CONFIG_ROCKCHIP_MPP_RECOVERY_KUNIT_TEST) += mpp_recovery_state_test.o
 obj-$(CONFIG_ROCKCHIP_MPP_CAPABILITIES_KUNIT_TEST) += mpp_capabilities_test.o
 obj-$(CONFIG_ROCKCHIP_MPP_TELEMETRY_KUNIT_TEST) += mpp_telemetry_test.o
+obj-$(CONFIG_ROCKCHIP_MPP_DEBUGFS_KUNIT_TEST) += mpp_debugfs_test.o
 obj-$(CONFIG_ROCKCHIP_RGA_FENCE_KUNIT_TEST) += rga_fence_test.o
 obj-$(CONFIG_ROCKCHIP_RGA_REQUEST_KUNIT_TEST) += rga_request_validation_test.o
 obj-$(CONFIG_ROCKCHIP_RGA_FAULT_KUNIT_TEST) += rga_fault_injection_test.o rga_fault_disabled_test.o

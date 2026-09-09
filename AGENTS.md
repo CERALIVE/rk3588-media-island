@@ -100,6 +100,12 @@ rk3588-media-island/
 
 ## KEY FACTS
 
+**MPP core debugfs follows the device lifetime.** `mpp_dev_remove()` drains
+per-core counter readers before devres frees their client context. Telemetry
+probe-error unwind removes clients before their parent debugfs tree; the
+module-static fault counters have a separate lifetime. The carried regression
+suite is `tests/kunit/mpp_debugfs_test.c`; see `docs/TELEMETRY.md`.
+
 **RGA fault injection is independent and default-off.** Four one-shot controls in
 `rga3/rga_test.{c,h}` mirror the MPP atomic/debugfs pattern without changing MPP.
 Timeout and hang suppress START; IOMMU injection calls the real callback without

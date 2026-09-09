@@ -349,11 +349,7 @@ static int mpp_telemetry_init(struct mpp_service *srv)
 	return 0;
 
 fail:
-	debugfs_remove_recursive(srv->telemetry_root);
-	srv->telemetry_root = NULL;
-	srv->telemetry_cores = NULL;
-	srv->telemetry_sessions = NULL;
-
+	/* Device teardown must remove its child dentries before the root goes. */
 	return ret;
 }
 
@@ -794,9 +790,9 @@ static int mpp_service_probe(struct platform_device *pdev)
 	return 0;
 
 fail_telemetry:
-	mpp_telemetry_remove(srv);
 	for (i = 0; i < MPP_DRIVER_BUTT; i++)
 		mpp_remove_driver(srv, i);
+	mpp_telemetry_remove(srv);
 	mpp_procfs_remove(srv);
 
 fail_procfs:
