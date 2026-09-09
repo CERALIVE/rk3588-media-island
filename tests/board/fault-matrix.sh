@@ -41,6 +41,8 @@ readonly FAULT_SEAM_ENTRIES=(
 # The rewrite seam additionally publishes the per-session directory root under
 # the fault root; the island publishes its sessions under the telemetry root.
 readonly FAULT_SEAM_REWRITE_ONLY=(sessions)
+readonly FAULT_SEAM_IDLE=(inject_iommu_fault_idle_ms inject_iommu_fault_idle_consumed
+	inject_iommu_fault_idle_fired inject_iommu_fault_idle_state)
 
 # A journal line matching this set means the kernel's state is no longer
 # trustworthy evidence, so the campaign stops. It is a strict subset of the
@@ -140,6 +142,9 @@ seam_inventory() {
 	local expected actual
 	expected=$({
 		printf '%s\n' "${FAULT_SEAM_ENTRIES[@]}"
+		if [[ -e $FAULT_DEBUG/inject_iommu_fault_idle_ms ]]; then
+			printf '%s\n' "${FAULT_SEAM_IDLE[@]}"
+		fi
 		if [[ $DRIVER == rewrite ]]; then
 			printf '%s\n' "${FAULT_SEAM_REWRITE_ONLY[@]}"
 		fi
