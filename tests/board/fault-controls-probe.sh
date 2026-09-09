@@ -205,7 +205,17 @@ counter_delta() {
 # fault-matrix.sh:227. A sanitizer or lockdep report during an INJECTED failure
 # is the defect this whole drill exists to find.
 journal_bad_count() {
-	grep -Eic 'WARNING:|BUG:|KASAN:|possible recursive locking|inconsistent lock state|Oops' "$1" || true
+	local file=$1 bad rc
+	[[ -f $file && -r $file ]] || return "$FAIL"
+	# Unprefixed reader diagnostics are not kernel records. Do not let an
+	# error-only capture (even with exit 0) masquerade as an empty window.
+	LC_ALL=C grep -Ei '^[[:space:]]*(journalctl:[[:space:]]*)?(journal read failed|Failed to (open|read|seek|iterate|get)|No journal files were found|Hint: You are currently not seeing)' "$file" >/dev/null
+	rc=$?
+	((rc == 1)) || return "$FAIL"
+	bad=$(grep -Eic 'WARNING:|BUG:|KASAN:|possible recursive locking|inconsistent lock state|Oops' "$file")
+	rc=$?
+	((rc <= 1)) && [[ $bad =~ ^[0-9]+$ ]] || return "$FAIL"
+	printf '%s\n' "$bad"
 }
 
 # ---------------------------------------------------------------------------
@@ -225,7 +235,7 @@ board_invalid_ioctl() {
 }
 
 board_journal() {
-	journalctl -k -b --since "@$1" --no-pager >"$2" 2>&1
+	LC_ALL=C journalctl -k -b --since "@$1" --no-pager >"$2" 2>&1
 }
 
 # The write is what carries the errno, so its diagnostic is captured rather than
@@ -409,10 +419,22 @@ assert_fired_once() {
 
 assert_journal_clean() {
 	local row=$1 file=$2 bad
-	bad=$(journal_bad_count "$file")
+	bad=$(journal_bad_count "$file") || {
+		printf 'row=%s verdict=FAIL reason=journal-unreadable journal=%s\n' "$row" "$file"
+		return "$FAIL"
+	}
 	((bad == 0)) && return 0
 	printf 'row=%s verdict=FAIL reason=journal-report count=%s\n' "$row" "$bad"
 	return "$FAIL"
+}
+
+capture_journal() {
+	local row=$1 since=$2 file=$3
+	if ! "$JOURNAL_FN" "$since" "$file"; then
+		printf 'row=%s verdict=FAIL reason=journal-capture journal=%s\n' "$row" "$file"
+		return "$FAIL"
+	fi
+	assert_journal_clean "$row" "$file"
 }
 
 assert_recovery_encode() {
@@ -492,8 +514,7 @@ row_idle_iommu_fault() (
 		return "$FAIL"
 	fi
 	"$IDLE_WAIT_FN" || return "$FAIL"
-	"$JOURNAL_FN" "$since" "$journal" || return "$FAIL"
-	assert_journal_clean idle-iommu-fault "$journal" || return "$FAIL"
+	capture_journal idle-iommu-fault "$since" "$journal" || return "$FAIL"
 	"$IDLE_SNAPSHOT_FN" "$after" || return "$FAIL"
 	consumed=$(counter_delta "$before" "$after" "${IDLE_FILES[1]}") || return "$FAIL"
 	fired=$(counter_delta "$before" "$after" "${IDLE_FILES[2]}") || return "$FAIL"
@@ -534,8 +555,7 @@ row_idle_iommu_fault() (
 			return "$FAIL"
 		fi
 	done
-	"$JOURNAL_FN" "$since" "$journal" || return "$FAIL"
-	assert_journal_clean idle-iommu-fault "$journal" || return "$FAIL"
+	capture_journal idle-iommu-fault "$since" "$journal" || return "$FAIL"
 	printf 'row=idle-iommu-fault verdict=SURVIVE state=%s driver=%s consumed_delta=1 fired_delta=1 errno=0 busy=0 queue_depth=0 recovery=ok journal_bad=0%s\n' "$state" "$DRIVER" "$gaps"
 )
 
@@ -559,8 +579,7 @@ row_session_alloc() {
 	snapshot "$after"
 	assert_fired_once session-alloc "$before" "$after" || return "$FAIL"
 	assert_recovery_encode session-alloc "$OUT/session-alloc.clean" || return "$FAIL"
-	"$JOURNAL_FN" "$since" "$journal"
-	assert_journal_clean session-alloc "$journal" || return "$FAIL"
+	capture_journal session-alloc "$since" "$journal" || return "$FAIL"
 
 	printf 'row=session-alloc verdict=PASS driver=%s errno=%s counter=%s_consumed delta=1 recovery=ok journal_bad=0%s\n' \
 		"$DRIVER" "${ERRNO[session-alloc]}" "${KNOB[session-alloc]}" "$(gap_suffix "$after")"
@@ -584,7 +603,7 @@ row_clock_enable() {
 		return "$FAIL"
 	fi
 
-	"$JOURNAL_FN" "$since" "$journal"
+	capture_journal clock-enable "$since" "$journal" || return "$FAIL"
 	if ! grep -Eq '[-]EIO|Input/output error|clk_on failed: -5([[:space:]]|$)' "$journal"; then
 		printf 'row=clock-enable verdict=FAIL reason=no-injected-errno journal=%s\n' "$journal"
 		return "$FAIL"
@@ -614,8 +633,7 @@ row_clock_enable() {
 		busy=gap
 	fi
 	# Recovery can itself emit a report; the errno capture predates that encode.
-	"$JOURNAL_FN" "$since" "$journal" || return "$FAIL"
-	assert_journal_clean clock-enable "$journal" || return "$FAIL"
+	capture_journal clock-enable "$since" "$journal" || return "$FAIL"
 
 	printf 'row=clock-enable verdict=PASS driver=%s errno=%s counter=%s_consumed delta=1 reset_delta=%s busy=%s recovery=ok journal_bad=0%s\n' \
 		"$DRIVER" "${ERRNO[clock-enable]}" "${KNOB[clock-enable]}" "$reset_delta" "$busy" "$(gap_suffix "$after")"
@@ -689,8 +707,7 @@ row_probe_time() {
 		return "$FAIL"
 	fi
 	assert_recovery_encode "$row" "$OUT/$row.clean" || return "$FAIL"
-	"$JOURNAL_FN" "$since" "$journal"
-	assert_journal_clean "$row" "$journal" || return "$FAIL"
+	capture_journal "$row" "$since" "$journal" || return "$FAIL"
 
 	snapshot "$after"
 	printf 'row=%s verdict=PASS driver=%s errno=%s counter=%s_consumed delta=1 dev=%s recovery=ok journal_bad=0%s\n' \
@@ -1154,6 +1171,71 @@ st_option_values() {
 	[[ $got == "$GATED" ]]
 }
 
+st_journal_captures() (
+	local row mode capture fail_at got want rc=0 file
+	JOURNAL_FN=st_capture
+	st_capture() {
+		capture=$((capture + 1))
+		fx_journal "$@" || return 1
+		((capture == fail_at)) || return 0
+		case "$mode" in
+		status) return 1 ;;
+		empty-status) : >"$2"; return 1 ;;
+		error-status) printf 'journal read failed\n' >"$2"; return 1 ;;
+		error-message) printf 'journal read failed\n' >>"$2" ;;
+		missing) rm "$2" ;;
+		directory) rm "$2"; mkdir "$2" ;;
+		esac
+	}
+	st_reset session-alloc
+	capture=0; fail_at=1; mode=error-status
+	st_capture 0 "$OUT/hook.journal"; got=$?
+	[[ $got == 1 && $capture == 1 && $(<"$OUT/hook.journal") == 'journal read failed' ]] || return "$FAIL"
+	for row in "${ROWS[@]}" idle-iommu-fault; do
+		for fail_at in 1 2; do
+			[[ $fail_at == 1 || $row == clock-enable || $row == idle-iommu-fault ]] || continue
+			for mode in status empty-status error-status error-message missing directory; do
+				st_reset "$row"
+				capture=0
+				if [[ $row == idle-iommu-fault ]]; then
+					IDLE_SNAPSHOT_FN=fx_idle_snapshot; IDLE_WAIT_FN=fx_idle_wait
+					IDLE_QUIET_FN=true; ENCODE_FN=fx_idle_encode
+					FX_IDLE_MODE=once; FX_IDLE_STATE=suspended; FX_IDLE_PENDING=0
+					for file in "${IDLE_FILES[@]}"; do printf '0\n' >"$FAULT_DEBUG/$file"; done
+				fi
+				want='journal-unreadable'
+				[[ $mode != *status ]] || want='journal-capture'
+				(drill) >"$ST_WORK/capture-result" 2>&1; got=$?
+				printf 'self-test=journal-capture row=%s capture=%s mode=%s want=1 got=%s\n' "$row" "$fail_at" "$mode" "$got"
+				[[ $got == "$FAIL" ]] || rc=1
+				grep -q "row=$row verdict=FAIL reason=$want" "$ST_WORK/capture-result" || rc=1
+				if grep -Eq 'verdict=(PASS|SURVIVE)' "$ST_WORK/capture-result"; then rc=1; fi
+			done
+		done
+	done
+	return "$rc"
+)
+
+st_journal_reader() (
+	local text got want rc=0
+	for text in '' '-- No entries --' 'kernel: journal read failed during synthetic operation' \
+		'journal read failed' 'Failed to open journal: Permission denied' \
+		'No journal files were found.' 'Hint: You are currently not seeing messages from other users and the system.'; do
+		printf '%s\n' "$text" >"$ST_WORK/reader.journal"
+		case "$text" in ''|'-- No entries --'|kernel:*) want=0 ;; *) want=1 ;; esac
+		assert_journal_clean synthetic "$ST_WORK/reader.journal" >"$ST_WORK/reader-result"; got=$?
+		printf 'self-test=journal-reader want=%s got=%s text=%s\n' "$want" "$got" "${text:-EMPTY}"
+		[[ $got == "$want" ]] || rc=1
+	done
+	# A read error after the file-existence check must not become grep's clean
+	# no-match result (1); grep uses 2 for an actual failure.
+	grep() { return 2; }
+	assert_journal_clean synthetic "$ST_WORK/reader.journal" >"$ST_WORK/reader-result"; got=$?
+	printf 'self-test=journal-reader grep-error want=1 got=%s\n' "$got"
+	[[ $got == "$FAIL" ]] || rc=1
+	return "$rc"
+)
+
 self_test() {
 	local row rc=0 actual expected
 	ST_WORK=$(mktemp -d) || return "$FAIL"
@@ -1162,6 +1244,8 @@ self_test() {
 	st_rebind_cleanup || rc="$FAIL"
 	st_clock_errnos || rc="$FAIL"
 	st_option_values || rc="$FAIL"
+	st_journal_captures || rc="$FAIL"
+	st_journal_reader || rc="$FAIL"
 	st_fixture_one_shot
 
 	for row in "${ROWS[@]}"; do
