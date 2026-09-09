@@ -159,6 +159,13 @@ self-test rejects a report emitted only during that otherwise successful encode.
 It accepts the driver's numeric `clk_on failed: -5` diagnostic as well as the
 symbolic/strerror forms, but not an unrelated `-5` or a different numeric errno.
 
+Every controls-probe journal capture checks the reader's exit status before
+scoring. Missing/unreadable output and unprefixed reader-error diagnostics fail
+closed; they never count as `journal_bad=0`. Its host fixtures exercise all eight
+capture points (including both clock and idle captures) with nonzero status,
+partial/empty output, reader errors, missing files and non-file output, while
+accepting genuinely empty windows and ordinary kernel records.
+
 The optional idle-window experiment is explicit-only:
 `fault-controls-probe.sh --row idle-iommu-fault --driver island`.
 It is not part of that probe's five-control `--row all` sweep and never enters
