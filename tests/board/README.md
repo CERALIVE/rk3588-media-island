@@ -108,6 +108,12 @@ Both fault drills reject a value-taking option with no following argument with
 usage exit `2`, before board admission. Their self-tests exercise every such
 option under a timeout, and confirm valid arguments still reach the board gate.
 
+The matrix opens each journal window before healthy-encode startup and refreshes
+it after cleanup, even for failed startup or GATED stimuli. A fatal report stops
+the campaign regardless of the stimulus verdict. Host fixtures run the actual
+startup/scoring/cleanup sequence with reports at startup, stimulus and cleanup;
+clean GATED rows remain gated, not fatal.
+
 The clock-enable row re-captures its journal after the recovery encode; its
 self-test rejects a report emitted only during that otherwise successful encode.
 It accepts the driver's numeric `clk_on failed: -5` diagnostic as well as the

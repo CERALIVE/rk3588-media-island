@@ -565,13 +565,19 @@ score_row() {
 fatal_check() {
 	local name=$1 since=$2 journal
 	journal="$OUT/$name.journal"
-	[[ -f $journal ]] || journalctl -k -b --since "@$since" --no-pager >"$journal" 2>/dev/null
+	# Always refresh after cleanup: score_row may have captured an earlier window.
+	if ! journalctl -k -b --since "@$since" --no-pager >"$journal" 2>&1; then
+		SCORE_REASON='journal-capture'
+		FATAL=$name
+		return "$FAIL"
+	fi
 	if grep -Eiq "$FATAL_SIGNATURES" "$journal" 2>/dev/null; then
+		SCORE_REASON='journal-fatal'
 		FATAL=$name
 	elif [[ $SCORE_REASON == healthy-wedge ]]; then
 		FATAL=$name
 	fi
-	return 0
+	[[ -z $FATAL ]]
 }
 
 skip_row_after_fatal() {
@@ -584,14 +590,52 @@ summary_line() {
 }
 
 run_row() {
-	local name=$1 baseline=$2 since rc=0
+	local name=$1 baseline=$2 since=$ROW_SINCE rc=0
 	local before="$OUT/$name.before" after="$OUT/$name.after"
 	SCORE_REASON=
-	snapshot "$before"; since=$(date +%s); ROW_SINCE=$since
+	snapshot "$before"
 	stimulate "$name" || rc=$?
 	if ((rc == GATED)); then printf 'row=%s verdict=GATED reason=stimulus-unavailable\n' "$name"; return "$GATED"; fi
 	((rc == 0)) || { printf 'row=%s verdict=FAIL reason=stimulus\n' "$name"; return "$FAIL"; }
 	score_row "$name" "$baseline" "$before" "$after" "$since" || { printf 'row=%s verdict=FAIL reason=%s\n' "$name" "${SCORE_REASON:-recovery-assertion}"; return "$FAIL"; }
+}
+
+# The admitted campaign, separate from hardware admission so fixtures run the
+# same startup, scoring and cleanup order as a board.
+matrix_rows() {
+	local baseline name failures=0 gated=0 rc started
+	for name in "${ROWS[@]}"; do
+		[[ $ROW == all || $ROW == "$name" ]] || continue
+		if [[ -n $FATAL ]]; then
+			skip_row_after_fatal "$name"; gated=$((gated + 1)); continue
+		fi
+		IDLE_BASELINE="$OUT/$name.idle-baseline"
+		snapshot "$IDLE_BASELINE" || return "$GATED"
+		ROW_SINCE=$(date +%s)
+		SCORE_REASON=
+		started=0
+		if healthy_start "$name"; then
+			started=1
+			baseline=$(sample_fps)
+			run_row "$name" "$baseline"; rc=$?
+		else
+			printf 'row=%s verdict=FAIL reason=healthy-start\n' "$name"
+			rc=$FAIL
+		fi
+		if ! healthy_stop; then
+			SCORE_REASON=healthy-wedge
+			((rc == FAIL)) || { printf 'row=%s verdict=FAIL reason=healthy-wedge\n' "$name"; rc=$FAIL; }
+			FATAL=$name
+		fi
+		if ! fatal_check "$name" "$ROW_SINCE"; then
+			((rc == FAIL)) || printf 'row=%s verdict=FAIL reason=%s\n' "$name" "$SCORE_REASON"
+			rc=$FAIL
+		fi
+		((started)) || return "$FAIL"
+		case $rc in 0) ;; "$GATED") ((gated++));; *) ((failures++));; esac
+	done
+	summary_line "$failures" "$gated" "${baseline:-0}" "$OUT"
+	((failures == 0 && gated == 0))
 }
 
 # ---------------------------------------------------------------------------
@@ -812,7 +856,7 @@ st_wedge_unreapable() {
 
 # st_fatal_stop — a KASAN line on row k stops the campaign at k; a benign
 # window (the shape a 77/GATED row leaves behind) never sets FATAL.
-st_fatal_stop() {
+st_fatal_stop() (
 	local scratch=$1 saved_out=$OUT saved_fatal=$FATAL saved_reason=$SCORE_REASON
 	local row=hardware-hang next=reset-failure rc=0 emitted lines
 
@@ -820,8 +864,9 @@ st_fatal_stop() {
 	mkdir -p "$OUT"
 	FATAL=
 	SCORE_REASON=
+	journalctl() { cat "$scratch/fatal-source"; }
 
-	printf 'Sep 04 03:34:26 ceralive kernel: mpp_rkvenc2 fdbd0000.rkvenc-core: reset done\n' >"$OUT/$next.journal"
+	printf 'Sep 04 03:34:26 ceralive kernel: mpp_rkvenc2 fdbd0000.rkvenc-core: reset done\n' >"$scratch/fatal-source"
 	fatal_check "$next" 0
 	if [[ -n $FATAL ]]; then
 		printf 'self-test=fatal-stop FAIL reason=benign-journal-set-fatal=%s\n' "$FATAL"
@@ -830,7 +875,7 @@ st_fatal_stop() {
 
 	{ printf 'Sep 04 03:34:26 ceralive kernel: rk_vcodec: task 4995 processing time out!\n'
 	  printf 'Sep 04 03:34:26 ceralive kernel: KASAN: slab-out-of-bounds in rkvenc_irq+0x40/0x300\n'
-	} >"$OUT/$row.journal"
+	} >"$scratch/fatal-source"
 	fatal_check "$row" 0
 	if [[ $FATAL != "$row" ]]; then
 		printf 'self-test=fatal-stop FAIL reason=kasan-journal-did-not-set-fatal got=%s\n' "${FATAL:-<none>}"
@@ -860,7 +905,7 @@ st_fatal_stop() {
 	SCORE_REASON=$saved_reason
 	((rc == 0)) || return "$FAIL"
 	printf 'self-test=fatal-stop PASS kasan-row=%s stopped=%s benign-window-clean summary-fatal-field-ok\n' "$row" "$next"
-}
+)
 
 st_option_values() {
 	local option got
@@ -875,6 +920,77 @@ st_option_values() {
 	printf 'self-test=present-option-values want=77 got=%s\n' "$got"
 	[[ $got == "$GATED" ]]
 }
+
+st_journal_windows() (
+	local scratch=$1 fixtures=$2 mode got rc=0 now report_at stimulus_rc
+	local row=hardware-hang expected_fatal journal_calls stopped
+	ROW=$row
+	PROBE_MPP=true
+	# Only board operations and the clock are substituted; the campaign,
+	# run_row, score_row and fatal_check remain the production functions.
+	date() { printf '%s\n' "$now"; }
+	sleep() { :; }
+	snapshot() { cp "$fixtures/$row.${1##*.}" "$1"; }
+	sample_fps() { printf '30\n'; }
+	healthy_start() {
+		HEALTHY_PID=$$
+		[[ $mode != startup* ]] || report_at=$now
+		now=102
+		[[ $mode != startup-failed ]]
+	}
+	stimulate() {
+		[[ $mode != gated-report && $mode != failed-report ]] || report_at=$now
+		return "$stimulus_rc"
+	}
+	healthy_stop() {
+		stopped=$((stopped + 1))
+		if [[ $mode == cleanup-gated || $mode == cleanup-failed || ( $mode == cleanup-scored && $stopped == 2 ) ]]; then
+			report_at=103
+		fi
+		return 0
+	}
+	gst-launch-1.0() { return 0; }
+	journalctl() {
+		local since
+		while (($#)); do
+			if [[ $1 == --since ]]; then since=${2#@}; break; fi
+			shift
+		done
+		journal_calls=$((journal_calls + 1))
+		if ((report_at >= since)); then
+			printf 'kernel: KASAN: synthetic report at %s\n' "$report_at"
+		fi
+		return 0
+	}
+	for mode in startup-report startup-failed gated-report failed-report cleanup-gated cleanup-failed cleanup-scored clean-gated clean-failed clean-scored; do
+		OUT="$scratch/window-$mode"
+		mkdir -p "$OUT"
+		FATAL=; SCORE_REASON=; ROW_SINCE=0
+		now=100; report_at=-1; journal_calls=0; stopped=0
+		stimulus_rc=0; expected_fatal=$row
+		case "$mode" in
+		*gated*) stimulus_rc=$GATED ;;
+		*failed*|startup-report) stimulus_rc=$FAIL ;;
+		esac
+		[[ $mode != clean-* ]] || expected_fatal=
+		matrix_rows >"$OUT/result" 2>&1; got=$?
+		printf 'self-test=journal-window mode=%s exit=%s ROW_SINCE=%s FATAL=%s captures=%s stopped=%s\n' \
+			"$mode" "$got" "$ROW_SINCE" "${FATAL:-EMPTY}" "$journal_calls" "$stopped"
+		if [[ $FATAL != "$expected_fatal" || $ROW_SINCE != 100 ]] || ((stopped == 0 || journal_calls == 0)); then
+			rc=1
+		fi
+		if [[ $mode == clean-scored ]]; then
+			[[ $got == 0 ]] || rc=1
+			grep -q 'verdict=SURVIVE' "$OUT/result" || rc=1
+		else
+			[[ $got == "$FAIL" ]] || rc=1
+		fi
+		if [[ $mode == clean-gated ]]; then
+			grep -q 'verdict=GATED reason=stimulus-unavailable' "$OUT/result" || rc=1
+		fi
+	done
+	return "$rc"
+)
 
 self_test() {
 	local expected fixtures scratch rc=0 island rewrite
@@ -909,6 +1025,7 @@ self_test() {
 	st_wedge_unreapable "$scratch/wedge-unreapable.log" || rc=1
 	st_fatal_stop "$scratch" || rc=1
 	st_option_values || rc=1
+	st_journal_windows "$scratch" "$rewrite" || rc=1
 
 	rm -rf "$scratch"
 	((rc == 0)) || return "$FAIL"
@@ -916,7 +1033,7 @@ self_test() {
 }
 
 main() {
-	local self=0 baseline name failures=0 gated=0 rc
+	local self=0
 	while (($#)); do case "$1" in
 		--out|--row|--probe-mpp|--invalid-ioctl|--driver|--expect-bits)
 			(($# >= 2)) || { usage; return "$USAGE"; }
@@ -939,25 +1056,7 @@ main() {
 	OUT=${OUT:-/tmp/fault-matrix-$(date -u +%Y%m%dT%H%M%SZ)}; mkdir -p "$OUT"
 	{ printf 'board='; tr -d '\0' </proc/device-tree/model; printf '\nkernel='; uname -a; printf 'driver=%s\n' "$DRIVER"; } >"$OUT/identity.txt"
 	trap healthy_stop EXIT
-	for name in "${ROWS[@]}"; do
-		[[ $ROW == all || $ROW == "$name" ]] || continue
-		if [[ -n $FATAL ]]; then
-			skip_row_after_fatal "$name"; gated=$((gated + 1)); continue
-		fi
-		IDLE_BASELINE="$OUT/$name.idle-baseline"
-		snapshot "$IDLE_BASELINE" || return "$GATED"
-		healthy_start "$name" || return "$FAIL"
-		baseline=$(sample_fps)
-		run_row "$name" "$baseline"; rc=$?
-		((rc == GATED)) || fatal_check "$name" "$ROW_SINCE"
-		if ! healthy_stop; then
-			((rc == FAIL)) || { printf 'row=%s verdict=FAIL reason=healthy-wedge\n' "$name"; rc=$FAIL; }
-			FATAL=$name
-		fi
-		case $rc in 0) ;; "$GATED") ((gated++));; *) ((failures++));; esac
-	done
-	summary_line "$failures" "$gated" "${baseline:-0}" "$OUT"
-	((failures == 0 && gated == 0))
+	matrix_rows
 }
 
 main "$@"
