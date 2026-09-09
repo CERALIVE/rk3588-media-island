@@ -216,19 +216,28 @@ to classify it, not to invent a new spelling.
 
 | literal | means |
 |---|---|
-| `PASS` | the row ran on the named board and every assertion in `score_row` held |
+| `SURVIVE` | the actual pass literal emitted by `fault-matrix.sh` and the idle-window probe: the row ran on the named board and every applicable row assertion held; any unavailable metric remains explicitly labelled as a gap |
+| `PASS` | the equivalent pass literal emitted by the five-control probe: the row ran on the named board and every applicable row assertion held |
 | `PASS(gaps: <metric,…>)` | the row ran and every assertion that could be evaluated held, but the listed metrics were unavailable on this driver profile and were therefore not asserted |
 | `FAIL(<reason>)` | the row ran and an assertion did not hold; `<reason>` names the assertion, e.g. `FAIL(reset-delta)` |
 | `GATED(<reason>)` | the row could not run because a precondition was unmet; exit `77`, and **never** a pass |
+| `INCONCLUSIVE` | terminal state for an attempted row whose stimulus outcome cannot be determined from the available evidence; neither a pass nor proof of a kernel failure |
 | `GAP:no-consumer-row` | the control is implemented but no harness row consumes it on this profile |
 | `GAP:no-<metric>-counter` | the profile does not expose the counter or metric the assertion needs, e.g. `GAP:no-resets-counter` |
 | `GAP:not-implemented` | the control does not exist on this driver profile at all |
+| `GAP:lockdep-disabled-at-admission` | lockdep was already disabled when the drill checked admission, so the row could not run with the required locking diagnostics |
+| `GAP:uapi-or-userspace` | a UAPI or userspace mismatch prevented the row from exercising the intended stimulus; the available evidence does not distinguish those causes |
 | `DID-NOT-BOOT (<journal excerpt>)` | the candidate kernel did not reach a usable state; the excerpt is pasted verbatim from the pre-reboot or recovered journal |
 | `NOT-IN-MATRIX` | the control is real and proven elsewhere, but `fault-matrix.sh` structurally never arms it — see T3(i) |
 | `SKIPPED(<reason>)` | the work behind the cell was deliberately not undertaken, with the gating condition named |
 
 Two rules ride with the vocabulary. A `77` is never counted as a pass, and a
 self-test result is never written into a board cell.
+
+Raw harness output spells `FAIL(<reason>)` and `GATED(<reason>)` as `verdict=FAIL`
+or `verdict=GATED` with a separate `reason=<reason>` field. A ledger may preserve
+that spelling, with the reason in the same cell or accompanying evidence; it is
+the same classified verdict, not a reason-free failure or gate.
 
 ---
 
