@@ -102,3 +102,21 @@ six-package set and service states matched preflight; the lock was released and
 the final wrapper check was idle, exit 0. No reboot, configuration write, unit
 control or fault stimulus occurred. No board-drill exit code, counter delta,
 candidate tuple, restoration-drill PASS or B8 tick is claimed.
+
+### RUN-3 — B8 Rock 5B+ RAUC signature refusal (2026-09-09 UTC)
+
+| Board | Observed kernel / intended candidate | Island release intended | Leg | Verdict | Ledger |
+|---|---|---|---|---|---|
+| Rock 5B+ | `7.2.0-ceralive-rk3588` / unbooted `linux-image-7.2.0-ceralive-rk3588-test`, image `3333237dbd769401b90d483adf51707831c42c97` | `v2026.9.2` (candidate installation rejected) | B8 | `SKIPPED(rauc-signature-verification)` — 0/16 matrix rows and 0/5 control rows executed | [Rock phase-4 RUN-3](https://github.com/CERALIVE/ceralive/blob/docs/media-island-ledger-evidence/docs/media-island/ledger/rock-5b-plus/phase4.md#run-3--authorized-staging-rauc-signature-refusal-2026-09-09-utc) |
+
+Owner-authorized persistent staging resolved RUN-2's capacity blocker. The board
+bundle SHA-256 matched `7efb464df727f0b9bc1b718ab9b177049c698f667ce1e4674098e7d4714aff4a`,
+but the real updater exited 1: `signature verification failed: Verify error:
+unable to get local issuer certificate`. No trust change or reboot followed.
+The mandatory failure path restored and compared `update.conf`, removed the
+staged bundle and empty directory, and restarted the stopped cerastream unit.
+Final locked assertions proved production A booted/activated/good, B good,
+budgets 3/3, byte-identical detailed RAUC status, exact receipt packages and
+original service states. The final wrapper check returned idle, exit 0; the
+lock-holder then exited normally. Both host self-tests exited 0, but no candidate
+tuple, fault stimulus, counter delta, recovery-boot proof or B8 tick was earned.
