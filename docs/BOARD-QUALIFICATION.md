@@ -70,3 +70,18 @@ directly comparable to a recorded baseline rather than to nothing.
 
 Empty. Each completed run appends: date, board, kernel build, island release
 tag, per-leg verdict, and a link to the retained raw transcript.
+
+### RUN-1 — B8 Rock 5B+ admission stopped (2026-09-09 UTC)
+
+| Board | Observed kernel / intended candidate | Island release intended | Leg | Verdict | Ledger |
+|---|---|---|---|---|---|
+| Rock 5B+ | `7.2.0-ceralive-rk3588` / unbooted `linux-image-7.2.0-ceralive-rk3588-test`, image `3333237dbd769401b90d483adf51707831c42c97` | `v2026.9.2` (candidate not installed) | B8 | `SKIPPED(host-harness-admission)` — 0/16 matrix rows and 0/5 control rows executed | [Rock phase-4 admission receipt](https://github.com/CERALIVE/ceralive/blob/docs/media-island-ledger-evidence/docs/media-island/ledger/rock-5b-plus/phase4.md) |
+
+This is an attempted admission, not a completed silicon run. Both drill host
+self-tests exited 0, but the prescribed invalid-ioctl builder refused the
+retained kernel tree with `tree has fewer than 31 commits above its base`
+(exit 2). No historical binary was silently substituted and no validation was
+bypassed. The board remained on protected production A, good/2, with B good/3;
+final bundle identity, package set and service states matched preflight, and the
+final board-wrapper check reported idle (exit 0). No install, reboot, fault,
+unit-control or config change occurred. No B8 tick or recovery PASS is earned.
