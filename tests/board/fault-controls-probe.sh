@@ -585,7 +585,7 @@ row_clock_enable() {
 	fi
 
 	"$JOURNAL_FN" "$since" "$journal"
-	if ! grep -Eq '[-]EIO|Input/output error' "$journal"; then
+	if ! grep -Eq '[-]EIO|Input/output error|clk_on failed: -5([[:space:]]|$)' "$journal"; then
 		printf 'row=clock-enable verdict=FAIL reason=no-injected-errno journal=%s\n' "$journal"
 		return "$FAIL"
 	fi
@@ -790,6 +790,7 @@ drill() {
 FX_MODE=once
 FX_ENCODE_RECOVERY=ok
 FX_CLOCK_JOURNAL=noisy
+FX_CLOCK_MESSAGE=
 FX_BUMP_RESETS=0
 FX_BIND_ERRNO=
 FX_CAPABILITY=ok
@@ -893,7 +894,7 @@ fx_encode() {
 	if fx_consume "${KNOB[clock-enable]}"; then
 		printf 'ERROR: from element pipeline: Internal data stream error.\n' >"$log"
 		[[ $FX_CLOCK_JOURNAL == silent ]] || \
-			fx_journal_append 'rk-vcodec deadbee0.rkvenc-core: clk_on failed -5 (Input/output error)'
+			fx_journal_append "${FX_CLOCK_MESSAGE:-mpp_rkvenc2 deadbee0.rkvenc-core: clk_on failed: -5}"
 		if [[ $FX_BUMP_RESETS == 1 ]]; then
 			for core in "$MPP_DEBUG"/cores/*; do
 				printf '%s\n' "$(( $(<"$core/resets") + 1 ))" >"$core/resets"
@@ -969,6 +970,7 @@ st_reset() {
 	FX_MODE=once
 	FX_ENCODE_RECOVERY=ok
 	FX_CLOCK_JOURNAL=noisy
+	FX_CLOCK_MESSAGE=
 	FX_BUMP_RESETS=0
 	FX_BIND_ERRNO=
 	FX_CAPABILITY=ok
@@ -993,6 +995,28 @@ st_leg() {
 	fi
 	ST_LEGS+="leg=$name want=$want got=$got token=$token_state verdict=$verdict"$'\n'
 }
+
+st_clock_errnos() (
+	local entry want got
+	for entry in \
+		'0|mpp_rkvenc2 deadbee0.rkvenc-core: clk_on failed: -5' \
+		'0|mpp_rkvenc2 deadbee0.rkvenc-core: clk_on failed: -5 (EIO)' \
+		'0|rk-vcodec deadbee0.rkvenc-core: clk_on failed -EIO' \
+		'0|rk-vcodec deadbee0.rkvenc-core: clk_on failed -5 (Input/output error)' \
+		'1|mpp_rkvenc2 deadbee0.rkvenc-core: clk_on failed: -50' \
+		'1|mpp_rkvenc2 deadbee0.rkvenc-core: clk_on failed: -5suffix' \
+		'1|unrelated operation failed: -5'; do
+		st_reset clock-enable
+		want=${entry%%|*}
+		FX_CLOCK_MESSAGE=${entry#*|}
+		row_clock_enable >"$ST_WORK/clock-errno.log"; got=$?
+		printf 'self-test=clock-errno want=%s got=%s message=%s\n' "$want" "$got" "$FX_CLOCK_MESSAGE"
+		[[ $got == "$want" ]] || return "$FAIL"
+		if [[ $want == 1 ]]; then
+			grep -q 'reason=no-injected-errno' "$ST_WORK/clock-errno.log" || return "$FAIL"
+		fi
+	done
+)
 
 st_rebind_cleanup() (
 	local got dev=deadbee0.rkvenc-core
@@ -1122,6 +1146,7 @@ self_test() {
 	st_install_hooks
 
 	st_rebind_cleanup || rc="$FAIL"
+	st_clock_errnos || rc="$FAIL"
 	st_fixture_one_shot
 
 	for row in "${ROWS[@]}"; do
