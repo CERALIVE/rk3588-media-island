@@ -94,6 +94,14 @@ rk3588-media-island/
 
 ## KEY FACTS
 
+**Idle IOMMU instrumentation is test-only and not board-qualified.** The optional
+`inject_iommu_fault_idle_ms` control owns delayed work in each encoder's device
+context, serializes enqueue with disable, cancels before teardown/system sleep,
+and records PM status at callback time without resuming the device. Its probe is
+explicitly `fault-controls-probe.sh --row idle-iommu-fault`, never a matrix row
+or part of the five-control `--row all` sweep. See `docs/FAULT-CAMPAIGN.md` for
+the direct-callback boundary and current proof limits.
+
 **`kernel-pin.env` is a MIRROR, not a decision.** Its four `KERNEL_*` values are
 byte-identical to `rk3588-kernel-patches/kernel-pin.env`, and a `pin-equality` CI
 job proves it against the consumer at its pinned commit. Bumping the kernel is a

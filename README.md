@@ -149,6 +149,14 @@ configuration the device does not run proves the wrong thing.
 
 ## Testing
 
+The test seam also has an optional idle-window IOMMU control. It schedules one
+device-owned delayed callback after a selected encode completion, records the
+observed runtime-PM state, and cancels before resource withdrawal. The dedicated
+`tests/board/fault-controls-probe.sh --row idle-iommu-fault` probe is separate
+from the 16-row matrix and requires its own authorized idle campaign. Source and
+host tests are not a board-qualification result; see
+[`docs/FAULT-CAMPAIGN.md`](docs/FAULT-CAMPAIGN.md).
+
 The MPP code-quality sweep and its per-finding dispositions are recorded in
 [`docs/HARDENING-FINDINGS.md`](docs/HARDENING-FINDINGS.md). Instrumented UML/QEMU
 KUnit covers production helpers; full RK3588 driver runtime coverage still needs

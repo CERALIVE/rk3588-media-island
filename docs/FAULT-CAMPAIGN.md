@@ -242,3 +242,45 @@ remaining lifecycle rows.
 No board was accessed for this change. The cold-boot per-codec encode and
 runtime fault campaign remain hardware-gated; their later transcripts must name
 the board, kernel build, and island revision.
+# Idle-window IOMMU instrumentation [PARTIAL]
+
+`inject_iommu_fault_idle_ms` is a test-only 0600 atomic one-shot, default zero.
+The next selected successful encoder result consumes its positive millisecond
+value and schedules device-owned delayed work. The three 0400 observations are
+`inject_iommu_fault_idle_consumed`, `inject_iommu_fault_idle_fired` and
+`inject_iommu_fault_idle_state` (`none`, `suspended`, `not-suspended`). Consuming
+a delay is not evidence that its callback fired. Values are cumulative deltas,
+not gauges that should return to zero.
+
+The worker rejects active-task/clock ownership, serializes against a new
+clock-on, samples `runtime_status` under the device PM lock, releases that lock,
+and calls the real IOMMU handler with its domain and matching provider identity.
+It never resumes the device. Normal provider callback withdrawal is deliberately
+bypassed: this tests the callback's local guard, not ordinary idle delivery and
+not the cause of a board hang. A `not-suspended` sample is recorded honestly,
+not called a suspended-device result. No reset delta is required.
+
+Enqueue holds the same spinlock that disables arming; cancellation runs outside
+that lock. Remove, shutdown, system-sleep preparation, shared-domain withdrawal,
+and module exit drain the owned work before withdrawing its resources. Runtime
+suspend does not cancel it. Work initialization occurs only after fallible probe
+setup, so there is no post-initialization probe-error withdrawal path. The
+rewrite overlay uses device-owned allocated work storage to avoid enlarging
+the upstream stack-based KUnit fixture past its existing compiler limit.
+
+Run the explicit-only `fault-controls-probe.sh --row idle-iommu-fault` under the
+board campaign lock: no competing encode; arm 3000 ms; one 30-buffer encode;
+six seconds untouched; consumed/fired +1, recorded state, callback errno 0 and
+clean journal; a second encode, then unchanged cumulative counts and idle
+gauges. Rewrite IOMMU-map telemetry remains `GAP:no-sessions-summary`. Missing
+control means `GATED reason=no-idle-control`; a partial four-file block fails.
+The matrix's row set and self-test remain unchanged; only its optional inventory
+recognition changes. The five-control `--row all` probe sweep does not implicitly
+launch this idle-only experiment after probe-time detach/reattach rows.
+
+KUnit covers one-shot scheduling, PM sampling at execution rather than arming,
+disable refusal, cancellation before withdrawal and a forced enqueue/disable
+interleaving. The race requires two CPUs and is skipped, not passed, on UML.
+The matching rewrite suite uses `run-kunit.sh TREE BUILD rk-mpp-rewrite-fault
+'-smp 2'` (two CPUs are also the wrapper default). No live idle-fault campaign
+or completed test-candidate image is claimed by these source changes.

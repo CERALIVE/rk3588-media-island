@@ -22429,10 +22429,10 @@ index 0000000000000000000000000000000000000000..039752db69c71b3befeade39a91d81bf
 +};
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc2.c b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1b1e3352c
+index 0000000000000000000000000000000000000000..0c7c998c9157766178909ffb5297c4ce9c5cdf36
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
-@@ -0,0 +1,3845 @@
+@@ -0,0 +1,3995 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
@@ -22756,6 +22756,11 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +	struct mpp_clk_info hclk_info;
 +	struct mpp_clk_info core_clk_info;
 +	bool core_clk_enabled;
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++	struct mpp_fault_idle fault_idle;
++	struct mutex fault_idle_clock_lock;
++	bool fault_idle_initialized;
++#endif
 +	u32 default_max_load;
 +#ifdef CONFIG_ROCKCHIP_MPP_PROC_FS
 +	struct proc_dir_entry *procfs;
@@ -22800,6 +22805,62 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +};
 +
 +static int rkvenc2_free_rcbbuf(struct platform_device *pdev, struct rkvenc_dev *enc);
++
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++static void rkvenc_fault_idle_fire(struct mpp_fault_idle *idle)
++{
++	struct rkvenc_dev *enc = container_of(idle, struct rkvenc_dev, fault_idle);
++	struct mpp_dev *mpp = &enc->mpp;
++	unsigned long flags;
++	bool busy, suspended;
++	int ret;
++
++	/* Exclude a new clock-on between the idle check and the direct callback. */
++	mutex_lock(&enc->fault_idle_clock_lock);
++	spin_lock_irqsave(&mpp->queue->running_lock, flags);
++	busy = mpp->cur_task != NULL;
++	spin_unlock_irqrestore(&mpp->queue->running_lock, flags);
++	if (busy || enc->core_clk_enabled || !mpp->fault_handler ||
++	    !mpp->iommu_info || !mpp->iommu_info->domain || !mpp->iommu_info->pdev)
++		goto out;
++	suspended = mpp_fault_idle_suspended(mpp->dev);
++	dev_info(mpp->dev, "idle-iommu-fault state=%s busy=0 clocks=off entering\n",
++		 suspended ? "suspended" : "not-suspended");
++	ret = mpp->fault_handler(mpp->iommu_info->domain,
++				 &mpp->iommu_info->pdev->dev, 0xfffff000,
++				 0, mpp);
++	mpp_rkvenc_test_idle_record(suspended);
++	dev_info(mpp->dev, "idle-iommu-fault state=%s errno=%d returned\n",
++		 suspended ? "suspended" : "not-suspended", ret);
++out:
++	mutex_unlock(&enc->fault_idle_clock_lock);
++}
++
++static void rkvenc_fault_idle_init(struct rkvenc_dev *enc)
++{
++	mpp_fault_idle_init(&enc->fault_idle, rkvenc_fault_idle_fire);
++	mpp_rkvenc_test_idle_register(&enc->fault_idle);
++	enc->fault_idle_initialized = true;
++}
++
++static void rkvenc_fault_idle_disable(struct rkvenc_dev *enc)
++{
++	if (enc->fault_idle_initialized)
++		mpp_fault_idle_disable(&enc->fault_idle);
++}
++
++static void rkvenc_fault_idle_remove(struct rkvenc_dev *enc)
++{
++	if (enc->fault_idle_initialized) {
++		mpp_rkvenc_test_idle_unregister(&enc->fault_idle);
++		enc->fault_idle_initialized = false;
++	}
++}
++#else
++static inline void rkvenc_fault_idle_init(struct rkvenc_dev *enc) { }
++static inline void rkvenc_fault_idle_disable(struct rkvenc_dev *enc) { }
++static inline void rkvenc_fault_idle_remove(struct rkvenc_dev *enc) { }
++#endif
 +
 +static struct rkvenc_hw_info rkvenc_v2_hw_info = {
 +	.hw = {
@@ -25192,7 +25253,7 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +	return ret;
 +}
 +
-+static int rkvenc_clk_on(struct mpp_dev *mpp)
++static int rkvenc_clk_on_unlocked(struct mpp_dev *mpp)
 +{
 +	struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
 +	int ret;
@@ -25221,16 +25282,37 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +	return ret;
 +}
 +
++static int rkvenc_clk_on(struct mpp_dev *mpp)
++{
++	int ret;
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++	struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
++
++	mutex_lock(&enc->fault_idle_clock_lock);
++#endif
++	ret = rkvenc_clk_on_unlocked(mpp);
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++	mutex_unlock(&enc->fault_idle_clock_lock);
++#endif
++	return ret;
++}
++
 +static int rkvenc_clk_off(struct mpp_dev *mpp)
 +{
 +	struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
 +
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++	mutex_lock(&enc->fault_idle_clock_lock);
++#endif
 +	clk_disable_unprepare(enc->aclk_info.clk);
 +	clk_disable_unprepare(enc->hclk_info.clk);
 +	if (enc->core_clk_enabled) {
 +		clk_disable_unprepare(enc->core_clk_info.clk);
 +		enc->core_clk_enabled = false;
 +	}
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++	mutex_unlock(&enc->fault_idle_clock_lock);
++#endif
 +
 +	return 0;
 +}
@@ -25296,6 +25378,11 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +	mpp_debug_func(DEBUG_TASK_INFO, "kref_read %d, ret %d\n",
 +			kref_read(&task->ref), ret);
 +
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++	if (!ret && to_rkvenc_dev(mpp)->fault_idle_initialized)
++		mpp_rkvenc_test_idle_arm(&to_rkvenc_dev(mpp)->fault_idle,
++					task->session->pid);
++#endif
 +	rkvenc2_task_pop_pending(task);
 +
 +	return ret;
@@ -25810,6 +25897,7 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +		list_for_each_entry(core, &ccu->core_list, core_link) {
 +			if (core == enc)
 +				continue;
++			rkvenc_fault_idle_disable(core);
 +			rkvenc2_free_rcbbuf(core->mpp.iommu_info ?
 +					    core->mpp.iommu_info->pdev : NULL,
 +					    core);
@@ -26044,6 +26132,9 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +	if (!enc)
 +		return -ENOMEM;
 +
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++	mutex_init(&enc->fault_idle_clock_lock);
++#endif
 +	mpp = &enc->mpp;
 +	platform_set_drvdata(pdev, mpp);
 +	if (mpp_rkvenc_test_fail_service_attach())
@@ -26092,6 +26183,7 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +	mpp->fault_handler = rkvenc2_iommu_fault_handle;
 +	rkvenc_procfs_init(mpp);
 +	rkvenc_procfs_ccu_init(mpp);
++	rkvenc_fault_idle_init(enc);
 +
 +	/* if current is main-core, register current device to mpp service */
 +	if (mpp == enc->ccu->main_core)
@@ -26119,6 +26211,9 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +	if (!enc)
 +		return -ENOMEM;
 +
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++	mutex_init(&enc->fault_idle_clock_lock);
++#endif
 +	mpp = &enc->mpp;
 +	platform_set_drvdata(pdev, mpp);
 +	if (mpp_rkvenc_test_fail_service_attach())
@@ -26154,6 +26249,7 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +	mpp->session_max_buffers = RKVENC_SESSION_MAX_BUFFERS;
 +	enc->hw_info = to_rkvenc_info(mpp->var->hw_info);
 +	rkvenc_procfs_init(mpp);
++	rkvenc_fault_idle_init(enc);
 +	mpp_dev_register_srv(mpp, mpp->srv);
 +
 +	return 0;
@@ -26235,12 +26331,22 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +	struct device_node *np = dev->of_node;
 +
 +	if (strstr(np->name, "ccu")) {
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++		struct rkvenc_ccu *ccu = dev_get_drvdata(dev);
++		struct rkvenc_dev *core;
++
++		mutex_lock(&ccu->lock);
++		list_for_each_entry(core, &ccu->core_list, core_link)
++			rkvenc_fault_idle_disable(core);
++		mutex_unlock(&ccu->lock);
++#endif
 +		dev_info(dev, "remove ccu\n");
 +	} else if (strstr(np->name, "core")) {
 +		struct mpp_dev *mpp = dev_get_drvdata(dev);
 +		struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
 +
 +		dev_info(dev, "remove core\n");
++		rkvenc_fault_idle_remove(enc);
 +		mpp_dev_unregister_srv(mpp, mpp->srv);
 +		rkvenc_release_irq(pdev, mpp);
 +		rkvenc2_free_rcbbuf(pdev, enc);
@@ -26252,6 +26358,7 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +		struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
 +
 +		dev_info(dev, "remove device\n");
++		rkvenc_fault_idle_remove(enc);
 +		mpp_dev_unregister_srv(mpp, mpp->srv);
 +		rkvenc_release_irq(pdev, mpp);
 +		rkvenc2_free_rcbbuf(pdev, enc);
@@ -26264,9 +26371,48 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +{
 +	struct device *dev = &pdev->dev;
 +
-+	if (!strstr(dev_name(dev), "ccu"))
++	if (!strstr(dev_name(dev), "ccu")) {
++		rkvenc_fault_idle_disable(to_rkvenc_dev(dev_get_drvdata(dev)));
 +		mpp_dev_shutdown(pdev);
++	}
 +}
++
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++static int rkvenc_fault_idle_prepare(struct device *dev)
++{
++	if (!strstr(dev_name(dev), "ccu"))
++		rkvenc_fault_idle_disable(to_rkvenc_dev(dev_get_drvdata(dev)));
++	return 0;
++}
++
++static void rkvenc_fault_idle_complete(struct device *dev)
++{
++	struct rkvenc_dev *enc;
++
++	if (strstr(dev_name(dev), "ccu"))
++		return;
++	enc = to_rkvenc_dev(dev_get_drvdata(dev));
++	if (enc->fault_idle_initialized)
++		mpp_fault_idle_enable(&enc->fault_idle);
++}
++
++static int rkvenc_fault_runtime_suspend(struct device *dev)
++{
++	return mpp_common_pm_ops.runtime_suspend(dev);
++}
++
++static int rkvenc_fault_runtime_resume(struct device *dev)
++{
++	return mpp_common_pm_ops.runtime_resume(dev);
++}
++
++static const struct dev_pm_ops rkvenc_fault_pm_ops = {
++	.prepare = rkvenc_fault_idle_prepare,
++	.complete = rkvenc_fault_idle_complete,
++	SET_RUNTIME_PM_OPS(rkvenc_fault_runtime_suspend, rkvenc_fault_runtime_resume, NULL)
++	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
++};
++#endif
 +
 +struct platform_driver rockchip_rkvenc2_driver = {
 +	.probe = rkvenc_probe,
@@ -26275,18 +26421,23 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +	.driver = {
 +		.name = RKVENC_DRIVER_NAME,
 +		.of_match_table = of_match_ptr(mpp_rkvenc_dt_match),
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++		.pm = &rkvenc_fault_pm_ops,
++#else
 +		.pm = &mpp_common_pm_ops,
++#endif
 +	},
 +};
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc_test.c b/drivers/video/rockchip/mpp/mpp_rkvenc_test.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..d99779d12337764fef0ff41970fe68fa5c55b8ea
+index 0000000000000000000000000000000000000000..2718e0760339f9140733fa310a01f52d27820103
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvenc_test.c
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,161 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +#include <linux/debugfs.h>
 +#include <linux/err.h>
++#include <linux/seq_file.h>
 +
 +#include "mpp_rkvenc_test.h"
 +
@@ -26299,6 +26450,11 @@ index 0000000000000000000000000000000000000000..d99779d12337764fef0ff41970fe68fa
 +static struct mpp_fault_knob hang_task;
 +static struct mpp_fault_knob inject_iommu_fault;
 +static struct mpp_fault_knob delay_task_completion;
++static struct mpp_fault_knob inject_iommu_fault_idle;
++static atomic_t inject_iommu_fault_idle_fired = ATOMIC_INIT(0);
++static atomic_t inject_iommu_fault_idle_state = ATOMIC_INIT(0);
++static LIST_HEAD(fault_idle_devices);
++static DEFINE_MUTEX(fault_idle_devices_lock);
 +static atomic_t target_session_pid = ATOMIC_INIT(0);
 +static struct dentry *mpp_rkvenc_test_dir;
 +
@@ -26311,6 +26467,42 @@ index 0000000000000000000000000000000000000000..d99779d12337764fef0ff41970fe68fa
 +	snprintf(consumed_name, sizeof(consumed_name), "%s_consumed", name);
 +	debugfs_create_atomic_t(consumed_name, 0400, mpp_rkvenc_test_dir,
 +				&knob->consumed);
++}
++
++static int mpp_rkvenc_test_idle_state_show(struct seq_file *file, void *unused)
++{
++	int state = atomic_read(&inject_iommu_fault_idle_state);
++
++	seq_puts(file, state == 1 ? "suspended\n" :
++		 state == 2 ? "not-suspended\n" : "none\n");
++	return 0;
++}
++DEFINE_SHOW_ATTRIBUTE(mpp_rkvenc_test_idle_state);
++
++void mpp_rkvenc_test_idle_register(struct mpp_fault_idle *idle)
++{
++	mutex_lock(&fault_idle_devices_lock);
++	list_add_tail(&idle->registry, &fault_idle_devices);
++	mutex_unlock(&fault_idle_devices_lock);
++}
++
++void mpp_rkvenc_test_idle_unregister(struct mpp_fault_idle *idle)
++{
++	mutex_lock(&fault_idle_devices_lock);
++	mpp_fault_idle_disable(idle);
++	list_del_init(&idle->registry);
++	mutex_unlock(&fault_idle_devices_lock);
++}
++
++void mpp_rkvenc_test_idle_arm(struct mpp_fault_idle *idle, pid_t pid)
++{
++	mpp_fault_idle_arm(idle, &inject_iommu_fault_idle, &target_session_pid, pid);
++}
++
++void mpp_rkvenc_test_idle_record(bool suspended)
++{
++	atomic_set(&inject_iommu_fault_idle_state, suspended ? 1 : 2);
++	atomic_inc(&inject_iommu_fault_idle_fired);
 +}
 +
 +int mpp_rkvenc_test_init(void)
@@ -26333,12 +26525,26 @@ index 0000000000000000000000000000000000000000..d99779d12337764fef0ff41970fe68fa
 +				mpp_rkvenc_test_dir, &delay_task_completion.armed);
 +	debugfs_create_atomic_t("delay_consumed", 0400, mpp_rkvenc_test_dir,
 +				&delay_task_completion.consumed);
++	debugfs_create_atomic_t("inject_iommu_fault_idle_ms", 0600,
++				mpp_rkvenc_test_dir, &inject_iommu_fault_idle.armed);
++	debugfs_create_atomic_t("inject_iommu_fault_idle_consumed", 0400,
++				mpp_rkvenc_test_dir, &inject_iommu_fault_idle.consumed);
++	debugfs_create_atomic_t("inject_iommu_fault_idle_fired", 0400,
++				mpp_rkvenc_test_dir, &inject_iommu_fault_idle_fired);
++	debugfs_create_file("inject_iommu_fault_idle_state", 0400,
++			   mpp_rkvenc_test_dir, NULL, &mpp_rkvenc_test_idle_state_fops);
 +
 +	return 0;
 +}
 +
 +void mpp_rkvenc_test_exit(void)
 +{
++	struct mpp_fault_idle *idle;
++
++	mutex_lock(&fault_idle_devices_lock);
++	list_for_each_entry(idle, &fault_idle_devices, registry)
++		mpp_fault_idle_disable(idle);
++	mutex_unlock(&fault_idle_devices_lock);
 +	debugfs_remove_recursive(mpp_rkvenc_test_dir);
 +	mpp_rkvenc_test_dir = NULL;
 +}
@@ -26391,16 +26597,18 @@ index 0000000000000000000000000000000000000000..d99779d12337764fef0ff41970fe68fa
 +}
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc_test.h b/drivers/video/rockchip/mpp/mpp_rkvenc_test.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..cb56132a9ea510e015484595fbbea222bc9072c4
+index 0000000000000000000000000000000000000000..d0058f199bc7ab5d376dd304539ffa6e2ef7ea1f
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvenc_test.h
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,175 @@
 +/* SPDX-License-Identifier: GPL-2.0-only */
 +#ifndef __MPP_RKVENC_TEST_H__
 +#define __MPP_RKVENC_TEST_H__
 +
 +#include <linux/atomic.h>
 +#include <linux/types.h>
++#include <linux/pm_runtime.h>
++#include <linux/workqueue.h>
 +
 +struct mpp_fault_knob {
 +	atomic_t armed;
@@ -26442,7 +26650,106 @@ index 0000000000000000000000000000000000000000..cb56132a9ea510e015484595fbbea222
 +	return true;
 +}
 +
++struct mpp_fault_idle {
++	struct delayed_work work;
++	spinlock_t fault_idle_lock;
++	bool arming_enabled;
++	void (*fire)(struct mpp_fault_idle *idle);
++	struct list_head registry;
++#if IS_ENABLED(CONFIG_KUNIT)
++	void (*before_enqueue)(struct mpp_fault_idle *idle);
++#endif
++};
++
++static inline bool mpp_fault_idle_suspended(struct device *dev)
++{
++	unsigned long flags;
++	bool suspended;
++
++	spin_lock_irqsave(&dev->power.lock, flags);
++	suspended = dev->power.runtime_status == RPM_SUSPENDED;
++	spin_unlock_irqrestore(&dev->power.lock, flags);
++	return suspended;
++}
++
++static inline void mpp_fault_idle_work(struct work_struct *work)
++{
++	struct mpp_fault_idle *idle = container_of(to_delayed_work(work),
++							 struct mpp_fault_idle, work);
++	unsigned long flags;
++	bool enabled;
++
++	spin_lock_irqsave(&idle->fault_idle_lock, flags);
++	enabled = idle->arming_enabled;
++	spin_unlock_irqrestore(&idle->fault_idle_lock, flags);
++	if (enabled)
++		idle->fire(idle);
++}
++
++static inline void mpp_fault_idle_init(struct mpp_fault_idle *idle,
++				     void (*fire)(struct mpp_fault_idle *))
++{
++	spin_lock_init(&idle->fault_idle_lock);
++	INIT_DELAYED_WORK(&idle->work, mpp_fault_idle_work);
++	INIT_LIST_HEAD(&idle->registry);
++	idle->fire = fire;
++	idle->arming_enabled = true;
++}
++
++static inline bool mpp_fault_idle_arm(struct mpp_fault_idle *idle,
++				     struct mpp_fault_knob *knob,
++				     atomic_t *target, pid_t pid)
++{
++	unsigned long flags;
++	unsigned int delay;
++	int observed;
++	bool scheduled = false;
++
++	spin_lock_irqsave(&idle->fault_idle_lock, flags);
++	if (!idle->arming_enabled || work_busy(&idle->work.work))
++		goto out;
++	observed = atomic_read(target);
++	if (observed && observed != pid)
++		goto out;
++	delay = mpp_fault_consume_delay(knob);
++	if (!delay)
++		goto out;
++	atomic_cmpxchg(target, observed, 0);
++#if IS_ENABLED(CONFIG_KUNIT)
++	if (idle->before_enqueue)
++		idle->before_enqueue(idle);
++#endif
++	/* Disable cannot finish cancelling between eligibility and enqueue. */
++	scheduled = schedule_delayed_work(&idle->work, msecs_to_jiffies(delay));
++out:
++	spin_unlock_irqrestore(&idle->fault_idle_lock, flags);
++	return scheduled;
++}
++
++static inline void mpp_fault_idle_disable(struct mpp_fault_idle *idle)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&idle->fault_idle_lock, flags);
++	idle->arming_enabled = false;
++	spin_unlock_irqrestore(&idle->fault_idle_lock, flags);
++	cancel_delayed_work_sync(&idle->work);
++}
++
++static inline void mpp_fault_idle_enable(struct mpp_fault_idle *idle)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&idle->fault_idle_lock, flags);
++	idle->arming_enabled = true;
++	spin_unlock_irqrestore(&idle->fault_idle_lock, flags);
++}
++
 +#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++void mpp_rkvenc_test_idle_register(struct mpp_fault_idle *idle);
++void mpp_rkvenc_test_idle_unregister(struct mpp_fault_idle *idle);
++void mpp_rkvenc_test_idle_arm(struct mpp_fault_idle *idle, pid_t pid);
++void mpp_rkvenc_test_idle_record(bool suspended);
 +int mpp_rkvenc_test_init(void);
 +void mpp_rkvenc_test_exit(void);
 +bool mpp_rkvenc_test_fail_service_attach(void);
