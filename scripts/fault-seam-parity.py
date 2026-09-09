@@ -22,6 +22,10 @@ PARITY: Final = (
         "zero_matches_any", "matches_only_named_pid", "clears_after_consume",
         "does_not_consume_unarmed", "written_concurrently_is_kept",
     )),
+    *((f"mpp_fault_idle_{name}_test", f"rk_mpp_fault_idle_{name}_kunit") for name in (
+        "delay_is_one_shot", "arm_refused_after_disable",
+        "cancel_before_withdrawal", "enqueue_races_disable",
+    )),
 )
 
 
@@ -126,7 +130,7 @@ def check_ktap(text: str, sources: Sources) -> None:
         if production not in sources.production_cases or overlay not in names:
             raise ParityError(f"A: missing parity pair {production} -> {overlay}")
         print(f"  {production} -> {overlay}: ok")
-    print(f"PASS A: completed {len(rows)}-case {SUITE}; nine controls plus selector coverage")
+    print(f"PASS A: completed {len(rows)}-case {SUITE}; ten controls plus selector coverage")
 
 
 def expect_red(name: str, check: Callable[[], frozenset[str] | None]) -> None:
@@ -177,9 +181,9 @@ def self_test(sources: Sources) -> None:
         ("truncated", passing.rsplit("ok 1 rk-mpp-rewrite-fault", 1)[0]),
         ("wrong-suite", passing.replace(SUITE, "unrelated-suite")),
         ("lockdep", passing + "\nWARNING: possible circular locking\n"),
-        ("wrong-plan", passing.replace("    1..15", "    1..14")),
+        ("wrong-plan", passing.replace("    1..19", "    1..18")),
         ("duplicate-suite-result", passing + "ok 2 rk-mpp-rewrite-fault\n"),
-        ("duplicate-suite-summary", passing.replace("# Totals:", "# rk-mpp-rewrite-fault: pass:15 fail:0 skip:0 total:15\n# Totals:")),
+        ("duplicate-suite-summary", passing.replace("# Totals:", "# rk-mpp-rewrite-fault: pass:19 fail:0 skip:0 total:19\n# Totals:")),
     ):
         expect_red(name, lambda: check_ktap(damaged, sources))
     expect_red("counter-format", lambda: check_surface(replace(sources, overlay=sources.overlay.replace('"%s_consumed"', '"%s_count"'))))

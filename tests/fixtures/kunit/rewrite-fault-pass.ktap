@@ -3,7 +3,7 @@ KTAP version 1
 1..1
     KTAP version 1
     # Subtest: rk-mpp-rewrite-fault
-    1..15
+    1..19
     ok 1 rk_mpp_fault_service_attach_once_kunit
     ok 2 rk_mpp_fault_ccu_attach_once_kunit
     ok 3 rk_mpp_fault_irq_request_once_kunit
@@ -19,6 +19,10 @@ KTAP version 1
     ok 13 rk_mpp_fault_iommu_once_kunit
     ok 14 rk_mpp_fault_reset_after_pulse_kunit
     ok 15 rk_mpp_fault_retained_completion_kunit
-# rk-mpp-rewrite-fault: pass:15 fail:0 skip:0 total:15
-# Totals: pass:15 fail:0 skip:0 total:15
+    ok 16 rk_mpp_fault_idle_delay_is_one_shot_kunit
+    ok 17 rk_mpp_fault_idle_arm_refused_after_disable_kunit
+    ok 18 rk_mpp_fault_idle_cancel_before_withdrawal_kunit
+    ok 19 rk_mpp_fault_idle_enqueue_races_disable_kunit
+# rk-mpp-rewrite-fault: pass:19 fail:0 skip:0 total:19
+# Totals: pass:19 fail:0 skip:0 total:19
 ok 1 rk-mpp-rewrite-fault

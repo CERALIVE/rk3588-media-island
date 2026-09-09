@@ -4,8 +4,8 @@ set -euo pipefail
 
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 root=$(realpath "$here/../../../..")
-if (($# < 2 || $# > 3)); then
-	printf 'usage: %s STAGED_KERNEL BUILD_DIR [FILTER]\n' "$0" >&2
+if (($# < 2 || $# > 4)); then
+	printf 'usage: %s STAGED_KERNEL BUILD_DIR [FILTER] [QEMU_ARGS]\n' "$0" >&2
 	exit 2
 fi
 kernel=$(realpath "$1")
@@ -17,12 +17,13 @@ for path in "$kernel" "$build"; do
 	esac
 done
 filter=${3:-'*mpp*rewrite*'}
+qemu_args=${4:--smp 2}
 (
 	cd -- "$kernel"
 	python3 tools/testing/kunit/kunit.py run --arch arm64 \
 		--cross_compile aarch64-linux-gnu- --kunitconfig="$here/.kunitconfig" \
 		--build_dir="$build" --jobs="${KUNIT_JOBS:-12}" \
-		--make_options=KCFLAGS=-Werror --timeout=180 "$filter"
+		--make_options=KCFLAGS=-Werror --timeout=180 --qemu_args="$qemu_args" "$filter"
 )
 if grep -Eq 'WARNING:|BUG:|Oops:|KASAN:|DEBUG_LOCKS_WARN_ON|possible circular locking' "$build/test.log"; then
 	printf 'FAIL: kernel diagnostics in %s/test.log despite KTAP result\n' "$build" >&2

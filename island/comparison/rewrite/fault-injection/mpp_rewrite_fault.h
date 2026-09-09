@@ -6,6 +6,9 @@
 #include <linux/debugfs.h>
 #include <linux/delay.h>
 #include <linux/err.h>
+#include <linux/pm_runtime.h>
+#include <linux/seq_file.h>
+#include <linux/workqueue.h>
 
 #if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST) && IS_ENABLED(CONFIG_ROCKCHIP_MPP_REWRITE_FAULT_INJECTION)
 #error "both fault seams share /sys/kernel/debug/rkvenc-test"
@@ -27,6 +30,9 @@ struct rk_mpp_fault_controls {
 	struct rk_mpp_fault_knob iommu;
 	struct rk_mpp_fault_knob reset;
 	struct rk_mpp_fault_knob delay;
+	struct rk_mpp_fault_knob idle;
+	atomic_t idle_fired;
+	atomic_t idle_state;
 	atomic_t target_session_pid;
 	struct dentry *root;
 	struct dentry *sessions;
@@ -45,6 +51,120 @@ static inline bool rk_mpp_fault_consume(struct rk_mpp_fault_knob *knob)
 	atomic_inc(&knob->consumed);
 	return true;
 }
+
+struct rk_mpp_fault_idle {
+	void *owner;
+	struct delayed_work work;
+	spinlock_t fault_idle_lock;
+	bool arming_enabled;
+	void (*fire)(struct rk_mpp_fault_idle *idle);
+#if IS_ENABLED(CONFIG_KUNIT)
+	void (*before_enqueue)(struct rk_mpp_fault_idle *idle);
+#endif
+};
+
+static inline unsigned int rk_mpp_fault_consume_delay(struct rk_mpp_fault_knob *knob)
+{
+	int delay_ms = atomic_xchg(&knob->armed, 0);
+
+	if (delay_ms <= 0)
+		return 0;
+	atomic_inc(&knob->consumed);
+	return delay_ms;
+}
+
+static inline bool rk_mpp_fault_idle_suspended(struct device *dev)
+{
+	unsigned long flags;
+	bool suspended;
+
+	spin_lock_irqsave(&dev->power.lock, flags);
+	suspended = dev->power.runtime_status == RPM_SUSPENDED;
+	spin_unlock_irqrestore(&dev->power.lock, flags);
+	return suspended;
+}
+
+static inline void rk_mpp_fault_idle_work(struct work_struct *work)
+{
+	struct rk_mpp_fault_idle *idle = container_of(to_delayed_work(work),
+						 struct rk_mpp_fault_idle, work);
+	unsigned long flags;
+	bool enabled;
+
+	spin_lock_irqsave(&idle->fault_idle_lock, flags);
+	enabled = idle->arming_enabled;
+	spin_unlock_irqrestore(&idle->fault_idle_lock, flags);
+	if (enabled)
+		idle->fire(idle);
+}
+
+static inline void rk_mpp_fault_idle_init(struct rk_mpp_fault_idle *idle,
+					void (*fire)(struct rk_mpp_fault_idle *))
+{
+	spin_lock_init(&idle->fault_idle_lock);
+	INIT_DELAYED_WORK(&idle->work, rk_mpp_fault_idle_work);
+	idle->fire = fire;
+	idle->arming_enabled = true;
+}
+
+static inline bool rk_mpp_fault_idle_arm(struct rk_mpp_fault_idle *idle,
+					struct rk_mpp_fault_knob *knob,
+					atomic_t *target, pid_t pid)
+{
+	unsigned long flags;
+	unsigned int delay;
+	int observed;
+	bool scheduled = false;
+
+	spin_lock_irqsave(&idle->fault_idle_lock, flags);
+	if (!idle->arming_enabled || work_busy(&idle->work.work))
+		goto out;
+	observed = atomic_read(target);
+	if (observed && observed != pid)
+		goto out;
+	delay = rk_mpp_fault_consume_delay(knob);
+	if (!delay)
+		goto out;
+	atomic_cmpxchg(target, observed, 0);
+#if IS_ENABLED(CONFIG_KUNIT)
+	if (idle->before_enqueue)
+		idle->before_enqueue(idle);
+#endif
+	scheduled = schedule_delayed_work(&idle->work, msecs_to_jiffies(delay));
+out:
+	spin_unlock_irqrestore(&idle->fault_idle_lock, flags);
+	return scheduled;
+}
+
+static inline void rk_mpp_fault_idle_disable(struct rk_mpp_fault_idle *idle)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&idle->fault_idle_lock, flags);
+	idle->arming_enabled = false;
+	spin_unlock_irqrestore(&idle->fault_idle_lock, flags);
+	cancel_delayed_work_sync(&idle->work);
+}
+
+static inline void rk_mpp_fault_idle_enable(struct rk_mpp_fault_idle *idle)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&idle->fault_idle_lock, flags);
+	idle->arming_enabled = true;
+	spin_unlock_irqrestore(&idle->fault_idle_lock, flags);
+}
+
+static int rk_mpp_fault_idle_state_show(struct seq_file *file, void *unused)
+{
+	struct rk_mpp_fault_controls *fault = file->private;
+	int state = atomic_read(&fault->idle_state);
+
+	seq_puts(file, state == 1 ? "suspended\n" :
+		 state == 2 ? "not-suspended\n" : "none\n");
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(rk_mpp_fault_idle_state);
 
 static inline int rk_mpp_fault_service_attach(struct rk_mpp_fault_controls *fault,
 					     bool eligible)
@@ -146,6 +266,14 @@ static inline int rk_mpp_fault_debugfs_init(struct rk_mpp_fault_controls *fault)
 				&fault->delay.armed);
 	debugfs_create_atomic_t("delay_consumed", 0400, fault->root,
 				&fault->delay.consumed);
+	debugfs_create_atomic_t("inject_iommu_fault_idle_ms", 0600, fault->root,
+				&fault->idle.armed);
+	debugfs_create_atomic_t("inject_iommu_fault_idle_consumed", 0400, fault->root,
+				&fault->idle.consumed);
+	debugfs_create_atomic_t("inject_iommu_fault_idle_fired", 0400, fault->root,
+				&fault->idle_fired);
+	debugfs_create_file("inject_iommu_fault_idle_state", 0400, fault->root,
+			   fault, &rk_mpp_fault_idle_state_fops);
 	return 0;
 }
 

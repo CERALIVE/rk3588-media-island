@@ -1,5 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 
+#include <kunit/device.h>
+#include <linux/kthread.h>
+
 struct rk_mpp_fault_fixture {
 	struct rk_mpp_service srv;
 	struct rk_mpp_hw hw;
@@ -427,7 +430,187 @@ static void rk_mpp_fault_target_written_concurrently_is_kept_kunit(struct kunit 
 	KUNIT_EXPECT_EQ(test, atomic_read(&f->srv.fault.hang.consumed), 2);
 }
 
+struct rk_mpp_idle_fixture {
+	struct rk_mpp_fault_idle idle;
+	struct rk_mpp_fault_knob knob;
+	atomic_t target, calls, go, permit;
+	struct device *dev;
+	bool suspended_at_fire, rendezvous;
+};
+
+static void rk_mpp_idle_test_fire(struct rk_mpp_fault_idle *idle)
+{
+	struct rk_mpp_idle_fixture *f = container_of(idle, struct rk_mpp_idle_fixture, idle);
+
+	if (f->dev)
+		f->suspended_at_fire = rk_mpp_fault_idle_suspended(f->dev);
+	atomic_inc(&f->calls);
+}
+
+static void rk_mpp_idle_test_cleanup(void *data)
+{
+	struct rk_mpp_idle_fixture *f = data;
+
+	rk_mpp_fault_idle_disable(&f->idle);
+}
+
+static struct rk_mpp_idle_fixture *rk_mpp_idle_fixture(struct kunit *test)
+{
+	struct rk_mpp_idle_fixture *f = kunit_kzalloc(test, sizeof(*f), GFP_KERNEL);
+
+	if (!f)
+		return NULL;
+	rk_mpp_fault_idle_init(&f->idle, rk_mpp_idle_test_fire);
+	if (kunit_add_action_or_reset(test, rk_mpp_idle_test_cleanup, f))
+		return NULL;
+	return f;
+}
+
+static bool rk_mpp_idle_test_arm(struct rk_mpp_idle_fixture *f, pid_t pid)
+{
+	return rk_mpp_fault_idle_arm(&f->idle, &f->knob, &f->target, pid);
+}
+
+static void rk_mpp_fault_idle_delay_is_one_shot_kunit(struct kunit *test)
+{
+	struct rk_mpp_idle_fixture *f = rk_mpp_idle_fixture(test);
+	struct device *dev = kunit_device_register(test, "rewrite-idle-pm");
+	unsigned long flags;
+
+	KUNIT_ASSERT_NOT_NULL(test, f);
+	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, dev);
+	f->dev = dev;
+	spin_lock_irqsave(&dev->power.lock, flags);
+	dev->power.runtime_status = RPM_ACTIVE;
+	spin_unlock_irqrestore(&dev->power.lock, flags);
+	atomic_set(&f->knob.armed, 60000);
+	atomic_set(&f->target, 100);
+	KUNIT_EXPECT_FALSE(test, rk_mpp_idle_test_arm(f, 101));
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->knob.armed), 60000);
+	KUNIT_ASSERT_TRUE(test, rk_mpp_idle_test_arm(f, 100));
+	KUNIT_EXPECT_FALSE(test, rk_mpp_idle_test_arm(f, 100));
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->knob.consumed), 1);
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->knob.armed), 0);
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->target), 0);
+	spin_lock_irqsave(&dev->power.lock, flags);
+	dev->power.runtime_status = RPM_SUSPENDED;
+	spin_unlock_irqrestore(&dev->power.lock, flags);
+	flush_delayed_work(&f->idle.work);
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->calls), 1);
+	KUNIT_EXPECT_TRUE(test, f->suspended_at_fire);
+	flush_delayed_work(&f->idle.work);
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->calls), 1);
+	spin_lock_irqsave(&dev->power.lock, flags);
+	dev->power.runtime_status = RPM_RESUMING;
+	spin_unlock_irqrestore(&dev->power.lock, flags);
+	atomic_set(&f->knob.armed, 60000);
+	KUNIT_ASSERT_TRUE(test, rk_mpp_idle_test_arm(f, 100));
+	flush_delayed_work(&f->idle.work);
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->calls), 2);
+	KUNIT_EXPECT_FALSE(test, f->suspended_at_fire);
+	spin_lock_irqsave(&dev->power.lock, flags);
+	dev->power.runtime_status = RPM_SUSPENDED;
+	spin_unlock_irqrestore(&dev->power.lock, flags);
+}
+
+static void rk_mpp_fault_idle_arm_refused_after_disable_kunit(struct kunit *test)
+{
+	struct rk_mpp_idle_fixture *f = rk_mpp_idle_fixture(test);
+
+	KUNIT_ASSERT_NOT_NULL(test, f);
+	rk_mpp_fault_idle_disable(&f->idle);
+	atomic_set(&f->knob.armed, 60000);
+	KUNIT_EXPECT_FALSE(test, rk_mpp_idle_test_arm(f, 100));
+	KUNIT_EXPECT_FALSE(test, delayed_work_pending(&f->idle.work));
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->knob.consumed), 0);
+}
+
+static void rk_mpp_fault_idle_cancel_before_withdrawal_kunit(struct kunit *test)
+{
+	struct rk_mpp_idle_fixture *f = rk_mpp_idle_fixture(test);
+
+	KUNIT_ASSERT_NOT_NULL(test, f);
+	atomic_set(&f->knob.armed, 60000);
+	KUNIT_ASSERT_TRUE(test, rk_mpp_idle_test_arm(f, 100));
+	rk_mpp_fault_idle_disable(&f->idle);
+	KUNIT_EXPECT_FALSE(test, delayed_work_pending(&f->idle.work));
+	KUNIT_EXPECT_FALSE(test, flush_delayed_work(&f->idle.work));
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->calls), 0);
+}
+
+static void rk_mpp_idle_enqueue_rendezvous(struct rk_mpp_fault_idle *idle)
+{
+	struct rk_mpp_idle_fixture *f = container_of(idle, struct rk_mpp_idle_fixture, idle);
+	unsigned int spins = 10000000;
+
+	atomic_set_release(&f->go, 1);
+	while (!atomic_read_acquire(&f->permit) && --spins)
+		cpu_relax();
+	f->rendezvous = spins != 0;
+}
+
+static int rk_mpp_idle_disabler(void *data)
+{
+	struct rk_mpp_idle_fixture *f = data;
+	bool unlocked;
+
+	while (!atomic_read_acquire(&f->go)) {
+		if (kthread_should_stop())
+			return 0;
+		usleep_range(50, 100);
+	}
+	unlocked = spin_trylock(&f->idle.fault_idle_lock);
+	if (unlocked)
+		spin_unlock(&f->idle.fault_idle_lock);
+	else
+		atomic_set_release(&f->permit, 1);
+	rk_mpp_fault_idle_disable(&f->idle);
+	if (unlocked)
+		atomic_set_release(&f->permit, 1);
+	return 0;
+}
+
+static void rk_mpp_fault_idle_enqueue_races_disable_kunit(struct kunit *test)
+{
+	struct rk_mpp_idle_fixture *f;
+	struct task_struct *disabler;
+	cpumask_t saved;
+	int producer_cpu, consumer_cpu, ret;
+
+	if (num_online_cpus() < 2) {
+		kunit_skip(test, "forced interleaving requires two online CPUs");
+		return;
+	}
+	f = rk_mpp_idle_fixture(test);
+	KUNIT_ASSERT_NOT_NULL(test, f);
+	cpumask_copy(&saved, current->cpus_ptr);
+	producer_cpu = cpumask_first(cpu_online_mask);
+	consumer_cpu = cpumask_next(producer_cpu, cpu_online_mask);
+	disabler = kthread_create(rk_mpp_idle_disabler, f, "rewrite-idle-disable");
+	KUNIT_ASSERT_FALSE(test, IS_ERR(disabler));
+	kthread_bind(disabler, consumer_cpu);
+	ret = set_cpus_allowed_ptr(current, cpumask_of(producer_cpu));
+	if (ret) {
+		kthread_stop(disabler);
+		KUNIT_FAIL(test, "cannot pin producer: %d", ret);
+		return;
+	}
+	f->idle.before_enqueue = rk_mpp_idle_enqueue_rendezvous;
+	atomic_set(&f->knob.armed, 60000);
+	wake_up_process(disabler);
+	KUNIT_EXPECT_TRUE(test, rk_mpp_idle_test_arm(f, 100));
+	kthread_stop(disabler);
+	KUNIT_EXPECT_TRUE_MSG(test, f->rendezvous, "interleaving not forced");
+	KUNIT_EXPECT_FALSE(test, delayed_work_pending(&f->idle.work));
+	KUNIT_EXPECT_EQ(test, atomic_read(&f->calls), 0);
+	KUNIT_EXPECT_EQ(test, set_cpus_allowed_ptr(current, &saved), 0);
+}
+
 static struct kunit_case rk_mpp_fault_test_cases[] = {
+	KUNIT_CASE(rk_mpp_fault_idle_delay_is_one_shot_kunit),
+	KUNIT_CASE(rk_mpp_fault_idle_arm_refused_after_disable_kunit),
+	KUNIT_CASE(rk_mpp_fault_idle_cancel_before_withdrawal_kunit),
+	KUNIT_CASE(rk_mpp_fault_idle_enqueue_races_disable_kunit),
 	KUNIT_CASE(rk_mpp_fault_service_attach_once_kunit),
 	KUNIT_CASE(rk_mpp_fault_ccu_attach_once_kunit),
 	KUNIT_CASE(rk_mpp_fault_irq_request_once_kunit),

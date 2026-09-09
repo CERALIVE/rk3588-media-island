@@ -9,6 +9,32 @@ and works with rewrite MPP built either in or as a module.
 
 ## Operator contract
 
+### Optional idle-window control [PARTIAL]
+
+The overlay now also publishes `inject_iommu_fault_idle_ms` (0600),
+`inject_iommu_fault_idle_consumed`, `inject_iommu_fault_idle_fired`, and
+`inject_iommu_fault_idle_state` (0400). It mirrors the production test seam's
+one-shot delayed-work/PM-at-fire contract described in
+`docs/FAULT-CAMPAIGN.md`. This tenth control is not a fifth matrix stimulus:
+use the explicit `fault-controls-probe.sh --row idle-iommu-fault` experiment.
+
+The new work object is device-owned allocated storage, not a global timer.
+Completion preserves a hardware reference for an armed experiment until the
+poller can schedule against that exact core; job release drops that reference.
+No task or PM reference is held by the delayed work. Enqueue and disabling share
+a spinlock; remove, shutdown and system suspend cancel before callback/resource
+withdrawal. Initialization follows all fallible probe setup. The worker excludes
+clock-on, rejects active work and calls the real registered handler. It records
+the PM snapshot without a resume; idle delivery need not schedule recovery.
+
+This supersedes the nine-control count and no-new-lock/work statement below
+only for this additional control. The original nine controls and their
+intentional differences remain unchanged. The wrapper accepts a fourth QEMU
+argument string, defaults to `-smp 2`, and the configuration selects SMP. The
+four new KUnit cases mirror production, including the forced-interleaving race;
+the ten pre-existing upstream full-suite failures are still not repaired.
+No board result or ready-to-deploy image is claimed here.
+
 These controls can fail streams and quarantine cores. Use only a separately
 authorized comparison image/campaign, never the production image. They are at
 `/sys/kernel/debug/rkvenc-test/`; writable files are root-only `0600`, cumulative
