@@ -583,8 +583,8 @@ row_clock_enable() {
 
 # The three probe-time rows. Detach one encoder core, arm, reattach — the attach
 # must fail with the documented errno — then reattach cleanly and prove the
-# encoder still works. REBIND_DEV plus the EXIT trap guarantee the core is put
-# back on every path out of here, including a failed assertion.
+# encoder still works. REBIND_DEV retains outstanding restoration for the EXIT
+# trap; a failed bind must not let the drill detach another core.
 row_probe_time() {
 	local row=$1
 	local before="$OUT/$row.before" after="$OUT/$row.after"
@@ -667,8 +667,11 @@ gap_suffix() {
 rebind_guard() {
 	local dev=$REBIND_DEV
 	[[ -n $dev ]] || return 0
+	if ! "$BIND_FN" "$dev" >/dev/null 2>&1; then
+		printf 'cleanup verdict=FAIL reason=rebind dev=%s\n' "$dev" >&2
+		return "$FAIL"
+	fi
 	REBIND_DEV=
-	"$BIND_FN" "$dev" >/dev/null 2>&1
 	return 0
 }
 
@@ -706,6 +709,10 @@ drill() {
 		"$GATED") ((gated++)) ;;
 		*) ((failures++)) ;;
 		esac
+		if [[ -n $REBIND_DEV ]]; then
+			printf 'fault-controls verdict=FAIL reason=unrestored-core dev=%s\n' "$REBIND_DEV"
+			return "$FAIL"
+		fi
 	done
 	printf 'fault-controls driver=%s passes=%s failures=%s gated=%s out=%s\n' \
 		"$DRIVER" "$passes" "$failures" "$gated" "$OUT"
@@ -942,6 +949,30 @@ st_leg() {
 	ST_LEGS+="leg=$name want=$want got=$got token=$token_state verdict=$verdict"$'\n'
 }
 
+st_rebind_cleanup() (
+	local got dev=deadbee0.rkvenc-core
+	st_reset service-attach
+	BIND_FN=false
+	rebind_guard || return "$FAIL"
+	REBIND_DEV=$dev
+	rebind_guard; got=$?
+	printf 'self-test=rebind-failure exit=%s retained=%s\n' "$got" "${REBIND_DEV:-EMPTY}"
+	[[ $got == "$FAIL" && $REBIND_DEV == "$dev" ]] || return "$FAIL"
+	BIND_FN=fx_bind
+	rebind_guard || return "$FAIL"
+	[[ -z $REBIND_DEV && $(<"$FX_BOUND") == "$dev" ]] || return "$FAIL"
+	BIND_FN=false
+	rebind_guard || return "$FAIL"
+
+	st_reset all
+	drill >"$ST_WORK/rebind-drill.log" 2>&1; got=$?
+	trap - EXIT
+	[[ $got == "$FAIL" && $REBIND_DEV == "$dev" ]] || return "$FAIL"
+	grep -q 'reason=unrestored-core' "$ST_WORK/rebind-drill.log" || return "$FAIL"
+	[[ ! -e $OUT/ccu-attach.before && ! -e $OUT/irq-request.before ]] || return "$FAIL"
+	printf 'self-test=rebind-cleanup PASS failed-state-retained retry-clears no-pending-noop drill-stops\n'
+)
+
 st_fixture_one_shot() {
 	local knob=${KNOB[session-alloc]} verdict=PASS
 	st_reset session-alloc
@@ -1045,6 +1076,7 @@ self_test() {
 	ST_WORK=$(mktemp -d) || return "$FAIL"
 	st_install_hooks
 
+	st_rebind_cleanup || rc="$FAIL"
 	st_fixture_one_shot
 
 	for row in "${ROWS[@]}"; do
