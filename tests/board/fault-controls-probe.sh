@@ -573,6 +573,8 @@ row_clock_enable() {
 	else
 		busy=gap
 	fi
+	# Recovery can itself emit a report; the errno capture predates that encode.
+	"$JOURNAL_FN" "$since" "$journal" || return "$FAIL"
 	assert_journal_clean clock-enable "$journal" || return "$FAIL"
 
 	printf 'row=clock-enable verdict=PASS driver=%s errno=%s counter=%s_consumed delta=1 reset_delta=%s busy=%s recovery=ok journal_bad=0%s\n' \
@@ -852,6 +854,9 @@ fx_encode() {
 		printf 'ERROR: pipeline could not be constructed\n' >"$log"
 		return 1
 	fi
+	if [[ $FX_ENCODE_RECOVERY == journal ]]; then
+		fx_journal_append 'BUG: KASAN: synthetic recovery-only report'
+	fi
 	printf 'Setting pipeline to PLAYING ...\nGot EOS from element "pipeline".\n' >"$log"
 	return 0
 }
@@ -1082,6 +1087,10 @@ self_test() {
 	st_leg red-journal-report "$FAIL" 'reason=journal-report'
 
 	st_reset clock-enable
+	FX_ENCODE_RECOVERY=journal
+	st_leg red-recovery-journal "$FAIL" 'reason=journal-report'
+
+	st_reset clock-enable
 	FX_MODE=inert
 	st_leg red-armed-encode-succeeded "$FAIL" 'reason=armed-encode-succeeded'
 
@@ -1139,6 +1148,7 @@ self_test() {
 	leg=red-seam-renamed want=1 got=1 token=found verdict=PASS
 	leg=red-knob-not-reset want=1 got=1 token=found verdict=PASS
 	leg=red-journal-report want=1 got=1 token=found verdict=PASS
+	leg=red-recovery-journal want=1 got=1 token=found verdict=PASS
 	leg=red-armed-encode-succeeded want=1 got=1 token=found verdict=PASS
 	leg=red-no-injected-errno want=1 got=1 token=found verdict=PASS
 	leg=red-reset-delta want=1 got=1 token=found verdict=PASS
@@ -1158,7 +1168,7 @@ self_test() {
 		rc="$FAIL"
 	fi
 	((rc == 0)) || return "$rc"
-	printf 'VERDICT: PASS (5 rows proven fire-once, 12 RED legs proven red, 3 gates proven real)\n'
+	printf 'VERDICT: PASS (5 rows proven fire-once, 13 RED legs proven red, 3 gates proven real)\n'
 	idle_self_test
 }
 
