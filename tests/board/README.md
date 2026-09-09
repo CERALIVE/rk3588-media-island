@@ -87,8 +87,10 @@ accepts **both** layouts, so the move is a `git mv` with no edits.
    Both campaigns of 2026-09-09 exercised this path and the screen stayed empty.
 
    Nothing else is touched: no unit is controlled, no module is loaded or
-   unloaded, and the core is reattached from a `trap` on every exit path,
-   including a failed assertion. Both write kinds require an `edge-test` kernel
+   unloaded, and a `trap` retries outstanding core restoration on exit,
+   including after a failed assertion. A failed reattachment returns failure,
+   retains the core's restoration marker and stops subsequent probe mutations;
+   it is never silently treated as successful cleanup. Both write kinds require an `edge-test` kernel
    carrying `CONFIG_KASAN=y`, `CONFIG_PROVE_LOCKING=y` and the active profile's
    fault-seam symbol, plus `CERALIVE_BOARD_TEST=1`, root, and a caller holding
    the external board lock — the drill exits `77` rather than writing anything
