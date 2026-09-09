@@ -3564,10 +3564,10 @@ index 0000000000000000000000000000000000000000..3ebeecc5719d09a0ff436a9d035d6cf9
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_common.c b/drivers/video/rockchip/mpp/mpp_common.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..763141a80ca6c120bdb0001018ac14596839831b
+index 0000000000000000000000000000000000000000..ee13c0fa4d0505af242e46c9582242c21f82ebac
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_common.c
-@@ -0,0 +1,3503 @@
+@@ -0,0 +1,3506 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -5220,11 +5220,14 @@ index 0000000000000000000000000000000000000000..763141a80ca6c120bdb0001018ac1459
 +
 +	mpp_debug(DEBUG_IOCTL, "cmd %x process\n", req->cmd);
 +
-+	/* Scalar commands must not access a word outside the declared payload. */
++	/* Legacy discovery omits size, but still transfers one checked user word. */
 +	switch (req->cmd) {
 +	case MPP_CMD_QUERY_HW_SUPPORT:
-+	case MPP_CMD_QUERY_HW_ID:
 +	case MPP_CMD_QUERY_CMD_SUPPORT:
++		if (!req->size && !req->offset && !req->flags)
++			break;
++		fallthrough;
++	case MPP_CMD_QUERY_HW_ID:
 +	case MPP_CMD_INIT_CLIENT_TYPE:
 +	case MPP_CMD_INIT_DRIVER_DATA:
 +		if (req->size != sizeof(u32))
