@@ -102,6 +102,9 @@ accepts **both** layouts, so the move is a `git mv` with no edits.
 
 ## Running the self-tests
 
+The clock-enable row re-captures its journal after the recovery encode; its
+self-test rejects a report emitted only during that otherwise successful encode.
+
 The optional idle-window experiment is explicit-only:
 `fault-controls-probe.sh --row idle-iommu-fault --driver island|rewrite`.
 It is not part of that probe's five-control `--row all` sweep and never enters
