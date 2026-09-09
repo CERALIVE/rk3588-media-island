@@ -862,6 +862,20 @@ st_fatal_stop() {
 	printf 'self-test=fatal-stop PASS kasan-row=%s stopped=%s benign-window-clean summary-fatal-field-ok\n' "$row" "$next"
 }
 
+st_option_values() {
+	local option got
+	for option in --driver --out --row --probe-mpp --invalid-ioctl --expect-bits; do
+		CERALIVE_BOARD_TEST=0 timeout 2 bash "$HERE/fault-matrix.sh" "$option" >/dev/null 2>&1; got=$?
+		printf 'self-test=missing-option-value option=%s want=2 got=%s\n' "$option" "$got"
+		[[ $got == "$USAGE" ]] || return "$FAIL"
+	done
+	CERALIVE_BOARD_TEST=0 timeout 2 bash "$HERE/fault-matrix.sh" \
+		--driver island --out 'unused path with spaces' --row all \
+		--probe-mpp unused --invalid-ioctl unused --expect-bits 0x00010000 >/dev/null 2>&1; got=$?
+	printf 'self-test=present-option-values want=77 got=%s\n' "$got"
+	[[ $got == "$GATED" ]]
+}
+
 self_test() {
 	local expected fixtures scratch rc=0 island rewrite
 
@@ -894,6 +908,7 @@ self_test() {
 	st_wedge_reaped "$scratch/wedge-reaped.log" || rc=1
 	st_wedge_unreapable "$scratch/wedge-unreapable.log" || rc=1
 	st_fatal_stop "$scratch" || rc=1
+	st_option_values || rc=1
 
 	rm -rf "$scratch"
 	((rc == 0)) || return "$FAIL"
@@ -903,9 +918,14 @@ self_test() {
 main() {
 	local self=0 baseline name failures=0 gated=0 rc
 	while (($#)); do case "$1" in
-		--out) OUT=${2:-}; shift 2;; --row) ROW=${2:-}; shift 2;;
-		--probe-mpp) PROBE_MPP=${2:-}; shift 2;; --invalid-ioctl) INVALID_IOCTL=${2:-}; shift 2;;
-		--driver) DRIVER=${2:-}; shift 2;; --expect-bits) EXPECT_BITS=${2:-}; shift 2;;
+		--out|--row|--probe-mpp|--invalid-ioctl|--driver|--expect-bits)
+			(($# >= 2)) || { usage; return "$USAGE"; }
+			case "$1" in
+			--out) OUT=$2;; --row) ROW=$2;;
+			--probe-mpp) PROBE_MPP=$2;; --invalid-ioctl) INVALID_IOCTL=$2;;
+			--driver) DRIVER=$2;; --expect-bits) EXPECT_BITS=$2;;
+			esac
+			shift 2;;
 		--self-test) self=1; shift;;
 		-h|--help) usage; return "$USAGE";; *) usage; return "$USAGE";; esac; done
 	((self)) && { self_test; return; }

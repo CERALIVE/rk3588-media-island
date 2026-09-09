@@ -104,6 +104,10 @@ accepts **both** layouts, so the move is a `git mv` with no edits.
 
 ## Running the self-tests
 
+Both fault drills reject a value-taking option with no following argument with
+usage exit `2`, before board admission. Their self-tests exercise every such
+option under a timeout, and confirm valid arguments still reach the board gate.
+
 The clock-enable row re-captures its journal after the recovery encode; its
 self-test rejects a report emitted only during that otherwise successful encode.
 It accepts the driver's numeric `clk_on failed: -5` diagnostic as well as the
