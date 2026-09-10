@@ -123,6 +123,13 @@ downstream — the matrix arms only FOUR controls, because
 (`NOT-IN-MATRIX`), and the other five had never been board-proven on the island
 at all, which is why `fault-controls-probe.sh` exists.
 
+**Matrix verdicts follow final journal validation, never precede it.** Both
+captures check command status, and both journal screens distinguish a match
+from no-match and scanner failure. `journal-capture` / `journal-scan` fail closed
+and stop the campaign even if the available text looks clean; a later successful
+capture cannot erase an earlier I/O failure. Host campaign regressions run on
+both fixture profiles. See the T4 reason contract and `tests/board/README.md`.
+
 `/sys/kernel/debug/rkvenc-test` is deliberately the SAME path on the production
 seam and on the comparison overlay. That is not an oversight and must not be
 "disambiguated": identical names are what let one harness score both drivers and
