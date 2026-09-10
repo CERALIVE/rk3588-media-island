@@ -146,6 +146,8 @@ jobs:
           bash scripts/check-telemetry-contract.sh || rc=1
           printf '=== scripts/check-telemetry-contract.sh --self-test ===\n'
           bash scripts/check-telemetry-contract.sh --self-test || rc=1
+          bash scripts/check-fault-seam-contract.sh || rc=1
+          bash scripts/check-fault-seam-contract.sh --self-test || rc=1
           printf '=== scripts/vendor-backlog.sh --self-test ===\n'
           bash scripts/vendor-backlog.sh --self-test || rc=1
           exit "$rc"
@@ -748,8 +750,8 @@ jobs:
 
   # The one check a branch-protection rule can require. It runs on every event,
   # including a docs-only pull request where every gate above skipped, and goes
-  # red whenever a dependency failed or was cancelled. A SKIPPED dependency is a
-  # pass -- that is the whole point of the gating above.
+  # red whenever a dependency failed or was cancelled. A skipped dependency is
+  # allowed only when changes classified the event as documentation-only.
   #
   # `action-pins` is deliberately absent: it is `continue-on-error: true` by
   # design (an action publishing a new major must not turn an unrelated pull
@@ -774,9 +776,10 @@ jobs:
       - static-analysis
     runs-on: ubuntu-latest
     steps:
-      - name: Fail if any dependency failed or was cancelled
+      - name: Fail on failed, cancelled or unexpectedly skipped dependencies
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
+          CODE_CHANGED: ${{ needs.changes.outputs.code }}
         run: |
           set -euo pipefail
           echo "dependency results: ${RESULTS}"
@@ -794,4 +797,4 @@ jobs:
                 ;;
             esac
           done
-          echo "every dependency succeeded or was skipped"
+          echo "every dependency succeeded or had a docs-only skip"
