@@ -81,6 +81,7 @@ HEALTHY_WEDGED=
 SCORE_GAPS=
 SCORE_REASON=
 SCORE_RESET_DELTA=
+SCORE_FPS=
 
 usage() {
 	printf 'usage: %s [--out DIR] [--row NAME|all] [--probe-mpp FILE] [--invalid-ioctl FILE]\n' "$0" >&2
@@ -470,14 +471,14 @@ snapshot_quiesced() {
 # board and no hardware. An assertion whose metric is GAP on the active profile
 # is neither passed nor failed: it joins SCORE_GAPS and is reported.
 #
-# Every assertion line below is BYTE-IDENTICAL to the one that has been running
-# on boards, third parameter named IDLE_BASELINE and all. That is why they sit
+# The metric assertion lines retain their board-tested form, third parameter
+# named IDLE_BASELINE and all. That is why they sit
 # at the outer indent inside their guards, and why SCORE_REASON is set ahead of
 # each rather than inside its failure branch: an extraction that rewrites the
 # assertions cannot prove it did not also weaken one.
 score_snapshots() {
 	local before=$1 after=$2 IDLE_BASELINE=$3 journal=$4 name=$5
-	local gap journal_bad reset_delta counter before_count after_count
+	local gap reset_delta counter before_count after_count
 
 	SCORE_GAPS=
 	SCORE_REASON=recovery-assertion
@@ -505,9 +506,7 @@ score_snapshots() {
 	[[ $(awk '$1=="global"&&$2=="iommu_maps"{print $3}' "$IDLE_BASELINE") == $(awk '$1=="global"&&$2=="iommu_maps"{print $3}' "$after") ]] || return "$FAIL"
 	fi
 
-	journal_bad=$(grep -Eic "$JOURNAL_BAD_SIGNATURES" "$journal" || true)
-	SCORE_REASON=journal
-	((journal_bad == 0)) || return "$FAIL"
+	journal_clean "$journal" || return "$FAIL"
 
 	gap=$(metric_gap "$after" resets)
 	[[ -n $gap ]] || gap=$(metric_gap "$before" resets)
@@ -535,6 +534,17 @@ score_snapshots() {
 	SCORE_REASON=recovery-assertion
 }
 
+journal_clean() {
+	local scan_rc=0
+	# Do not use -q: a match must not hide a later read error.
+	grep -Ei "$JOURNAL_BAD_SIGNATURES" "$1" >/dev/null || scan_rc=$?
+	case $scan_rc in
+	0) SCORE_REASON=journal; return "$FAIL" ;;
+	1) return 0 ;;
+	*) SCORE_REASON='journal-scan'; return "$FAIL" ;;
+	esac
+}
+
 score_row() {
 	local name=$1 baseline=$2 before=$3 after=$4 since=$5 fps
 	SCORE_REASON=recovery-assertion
@@ -549,35 +559,56 @@ score_row() {
 		snapshot "$after" || return "$FAIL"
 		snapshot_quiesced "$after" "$IDLE_BASELINE" && break
 	done
-	journalctl -k -b --since "@$since" --no-pager >"$OUT/$name.journal"
+	if ! journalctl -k -b --since "@$since" --no-pager >"$OUT/$name.journal" 2>&1; then
+		SCORE_REASON='journal-capture'
+		return "$FAIL"
+	fi
 	score_snapshots "$before" "$after" "$IDLE_BASELINE" "$OUT/$name.journal" "$name" || return "$FAIL"
 	[[ ! -r /proc/lockdep_stats ]] || grep -q '^ debug_locks: *1$' /proc/lockdep_stats || return "$FAIL"
+	SCORE_FPS=$fps
+}
+
+survive_row() {
 	printf 'row=%s verdict=SURVIVE baseline_fps=%s healthy_fps=%s reset_delta=%s busy=%s queue_depth=%s dmabufs=%s iommu_maps=%s journal_bad=0%s\n' \
-		"$name" "$baseline" "$fps" "$SCORE_RESET_DELTA" \
+		"$1" "$2" "$SCORE_FPS" "$SCORE_RESET_DELTA" \
 		"$(field_state busy 0)" "$(field_state queue_depth 0)" \
 		"$(field_state dmabufs baseline)" "$(field_state iommu_maps baseline)" \
 		"${SCORE_GAPS:+ gaps=$SCORE_GAPS}"
 }
 
-# fatal_check — a row whose journal window carries a fatal signature, or a row
-# that wedged, ends the campaign. Everything after it would be measuring a
-# kernel whose state is already untrustworthy.
+# fatal_check — final journal validation after cleanup. Fatal reports, wedges
+# and unknown journal state stop the campaign; a lone warning fails only its row.
 fatal_check() {
-	local name=$1 since=$2 journal
+	local name=$1 since=$2 journal scan_rc=0 journal_error=
 	journal="$OUT/$name.journal"
+	case "$SCORE_REASON" in
+	journal-capture|journal-scan) journal_error=$SCORE_REASON; FATAL=$name ;;
+	healthy-wedge) FATAL=$name ;;
+	esac
 	# Always refresh after cleanup: score_row may have captured an earlier window.
 	if ! journalctl -k -b --since "@$since" --no-pager >"$journal" 2>&1; then
 		SCORE_REASON='journal-capture'
 		FATAL=$name
 		return "$FAIL"
 	fi
-	if grep -Eiq "$FATAL_SIGNATURES" "$journal" 2>/dev/null; then
+	grep -Ei "$FATAL_SIGNATURES" "$journal" >/dev/null || scan_rc=$?
+	case $scan_rc in
+	0)
 		SCORE_REASON='journal-fatal'
 		FATAL=$name
-	elif [[ $SCORE_REASON == healthy-wedge ]]; then
+		;;
+	1) ;;
+	*)
+		SCORE_REASON='journal-scan'
 		FATAL=$name
+		;;
+	esac
+	[[ -z $journal_error ]] || SCORE_REASON=$journal_error
+	[[ -z $FATAL ]] || return "$FAIL"
+	if ! journal_clean "$journal"; then
+		[[ $SCORE_REASON != journal-scan ]] || FATAL=$name
+		return "$FAIL"
 	fi
-	[[ -z $FATAL ]]
 }
 
 skip_row_after_fatal() {
@@ -595,9 +626,9 @@ run_row() {
 	SCORE_REASON=
 	snapshot "$before"
 	stimulate "$name" || rc=$?
-	if ((rc == GATED)); then printf 'row=%s verdict=GATED reason=stimulus-unavailable\n' "$name"; return "$GATED"; fi
-	((rc == 0)) || { printf 'row=%s verdict=FAIL reason=stimulus\n' "$name"; return "$FAIL"; }
-	score_row "$name" "$baseline" "$before" "$after" "$since" || { printf 'row=%s verdict=FAIL reason=%s\n' "$name" "${SCORE_REASON:-recovery-assertion}"; return "$FAIL"; }
+	if ((rc == GATED)); then SCORE_REASON=stimulus-unavailable; return "$GATED"; fi
+	((rc == 0)) || { SCORE_REASON=stimulus; return "$FAIL"; }
+	score_row "$name" "$baseline" "$before" "$after" "$since"
 }
 
 # The admitted campaign, separate from hardware admission so fixtures run the
@@ -619,20 +650,23 @@ matrix_rows() {
 			baseline=$(sample_fps)
 			run_row "$name" "$baseline"; rc=$?
 		else
-			printf 'row=%s verdict=FAIL reason=healthy-start\n' "$name"
+			SCORE_REASON=healthy-start
 			rc=$FAIL
 		fi
 		if ! healthy_stop; then
 			SCORE_REASON=healthy-wedge
-			((rc == FAIL)) || { printf 'row=%s verdict=FAIL reason=healthy-wedge\n' "$name"; rc=$FAIL; }
+			rc=$FAIL
 			FATAL=$name
 		fi
 		if ! fatal_check "$name" "$ROW_SINCE"; then
-			((rc == FAIL)) || printf 'row=%s verdict=FAIL reason=%s\n' "$name" "$SCORE_REASON"
 			rc=$FAIL
 		fi
+		case $rc in
+		0) survive_row "$name" "$baseline" ;;
+		"$GATED") printf 'row=%s verdict=GATED reason=%s\n' "$name" "$SCORE_REASON"; ((gated++)) ;;
+		*) printf 'row=%s verdict=FAIL reason=%s\n' "$name" "${SCORE_REASON:-recovery-assertion}"; ((failures++)) ;;
+		esac
 		((started)) || return "$FAIL"
-		case $rc in 0) ;; "$GATED") ((gated++));; *) ((failures++));; esac
 	done
 	summary_line "$failures" "$gated" "${baseline:-0}" "$OUT"
 	((failures == 0 && gated == 0))
@@ -992,6 +1026,117 @@ st_journal_windows() (
 	return "$rc"
 )
 
+# Replay the admitted campaign, including both captures and both scanners.
+# Only hardware/clock operations and the selected I/O failure are substituted.
+st_journal_validation() (
+	local scratch=$1 fixtures=$2 profile=$3 mode='' OUT='' error_status got rc=0
+	local journal_calls=0 stimulus_calls expected_fatal expected_reason expected_rc
+	local row fixture_row=hardware-hang capture_error_at scanner_error_at scanner_pattern
+	PROBE_MPP=true
+	date() { printf '100\n'; }
+	sleep() { :; }
+	snapshot() { cp "$fixtures/$fixture_row.${1##*.}" "$1"; }
+	sample_fps() { printf '30\n'; }
+	healthy_start() { HEALTHY_PID=$$; }
+	healthy_stop() { return 0; }
+	stimulate() { stimulus_calls=$((stimulus_calls + 1)); }
+	gst-launch-1.0() { return 0; }
+	journalctl() {
+		journal_calls=$((journal_calls + 1))
+		if command grep -q '^row=.*verdict=' "$OUT/result"; then
+			printf 'premature-verdict\n' >>"$OUT/events"
+		fi
+		case "$mode" in
+		*fatal*) printf 'kernel: BUG: KASAN: synthetic saved report\n' ;;
+		warning) printf 'kernel: WARNING: synthetic saved report\n' ;;
+		cleanup-warning) ((journal_calls < 2)) || printf 'kernel: WARNING: cleanup report\n' ;;
+		clean-record) printf 'kernel: recovery complete\n' ;;
+		esac
+		((journal_calls != capture_error_at))
+	}
+	grep() {
+		if [[ ${2:-} == "$JOURNAL_BAD_SIGNATURES" || ${2:-} == "$FATAL_SIGNATURES" ]]; then
+			if command grep -q '^row=.*verdict=' "$OUT/result"; then
+				printf 'premature-verdict\n' >>"$OUT/events"
+			fi
+		fi
+		if [[ ${2:-} == "$scanner_pattern" || ( $scanner_pattern == both && ( ${2:-} == "$JOURNAL_BAD_SIGNATURES" || ${2:-} == "$FATAL_SIGNATURES" ) ) ]]; then
+			if ((scanner_error_at == 0 || journal_calls == scanner_error_at)); then
+				printf 'scanner-error\n' >>"$OUT/events"
+				printf 'grep: synthetic journal read error\n' >&2
+				return "$error_status"
+			fi
+		fi
+		command grep "$@"
+	}
+	for mode in clean-empty clean-record fatal warning cleanup-warning \
+		capture-early-empty capture-early-fatal capture-final-empty capture-final-fatal \
+		scan-early-empty scan-early-fatal scan-final-empty scan-final-fatal \
+		scan-bad-final-empty scan-both-empty scan-both-fatal scan-both-sweep-empty scan-both-sweep-fatal; do
+		for error_status in 2 3; do
+			[[ $mode == scan-* || $error_status == 2 ]] || continue
+			OUT="$scratch/validation-$profile-$mode-$error_status"
+			mkdir -p "$OUT"
+			: >"$OUT/events"
+			ROW=hardware-hang; row=$ROW
+			FATAL=; SCORE_REASON=; journal_calls=0; stimulus_calls=0
+			capture_error_at=0; scanner_error_at=0; scanner_pattern=none
+			expected_rc=$FAIL; expected_fatal=$row
+			case "$mode" in
+			clean-*) expected_rc=0; expected_fatal=; expected_reason= ;;
+			fatal) expected_reason='journal-fatal' ;;
+			*warning) expected_fatal=; expected_reason=journal ;;
+			capture-early-*) capture_error_at=1; expected_reason='journal-capture' ;;
+			capture-final-*) capture_error_at=2; expected_reason='journal-capture' ;;
+			scan-early-*) scanner_error_at=1; scanner_pattern=$JOURNAL_BAD_SIGNATURES; expected_reason='journal-scan' ;;
+			scan-final-*) scanner_error_at=2; scanner_pattern=$FATAL_SIGNATURES; expected_reason='journal-scan' ;;
+			scan-bad-final-*) scanner_error_at=2; scanner_pattern=$JOURNAL_BAD_SIGNATURES; expected_reason='journal-scan' ;;
+			scan-both-*)
+				scanner_pattern=both; expected_reason='journal-scan'
+				if [[ $mode == scan-both-sweep-* ]]; then
+					ROW=all; row=${ROWS[0]}; expected_fatal=$row
+				fi ;;
+			esac
+			matrix_rows >"$OUT/result" 2>&1; got=$?
+			printf 'self-test=journal-validation profile=%s mode=%s scanner_status=%s exit=%s FATAL=%s captures=%s stimuli=%s\n' \
+				"$profile" "$mode" "$error_status" "$got" "${FATAL:-EMPTY}" "$journal_calls" "$stimulus_calls"
+			if [[ $got != "$expected_rc" || $FATAL != "$expected_fatal" || $journal_calls != 2 || $stimulus_calls != 1 ]]; then
+				rc=1
+			fi
+			if command grep -q premature-verdict "$OUT/events"; then
+				printf 'self-test=journal-validation FAIL reason=premature-verdict mode=%s\n' "$mode"
+				rc=1
+			fi
+			if [[ $mode == scan-* ]] && ! command grep -q scanner-error "$OUT/events"; then
+				printf 'self-test=journal-validation FAIL reason=scanner-not-exercised mode=%s\n' "$mode"
+				rc=1
+			fi
+			if ((expected_rc == 0)); then
+				command grep -q "^row=$row verdict=SURVIVE .*journal_bad=0" "$OUT/result" || rc=1
+			else
+				if command grep -q 'verdict=SURVIVE' "$OUT/result"; then
+					printf 'self-test=journal-validation FAIL reason=false-survive mode=%s\n' "$mode"
+					rc=1
+				fi
+				# An earlier capture/scanner failure must remain the row reason,
+				# even when a later scan succeeds and sees a fatal report.
+				command grep -qx "row=$row verdict=FAIL reason=$expected_reason" "$OUT/result" || rc=1
+			fi
+			[[ $(command grep -c "^row=$row verdict=" "$OUT/result") == 1 ]] || rc=1
+			if [[ $ROW == all ]]; then
+				[[ $(command grep -c "verdict=GATED reason=stopped-after-$row" "$OUT/result") == $((${#ROWS[@]} - 1)) ]] || rc=1
+			fi
+		done
+	done
+	# No scanner override: a real grep directory-read error is not no-match.
+	unset -f grep
+	mkdir -p "$scratch/journal-directory-$profile"
+	st_score "$profile-journal-directory" RED journal-scan \
+		"$fixtures/$fixture_row.before" "$fixtures/$fixture_row.after" \
+		"$fixtures/$fixture_row.idle-baseline" "$scratch/journal-directory-$profile" "$fixture_row" || rc=1
+	return "$rc"
+)
+
 self_test() {
 	local expected fixtures scratch rc=0 island rewrite
 
@@ -1026,6 +1171,8 @@ self_test() {
 	st_fatal_stop "$scratch" || rc=1
 	st_option_values || rc=1
 	st_journal_windows "$scratch" "$rewrite" || rc=1
+	st_journal_validation "$scratch" "$island/initial-run" island || rc=1
+	st_journal_validation "$scratch" "$rewrite" rewrite || rc=1
 
 	rm -rf "$scratch"
 	((rc == 0)) || return "$FAIL"
