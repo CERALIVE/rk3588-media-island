@@ -171,6 +171,8 @@ static void fill_img(struct rga_img_info_t *img, int dmabuf_fd, uint32_t format)
 	img->vir_w = BLIT_W;
 	img->vir_h = BLIT_H;
 	img->enable = 1;
+	/* Todo 26 RUN20 (2026-09-10): zero is not raster; see README.md. */
+	img->rd_mode = RGA_RASTER_MODE;
 }
 
 static int do_blit(int rga_fd, const struct dmabuf *src, const struct dmabuf *dst)
@@ -224,6 +226,7 @@ static int self_test(void)
 
 	if (req->src.yrgb_addr != 7u || req->dst.yrgb_addr != 8u ||
 	    req->src.format != RGA_FORMAT_YCbCr_420_SP ||
+	    req->src.rd_mode != 1u || req->dst.rd_mode != 1u ||
 	    req->dst.act_w != BLIT_W || req->dst.enable != 1u) {
 		fprintf(stderr, "FAIL: request prefix was not populated\n");
 		return EXIT_FAIL;
@@ -301,8 +304,13 @@ int main(int argc, char **argv)
 	}
 	printf("rga_node=%s\n", RGA_NODE);
 
+	/*
+	 * Todo 26 RUN19 (2026-09-10): rga_ioctl() returns true (+1) after
+	 * copying either version payload. Only negative returns are errors;
+	 * requiring zero falsely rejected both replies. See README.md.
+	 */
 	memset(&drv, 0, sizeof(drv));
-	if (ioctl(rga_fd, RGA_IOC_GET_DRVIER_VERSION, &drv) == 0)
+	if (ioctl(rga_fd, RGA_IOC_GET_DRVIER_VERSION, &drv) >= 0)
 		printf("driver_version=ok major=%u minor=%u revision=%u str=%.*s\n",
 		       drv.major, drv.minor, drv.revision, RGA_VERSION_SIZE,
 		       (const char *)drv.str);
@@ -313,7 +321,7 @@ int main(int argc, char **argv)
 	}
 
 	memset(&hw, 0, sizeof(hw));
-	if (ioctl(rga_fd, RGA_IOC_GET_HW_VERSION, &hw) == 0) {
+	if (ioctl(rga_fd, RGA_IOC_GET_HW_VERSION, &hw) >= 0) {
 		printf("hw_version=ok cores=%u\n", hw.size);
 		for (i = 0; i < hw.size && i < RGA_HW_SIZE; i++)
 			printf("hw_core[%u]=major=%u minor=%u revision=%u str=%.*s\n",
