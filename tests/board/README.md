@@ -31,6 +31,7 @@ accepts the earlier Phase-0 layout for retained historical runs.
 | `rga-psnr-oracle.sh` | does the RGA3 crop/scale/transpose victim preserve 600 frames at async depths 2 and 0, above 35 dB mean PSNR? | comparison kernel / todo 26 RGA oracle |
 | `control-encode-per-codec.sh` | does a cold boot encode every supported control codec, with H.265 deliberately first? | todo 9 / board gates 14, 16 and 17 |
 | `rkvenc-fault-campaign.sh` | do the canonical malformed ioctls keep their exact errno while the known BASE-only harness case stays honestly red? | todo 9 |
+| `fault-controls-probe.sh` | do the five fault controls no matrix row consumes actually fire, exactly once, with their documented errno and a recovering device? | fault-seam parity / the five non-matrix controls |
 | `run-baseline.sh` | all five, written into the baseline document and the ledger | 3(a)–(e) |
 
 ---
@@ -102,6 +103,32 @@ detects IDRs but cannot infer why the encoder generated one. The software
 self-test deliberately uses known periodic GOPs to prove the parser and score,
 then a real local Unix socket peer to prove RPC framing and acknowledgements.
 Neither fixture is a hardware-latency or zero-copy result.
+
+## Fault-control write boundary
+
+   `fault-controls-probe.sh` is a named exception, and it is a narrow one. It
+   performs exactly two kinds of write. First, it arms one-shot fault knobs in
+   the seam directory `/sys/kernel/debug/rkvenc-test/` — the same nodes
+   `fault-matrix.sh` already arms for its four matrix controls. Second, for the
+   three controls that only fire inside the driver's probe path
+   (`service-attach`, `ccu-attach`, `irq-request`) it detaches and reattaches
+   **one** encoder core, by writing that core's name into the `unbind` and then
+   the `bind` attribute of its platform-bus driver directory. Both the core name
+   and the driver directory are read off the bus at run time, so no board
+   device-node address is spelled anywhere in this directory and the literal
+   screen below stays empty.
+
+   Nothing else is touched: no unit is controlled, no module is loaded or
+   unloaded, and the core is reattached from a `trap` on every exit path,
+   including a failed assertion. Both write kinds require an `edge-test` kernel
+   carrying `CONFIG_KASAN=y`, `CONFIG_PROVE_LOCKING=y` and the active profile's
+   fault-seam symbol, plus `CERALIVE_BOARD_TEST=1`, root, and a caller holding
+   the external board lock — the drill exits `77` rather than writing anything
+   if any of those is missing, and it must never be pointed at a production
+   kernel. The three probe-time rows are gated once more on top of that:
+   `docs/FAULT-SEAM-CONTRACT.md` must record `bind-attr: yes` for the active
+   driver, and without that recorded check each row reports
+   `GATED reason=no-bind-attr` and performs no write at all.
 
 ---
 
