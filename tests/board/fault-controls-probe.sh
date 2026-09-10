@@ -48,6 +48,11 @@ set -uo pipefail
 readonly FAIL=1 USAGE=2 GATED=77
 
 readonly ROWS=(session-alloc clock-enable service-attach ccu-attach irq-request)
+readonly IDLE_FILES=(inject_iommu_fault_idle_ms inject_iommu_fault_idle_consumed
+	inject_iommu_fault_idle_fired inject_iommu_fault_idle_state)
+IDLE_SNAPSHOT_FN=idle_snapshot
+IDLE_WAIT_FN=idle_wait
+IDLE_QUIET_FN=idle_no_encode
 
 # Knob, expected errno and probe-time class per row. The counter is ALWAYS
 # "<knob>_consumed" for these five: all of them are flag knobs registered through
@@ -128,6 +133,7 @@ usage() {
 	printf '       %*s [--probe-mpp FILE] [--invalid-ioctl FILE]\n' "${#0}" '' >&2
 	printf '       %s --self-test\n' "$0" >&2
 	printf 'rows: %s\n' "${ROWS[*]}" >&2
+	printf 'explicit idle-only row: idle-iommu-fault (not part of --row all)\n' >&2
 }
 
 # ---------------------------------------------------------------------------
@@ -329,6 +335,7 @@ gate_config() {
 # wrong was a harness and its self-test agreeing on a name the driver never had.
 seam_inventory() {
 	local row knob missing=()
+	idle_inventory || return $?
 	for row in "${ROWS[@]}"; do
 		[[ $ROW == all || $ROW == "$row" ]] || continue
 		knob=${KNOB[$row]}
@@ -399,6 +406,99 @@ assert_recovery_encode() {
 # proves the FOLLOWING attach succeeds because the knob is one-shot
 # (KP tests/rkvenc-invalid-ioctl.c). Arming it here as well would consume the
 # one shot before the harness ever reached it.
+idle_inventory() {
+	local file present=0
+	for file in "${IDLE_FILES[@]}"; do
+		[[ ! -e $FAULT_DEBUG/$file ]] || ((present += 1))
+	done
+	if ((present != 0 && present != ${#IDLE_FILES[@]})); then
+		printf 'preflight verdict=FAIL reason=idle-seam-inventory present=%s\n' "$present"
+		return "$FAIL"
+	fi
+	if [[ $ROW == idle-iommu-fault && $present == 0 ]]; then
+		printf 'row=idle-iommu-fault verdict=GATED reason=no-idle-control\n'
+		return "$GATED"
+	fi
+}
+
+idle_snapshot() {
+	local dest=$1
+	snapshot "$dest" || return "$GATED"
+	metric_present "$dest" busy && metric_present "$dest" queue_depth || return "$GATED"
+	printf 'fault %s %s\n' "${IDLE_FILES[2]}" "$(<"$FAULT_DEBUG/${IDLE_FILES[2]}")" >>"$dest"
+	printf 'state %s\n' "$(<"$FAULT_DEBUG/${IDLE_FILES[3]}")" >>"$dest"
+	[[ -r /sys/kernel/debug/dma_buf/bufinfo ]] || return "$GATED"
+	awk '/^Total [0-9]+ objects/{print "global dmabufs",$2}' /sys/kernel/debug/dma_buf/bufinfo >>"$dest"
+	metric_present "$dest" dmabufs || return "$GATED"
+	if [[ $DRIVER == island ]]; then
+		[[ -r /proc/mpp_service/sessions-summary ]] || return "$GATED"
+		printf 'global iommu_maps %s\n' "$(grep -c '^ *[0-9][0-9]*: 0x' /proc/mpp_service/sessions-summary || true)" >>"$dest"
+	fi
+}
+
+idle_wait() { sleep 6; }
+idle_no_encode() { ! pgrep -x gst-launch-1.0 >/dev/null; }
+
+row_idle_iommu_fault() (
+	local before="$OUT/idle-iommu-fault.before" after="$OUT/idle-iommu-fault.after"
+	local recovered="$OUT/idle-iommu-fault.recovered" journal="$OUT/idle-iommu-fault.journal"
+	local since consumed fired state metric value gaps=
+	"$IDLE_SNAPSHOT_FN" "$before" || { printf 'row=idle-iommu-fault verdict=GATED reason=idle-metrics\n'; return "$GATED"; }
+	if ! "$IDLE_QUIET_FN" || [[ $(metric_sum "$before" busy) != 0 || $(metric_sum "$before" queue_depth) != 0 ]]; then
+		printf 'row=idle-iommu-fault verdict=GATED reason=not-idle\n'
+		return "$GATED"
+	fi
+	since=$(date +%s)
+	trap 'arm "${IDLE_FILES[0]}" 0' EXIT
+	arm "${IDLE_FILES[0]}" 3000 || return "$FAIL"
+	if ! "$ENCODE_FN" "$OUT/idle-iommu-fault.stimulus"; then
+		printf 'row=idle-iommu-fault verdict=FAIL reason=stimulus\n'
+		return "$FAIL"
+	fi
+	"$IDLE_WAIT_FN" || return "$FAIL"
+	"$JOURNAL_FN" "$since" "$journal" || return "$FAIL"
+	assert_journal_clean idle-iommu-fault "$journal" || return "$FAIL"
+	"$IDLE_SNAPSHOT_FN" "$after" || return "$FAIL"
+	consumed=$(counter_delta "$before" "$after" "${IDLE_FILES[1]}") || return "$FAIL"
+	fired=$(counter_delta "$before" "$after" "${IDLE_FILES[2]}") || return "$FAIL"
+	state=$(awk '$1=="state"{print $2}' "$after")
+	if [[ $consumed != 1 || $fired != 1 ]]; then
+		printf 'row=idle-iommu-fault verdict=FAIL reason=counter-delta consumed=%s fired=%s\n' "$consumed" "$fired"
+		return "$FAIL"
+	fi
+	case "$state" in
+	suspended|not-suspended) ;;
+	*) printf 'row=idle-iommu-fault verdict=FAIL reason=not-fired state=%s\n' "$state"; return "$FAIL" ;;
+	esac
+	if [[ $(knob_value "${IDLE_FILES[0]}") != 0 ]]; then
+		printf 'row=idle-iommu-fault verdict=FAIL reason=knob-not-reset\n'
+		return "$FAIL"
+	fi
+	if ! grep -q "idle-iommu-fault state=$state errno=0 returned" "$journal"; then
+		printf 'row=idle-iommu-fault verdict=FAIL reason=errno\n'
+		return "$FAIL"
+	fi
+	assert_recovery_encode idle-iommu-fault "$OUT/idle-iommu-fault.clean" || return "$FAIL"
+	"$IDLE_WAIT_FN" || return "$FAIL"
+	"$IDLE_SNAPSHOT_FN" "$recovered" || return "$FAIL"
+	for metric in busy queue_depth dmabufs iommu_maps; do
+		value=$(metric_sum "$before" "$metric")
+		if [[ $(metric_sum "$after" "$metric") != "$value" || $(metric_sum "$recovered" "$metric") != "$value" ]]; then
+			printf 'row=idle-iommu-fault verdict=FAIL reason=baseline metric=%s\n' "$metric"
+			return "$FAIL"
+		fi
+	done
+	for metric in "${IDLE_FILES[1]}" "${IDLE_FILES[2]}"; do
+		if [[ $(counter_delta "$before" "$recovered" "$metric") != 1 ]]; then
+			printf 'row=idle-iommu-fault verdict=FAIL reason=refired counter=%s\n' "$metric"
+			return "$FAIL"
+		fi
+	done
+	"$JOURNAL_FN" "$since" "$journal" || return "$FAIL"
+	assert_journal_clean idle-iommu-fault "$journal" || return "$FAIL"
+	printf 'row=idle-iommu-fault verdict=SURVIVE state=%s driver=%s consumed_delta=1 fired_delta=1 errno=0 busy=0 queue_depth=0 recovery=ok journal_bad=0%s\n' "$state" "$DRIVER" "$gaps"
+)
+
 row_session_alloc() {
 	local before="$OUT/session-alloc.before" after="$OUT/session-alloc.after"
 	local log="$OUT/session-alloc.ioctl" journal="$OUT/session-alloc.journal"
@@ -590,7 +690,11 @@ run_row() {
 drill() {
 	local row rc=0 passes=0 failures=0 gated=0
 	gate_config || return $?
-	seam_inventory || return "$FAIL"
+	seam_inventory || return $?
+	if [[ $ROW == idle-iommu-fault ]]; then
+		row_idle_iommu_fault
+		return
+	fi
 	trap rebind_guard EXIT
 	for row in "${ROWS[@]}"; do
 		[[ $ROW == all || $ROW == "$row" ]] || continue
@@ -849,6 +953,88 @@ st_fixture_one_shot() {
 	ST_LEGS+="leg=fixture-one-shot want=0 got=0 token=n/a verdict=$verdict"$'\n'
 }
 
+FX_IDLE_MODE=once
+FX_IDLE_STATE=suspended
+FX_IDLE_PENDING=0
+
+fx_idle_encode() {
+	if [[ $1 == *.clean && $FX_IDLE_MODE == recovery ]]; then return 1; fi
+	if [[ $(knob_value "${IDLE_FILES[0]}") != 0 ]]; then
+		[[ $FX_IDLE_MODE == sticky ]] || arm "${IDLE_FILES[0]}" 0
+		[[ $FX_IDLE_MODE == never ]] || fx_bump "${IDLE_FILES[1]}"
+		[[ $FX_IDLE_MODE != twice ]] || fx_bump "${IDLE_FILES[1]}"
+		FX_IDLE_PENDING=1
+	fi
+	printf 'synthetic completed encode\n' >"$1"
+}
+
+fx_idle_wait() {
+	if ((FX_IDLE_PENDING)); then
+		FX_IDLE_PENDING=0
+		[[ $FX_IDLE_MODE != no-fire ]] || return 0
+		fx_bump "${IDLE_FILES[2]}"
+		printf '%s\n' "$FX_IDLE_STATE" >"$FAULT_DEBUG/${IDLE_FILES[3]}"
+		if [[ $FX_IDLE_MODE == journal ]]; then
+			fx_journal_append 'BUG: synthetic idle diagnostic'
+		else
+			fx_journal_append "idle-iommu-fault state=$FX_IDLE_STATE errno=$([[ $FX_IDLE_MODE == errno ]] && printf '%s' -19 || printf 0) returned"
+		fi
+		[[ $FX_IDLE_MODE != baseline ]] || printf '1\n' >"$MPP_DEBUG/queue_depth"
+	elif [[ $FX_IDLE_MODE == refire ]]; then
+		fx_bump "${IDLE_FILES[2]}"
+	fi
+}
+
+fx_idle_snapshot() {
+	snapshot "$1"
+	{
+		printf 'fault %s %s\n' "${IDLE_FILES[2]}" "$(<"$FAULT_DEBUG/${IDLE_FILES[2]}")"
+		printf 'state %s\n' "$(<"$FAULT_DEBUG/${IDLE_FILES[3]}")"
+		printf 'global dmabufs 0\nglobal iommu_maps 0\n'
+	} >>"$1"
+}
+
+idle_self_test() {
+	local driver mode file want token
+	ST_WORK=$(mktemp -d) || return "$FAIL"
+	ST_LEGS=
+	IDLE_SNAPSHOT_FN=fx_idle_snapshot
+	IDLE_WAIT_FN=fx_idle_wait
+	ENCODE_FN=fx_idle_encode
+	for driver in island; do
+		for mode in suspended not-suspended none never twice no-fire sticky recovery errno journal baseline refire no-control partial busy; do
+			st_reset idle-iommu-fault
+			DRIVER=$driver
+			FX_IDLE_MODE=$mode
+			FX_IDLE_STATE=suspended
+			FX_IDLE_PENDING=0
+			IDLE_QUIET_FN=true
+			for file in "${IDLE_FILES[@]}"; do printf '0\n' >"$FAULT_DEBUG/$file"; done
+			printf 'none\n' >"$FAULT_DEBUG/${IDLE_FILES[3]}"
+			want=1
+			case "$mode" in
+			suspended|not-suspended) FX_IDLE_MODE=once; FX_IDLE_STATE=$mode; want=0; token="verdict=SURVIVE state=$mode" ;;
+			none) FX_IDLE_STATE=none; token='reason=not-fired' ;;
+			never|twice|no-fire) token='reason=counter-delta' ;;
+			sticky) token='reason=knob-not-reset' ;;
+			recovery) token='reason=recovery-encode' ;;
+			errno) token='reason=errno' ;;
+			journal) token='reason=journal-report' ;;
+			baseline) token='reason=baseline' ;;
+			refire) token='reason=refired' ;;
+			no-control) for file in "${IDLE_FILES[@]}"; do rm "$FAULT_DEBUG/$file"; done; want=77; token='reason=no-idle-control' ;;
+			partial) rm "$FAULT_DEBUG/${IDLE_FILES[2]}"; token='reason=idle-seam-inventory' ;;
+			busy) IDLE_QUIET_FN=false; want=77; token='reason=not-idle' ;;
+			esac
+			st_leg "idle-$driver-$mode" "$want" "$token"
+		done
+	done
+	rm -rf "$ST_WORK"
+	printf '%s' "$ST_LEGS"
+	if [[ $ST_LEGS == *'verdict=FAIL'* ]]; then return "$FAIL"; fi
+	printf 'VERDICT: PASS (idle-only row: both PM readings, island driver, negative assertions and admission gates; synthetic only)\n'
+}
+
 self_test() {
 	local row rc=0 actual expected
 	ST_WORK=$(mktemp -d) || return "$FAIL"
@@ -973,6 +1159,7 @@ self_test() {
 	fi
 	((rc == 0)) || return "$rc"
 	printf 'VERDICT: PASS (5 rows proven fire-once, 12 RED legs proven red, 3 gates proven real)\n'
+	idle_self_test
 }
 
 # ---------------------------------------------------------------------------
@@ -990,7 +1177,7 @@ main() {
 		*) usage; return "$USAGE";; esac; done
 	((self)) && { self_test; return; }
 	[[ $DRIVER == island || $DRIVER == auto ]] || { usage; return "$USAGE"; }
-	[[ $ROW == all || " ${ROWS[*]} " == *" $ROW "* ]] || { usage; return "$USAGE"; }
+	[[ $ROW == all || $ROW == idle-iommu-fault || " ${ROWS[*]} " == *" $ROW "* ]] || { usage; return "$USAGE"; }
 	[[ ${CERALIVE_BOARD_TEST:-0} == 1 && $EUID == 0 ]] || return "$GATED"
 	[[ -x $PROBE_MPP && -x $INVALID_IOCTL && -d $FAULT_DEBUG && -r $EXPECT_TABLE ]] || return "$GATED"
 	resolve_driver || return "$GATED"

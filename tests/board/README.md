@@ -134,6 +134,19 @@ Neither fixture is a hardware-latency or zero-copy result.
 
 ## Running the self-tests
 
+The optional idle-window experiment is explicit-only:
+`fault-controls-probe.sh --row idle-iommu-fault --driver island`.
+It is not part of that probe's five-control `--row all` sweep and never enters
+the 16-row matrix, which runs a competing healthy encoder. With no encode
+running, it arms `inject_iommu_fault_idle_ms=3000`, completes one 30-buffer
+encode, leaves the device untouched for six seconds, and checks consumption,
+actual firing, PM-at-fire state, callback errno, journal and recovery. All four
+idle debugfs files must exist together. Absence gates this row; a partial block
+fails inventory. Its self-test exercises both PM readings and both driver
+profiles with synthetic fixtures, including deliberately incorrect counters,
+missing firing/state, recovery failure, journal reports and busy admission.
+None of that fixture output is silicon evidence.
+
 The RGA oracle's `--self-test` uses real software FFmpeg to distinguish identical,
 corrupt, truncated and extra-frame output. Its hardware arm runs **locally on the
 board**, under the external board lock, with `CERALIVE_BOARD_TEST=1` and a

@@ -37,6 +37,9 @@ readonly FAULT_SEAM_ENTRIES=(
 	inject_iommu_fault_once_consumed
 	target_session_pid
 )
+readonly FAULT_SEAM_IDLE=(inject_iommu_fault_idle_ms inject_iommu_fault_idle_consumed
+	inject_iommu_fault_idle_fired inject_iommu_fault_idle_state)
+
 # A journal line matching this set means the kernel's state is no longer
 # trustworthy evidence, so the campaign stops. It is a strict subset of the
 # per-row bad-line screen below: a lone WARNING: fails its row without
@@ -101,6 +104,9 @@ seam_inventory() {
 	local expected actual
 	expected=$({
 		printf '%s\n' "${FAULT_SEAM_ENTRIES[@]}"
+		if [[ -e $FAULT_DEBUG/inject_iommu_fault_idle_ms ]]; then
+			printf '%s\n' "${FAULT_SEAM_IDLE[@]}"
+		fi
 	} | LC_ALL=C sort)
 	actual=$(find "$FAULT_DEBUG" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | LC_ALL=C sort)
 	[[ $expected == "$actual" ]]
