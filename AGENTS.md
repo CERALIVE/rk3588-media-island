@@ -86,6 +86,7 @@ rk3588-media-island/
 | Measure forced-IDR latency | `tests/board/idr-latency.sh` — local engine IPC requester plus offline NAL/PTS scorer; collector and same-host clock requirements in [`tests/board/README.md`](tests/board/README.md#forced-idr-measurement). Self-test is not board proof. |
 | Look up a fault control, its counter, its errno, its call site or the row that consumes it | [`docs/FAULT-SEAM-CONTRACT.md`](docs/FAULT-SEAM-CONTRACT.md) — the authoritative table, plus the `T4` vocabulary every ledger cell is written in |
 | Run the 16-row island fault matrix on a board | `tests/board/fault-matrix.sh --driver island` — `--self-test` scores committed island fixtures and still prints `16 MPP rows registered` |
+| Run the separate four-row RGA fault matrix | `tests/board/fault-matrix.sh --driver island-rga --probe-rga <binary>` — default-off `ROCKCHIP_RGA_CERALIVE_TEST`; host-tested source, **not board-qualified**. Contract and limits in `docs/FAULT-SEAM-CONTRACT.md`. |
 | Prove the five controls no matrix row consumes, or the explicit-only idle-window row | `tests/board/fault-controls-probe.sh` (`--row all` is the five; `--row idle-iommu-fault` is the separate experiment) |
 | Read what those drills actually measured on silicon | [`docs/FAULT-CAMPAIGN.md`](docs/FAULT-CAMPAIGN.md) → "Fault-seam contract and the 2026-09 campaigns" |
 | Understand which licence branch applies to a file | [`LICENSE.md`](LICENSE.md) |
@@ -98,6 +99,15 @@ rk3588-media-island/
 | Change a device-tree node's owner | `integration/` — and update the `docs/OWNERSHIP.md` row in the same change |
 
 ## KEY FACTS
+
+**RGA fault injection is independent and default-off.** Four one-shot controls in
+`rga3/rga_test.{c,h}` mirror the MPP atomic/debugfs pattern without changing MPP.
+Timeout and hang suppress START; IOMMU injection calls the real callback without
+invalid DMA; reset failure changes only the debugger write result after abort.
+KUnit compiles the controls and byte-preserved driver functions with hardware
+fixtures, plus config-off stubs. The separate `island-rga` harness requires an
+isolated RGA device and reports absent busy/mapping counters as GAPs. No production
+fragment enables it and no board result is claimed. The rewrite remains deferred.
 
 **MPP discovery has a narrow legacy scalar shape.** HW_SUPPORT and CMD_SUPPORT
 accept size/offset/flags all zero and still access one checked user `u32`.
@@ -239,7 +249,7 @@ shell, valid regex, and it matches a backslash and a `t` rather than a tab. That
 defect shipped once here. Reintroducing it leaves shellcheck green and turns the
 harness self-test red; the transcript is [`docs/CI.md`](docs/CI.md) §3.
 
-**The source-dependent gates are live.** Series integrity reconstructs 84 source
+**The source-dependent gates are live.** Series integrity reconstructs 86 source
 files and eight applied integration payloads, shim/UAPI checks inspect the imported
 surface, sparse checks every selected object, and cross-compile asserts exactly
 `rk_vcodec.ko` plus `rga_multicore.ko` and rejects either module if its compiled OF aliases

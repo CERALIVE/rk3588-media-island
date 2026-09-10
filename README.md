@@ -149,6 +149,16 @@ configuration the device does not run proves the wrong thing.
 
 ## Testing
 
+The RGA fault seam is independently opt-in via
+`CONFIG_ROCKCHIP_RGA_CERALIVE_TEST` (DEBUG_FS-dependent, default off). Its four
+one-shot controls have consumed counters, KUnit coverage of maintained driver
+functions, and a separate `fault-matrix.sh --driver island-rga --probe-rga <binary>`
+sweep. The existing 16-row MPP sweep is unchanged. Timeout/hang suppress START,
+IOMMU injection directly invokes the fault callback, and reset injection changes
+only the debugger write result. See [the fault contract](docs/FAULT-SEAM-CONTRACT.md)
+for errno, placement, admission and proof limits. No production enablement or RGA
+board qualification is implied by these source and host tests.
+
 The test seam also has an optional idle-window IOMMU control. It schedules one
 device-owned delayed callback after a selected encode completion, records the
 observed runtime-PM state, and cancels before resource withdrawal. The dedicated

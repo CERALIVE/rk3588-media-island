@@ -17,13 +17,13 @@ Path shorthands, all relative to this repository's root:
 | `C` | `drivers/video/rockchip/mpp/mpp_common.c` |
 | `KP` | the sibling `rk3588-kernel-patches` repository |
 
-The whole seam compiles to nothing when `CONFIG_ROCKCHIP_MPP_CERALIVE_TEST=n`:
+The MPP seam compiles to nothing when `CONFIG_ROCKCHIP_MPP_CERALIVE_TEST=n`:
 `H:45-57` supplies a `static inline` false/zero stub for every entry point, so the
 call sites listed below become dead branches the compiler removes.
 
 ---
 
-## T1 — controls
+## T1 — MPP controls
 
 Nine one-shot controls plus one selector. Every flag knob is registered by
 `mpp_rkvenc_test_add_flag` (`F:19-28`), which creates the knob at mode `0600` and
@@ -98,9 +98,9 @@ against at `V:1703` and `V:1715`.
 
 ## T2 — matrix rows
 
-The 16 rows of `tests/board/fault-matrix.sh` (`:10-13`), in their frozen order. The
-set, the order and the `--self-test` count are all frozen; no row may be added,
-removed or reordered.
+The 16 MPP rows of `tests/board/fault-matrix.sh` (`:10-13`), in their frozen order.
+Their set and order remain frozen. The separately selected RGA extension below
+adds no row to this MPP array or its default `--row all` sweep.
 
 Every row is scored by the same `score_row` (`:205-247`), which reads the snapshot
 metrics captured by `snapshot()` (`:28-45`): per-core `busy`, `busy_ns`, `tasks`,
@@ -206,6 +206,11 @@ that no row name contains `rga`. It scores no fixture, exercises no `score_row`
 assertion and reads no snapshot. A green `--self-test` is evidence that the row
 registry is intact and nothing more; it is never board evidence.
 
+This is a historical finding, now superseded: the current self-test scores MPP
+captures and their mutations, exercises fail-closed journal handling, and checks
+the separately registered RGA rows with synthetic scoring and stimulus fixtures.
+None of these host checks is board evidence.
+
 ---
 
 ## T4 — GAP vocabulary
@@ -261,13 +266,69 @@ by itself set the campaign-fatal marker.
 
 ---
 
-## Future extensions (not in this effort)
+## RGA extension — opt-in, not board-qualified
 
-**An RGA fault seam.** `multi_rga` has no fault controls and gains none here. If one
-is ever built, its placements need a separate maintained-driver design. No RGA row may be added
-to `fault-matrix.sh`; its `--self-test` asserts that no row name contains `rga`
-(`fault-matrix.sh:263`) precisely so that this stays true by accident-proof
-construction.
+The owner-authorized RGA harness supersedes the former RGA non-goal. It lives in
+`drivers/video/rockchip/rga3/rga_test.{c,h}` and is independently controlled by
+`CONFIG_ROCKCHIP_RGA_CERALIVE_TEST`, a DEBUG_FS-dependent, default-off boolean
+inside the existing MULTI_RGA menu. It selects the debugfs debugger so the reset
+writer exists. No production fragment enables it. With the symbol off, all
+entry points are inline false/zero/no-op stubs and `rga_test.o` is not linked.
+
+All four flags live under `/sys/kernel/debug/rga-test/`: `0600` to arm/disarm,
+`0400` for `<name>_consumed`. Write exactly `1` to arm and `0` to disarm. Other
+values never fire. Atomic compare-and-clear selects one consumer and increments
+the independent cumulative counter exactly once. Counters last until module
+unload; no PID selector or idle work is added. Only one fault should be armed at
+a time; if combined, IOMMU takes precedence, then IRQ-timeout, then hang, leaving
+the others armed for later jobs. The harness clears all four after each row.
+
+| debugfs knob | consumed counter | injected effect + errno | island call site(s) | consumer | targeted? |
+|---|---|---|---|---|---|
+| `irq_timeout_once` | `irq_timeout_once_consumed` | skip `set_reg`/START after successful power acquisition; keep timestamps, RUNNING state and recovery epoch so normal timeout/cancel sees missing completion; synchronous timeout is `-EBUSY` | `rga_job.c:rga_job_run`, existing `rga_job_timeout_query_state` / `rga_job_scheduler_timeout_clean` and request cancellation | `fault-matrix.sh --driver island-rga`, `rga-irq-timeout` | no |
+| `hang_task_once` | `hang_task_once_consumed` | same no-START mechanism as the MPP hang seam, independently counted; synchronous timeout is `-EBUSY` | `rga_job.c:rga_job_run`, same existing timeout/cancel paths | `rga-hardware-hang` | no |
+| `inject_iommu_fault_once` | `inject_iommu_fault_once_consumed` | only a core with an installed IOMMU callback can consume; skip START, publish recovery epoch, call the real fault handler with a synthetic read-fault IOVA, then return its `-EACCES` via pre-run error cleanup | `rga_iommu.c:rga_iommu_test_prepare`, `rga_iommu_test_fault`, `rga_iommu_intr_fault_handler`; `rga_job.c:rga_job_run` / `rga_job_next` | `rga-iommu-fault` | no; private-MMU cores leave it armed |
+| `fail_reset_once` | `fail_reset_once_consumed` | **after** `rga_request_scheduler_abort`, return `-EIO` from a valid core's reset write; do not skip recovery or change the void hardware reset API | `rga_debugger.c:rga_reset_write` through `/sys/kernel/debug/rkrga/reset` (also shared with procfs) | `rga-reset-failure` | no; invalid input/unmatched core leaves it armed |
+
+IRQ-timeout and hardware-hang intentionally share the no-START mechanism, just
+as the MPP rows do: neither proves a lost interrupt in the IRQ controller or an
+actual wedged silicon engine. The IOMMU leg proves direct callback/error cleanup,
+not provider IRQ delivery or a real page-table walk. No invalid DMA is launched.
+The reset leg tests a debug-write result, not a physical reset-controller failure;
+the existing abort routine may skip resetting an already-recovered epoch or when
+power acquisition fails. Its counter is therefore **not** proof of a real reset.
+
+| row | stimulus | counter asserted | reset-delta asserted | recovery assertions |
+|---|---|---|---|---|
+| `rga-irq-timeout` | arm timeout, one synchronous probe blit, expect errno 16 | `irq_timeout_once_consumed` +1 | ≥1 | fresh successful blit, queue depth 0, dma-bufs back to baseline, clean journal |
+| `rga-iommu-fault` | arm IOMMU fault, one synchronous probe blit, expect errno 13 | `inject_iommu_fault_once_consumed` +1 | ≥1 | same |
+| `rga-hardware-hang` | arm hang, one synchronous probe blit, expect errno 16 | `hang_task_once_consumed` +1 | ≥1 | same |
+| `rga-reset-failure` | arm reset failure, write a core parsed from reset help, expect EIO | `fail_reset_once_consumed` +1 | no — result-only seam | same |
+
+`--driver island-rga --probe-rga <binary>` runs only these four rows; MPP remains
+`--driver island|auto`. The RGA arm requires root, `CERALIVE_BOARD_TEST=1`, KASAN,
+PROVE_LOCKING, the RGA test symbol, exact disarmed seam inventory/permissions,
+and no existing RGA session. The caller must hold the external board lock and
+keep other RGA users stopped: these controls are global, not session-targeted.
+A successful baseline blit is required **before** injection; a raw-probe UAPI
+refusal gates the row instead of masquerading as an injected error. The probe's
+exit zero alone is not success; its `blit_sync` record is checked explicitly.
+
+RGA exposes no instantaneous busy or IOMMU mapping counter, so those fields carry
+`GAP:no-busy-counter` and `GAP:no-iommu_maps-counter`, never invented zeroes.
+Unlike the MPP campaign, this isolated RGA sweep makes no competing-session FPS
+claim. Its final journal is captured after disarm and recovery; any capture,
+scan, stimulus or recovery failure stops the sweep. A `77` remains GATED.
+
+The KUnit suite compiles the real controls and byte-preserved run, timeout,
+IOMMU and reset-writer functions with hardware/MMIO, resource release and user
+copy fixtures. It checks one-shot/rearm/invalid-value/concurrent consumption,
+actual debugfs modes and backing atomics, timeout retirement/PM balance, IOMMU
+eligibility/error/reset, reset-write errors and config-off stubs. Hardware reset
+and abort side effects are not proven by substituted operations. Host tests and
+cross-compilation are the proof boundary; **no RGA board validation is claimed**.
+
+## Future extensions (not in this effort)
 
 **A `session-allocation-failure` matrix row.** T3(i) makes the case that the control
 is unconsumed by the matrix. Closing that by adding a seventeenth matrix row is
