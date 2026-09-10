@@ -36,6 +36,15 @@ a pin bump would then leave CI proving the series against a kernel nobody ships
 
 ### The kernel job, in the order it does things
 
+The `self-tests` job also runs `scripts/check-fault-seam-contract.sh` normally
+and with `--self-test`. The standalone checker compares both maintained board
+harnesses' knob/counter names with the maintained driver's debugfs registrations;
+negative mutations add an unknown consumer to each harness. It also executes
+the required summary's actual shell step across six cases: code-job skips,
+failures and cancellations must fail; documentation-only skips may pass.
+It loads only maintained source, board scripts and the workflow, and does not
+import the series generator. Host checks are not board qualification.
+
 `cross-compile-modules` is the only expensive job, and each step exists for a
 reason worth stating:
 

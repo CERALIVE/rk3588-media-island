@@ -786,6 +786,12 @@ jobs:
                 echo "::error::a required job reported '${result}'"
                 exit 1
                 ;;
+              skipped)
+                if [ "${CODE_CHANGED}" = true ]; then
+                  echo "::error::a required code job was skipped"
+                  exit 1
+                fi
+                ;;
             esac
           done
           echo "every dependency succeeded or was skipped"
