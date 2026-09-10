@@ -11,6 +11,7 @@
 #include "rga_job.h"
 #include "rga_common.h"
 #include "rga_hw_config.h"
+#include "rga_test.h"
 
 #include <soc/rockchip/rockchip_iommu.h>
 
@@ -303,6 +304,25 @@ static int rga_iommu_intr_fault_handler(struct iommu_domain *iommu, struct devic
 
 	return 0;
 }
+
+#if IS_ENABLED(CONFIG_ROCKCHIP_RGA_CERALIVE_TEST)
+bool rga_iommu_test_prepare(struct rga_scheduler_t *scheduler)
+{
+	struct rga_iommu_info *info = scheduler->iommu_info;
+
+	/* RGA2's private MMU must not steal a shot meant for an IOMMU core. */
+	return info && (info->rockchip_fault_handler || info->generic_fault_handler) &&
+		rga_test_inject_iommu_fault();
+}
+
+void rga_iommu_test_fault(struct rga_scheduler_t *scheduler)
+{
+	/* Direct callback only: no invalid address is submitted to hardware. */
+	rga_iommu_intr_fault_handler(scheduler->iommu_info->domain,
+				     scheduler->iommu_info->dev,
+				     ~0UL & PAGE_MASK, IOMMU_FAULT_READ, scheduler);
+}
+#endif
 
 static int rga_iommu_set_fault_handler(struct rga_scheduler_t *scheduler)
 {

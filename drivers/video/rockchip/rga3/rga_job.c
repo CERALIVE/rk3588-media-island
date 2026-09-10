@@ -14,6 +14,7 @@
 #include "rga_common.h"
 #include "rga_request_validation.h"
 #include "rga_trace.h"
+#include "rga_test.h"
 #include "../mpp/media_request_size.h"
 
 enum rga_acquire_fence_state {
@@ -271,6 +272,7 @@ static struct rga_job *rga_job_alloc(struct rga_req *task_list, size_t task_coun
 static int rga_job_run(struct rga_job *job, struct rga_scheduler_t *scheduler)
 {
 	int ret = 0;
+	bool iommu_fault;
 
 	/* enable power */
 	ret = rga_power_enable(scheduler);
@@ -279,7 +281,15 @@ static int rga_job_run(struct rga_job *job, struct rga_scheduler_t *scheduler)
 		return ret;
 	}
 
-	ret = scheduler->ops->set_reg(job, scheduler);
+	iommu_fault = rga_iommu_test_prepare(scheduler);
+	if (iommu_fault || rga_test_irq_timeout() || rga_test_hang_task()) {
+		/* Keep timeout/cancel ownership, but never start DMA for this shot. */
+		job->timestamp.hw_execute = ktime_get();
+		job->timestamp.hw_recode = job->timestamp.hw_execute;
+		job->session->last_active = job->timestamp.hw_execute;
+	} else {
+		ret = scheduler->ops->set_reg(job, scheduler);
+	}
 	if (ret < 0) {
 		rga_job_err(job, "set reg failed");
 		rga_power_disable(scheduler);
@@ -291,6 +301,14 @@ static int rga_job_run(struct rga_job *job, struct rga_scheduler_t *scheduler)
 	trace_rga_job_started(scheduler->core, job->request_id);
 	media_recovery_started(&scheduler->recovery);
 	media_dump_event(&scheduler->dump, MEDIA_STARTED, job->request_id, 0);
+
+	if (iommu_fault) {
+		/* The callback owns irq_lock; job_mutex keeps this job published. */
+		rga_iommu_test_fault(scheduler);
+		rga_telemetry_record_busy(scheduler, job, false);
+		rga_power_disable(scheduler);
+		return job->ret;
+	}
 
 	return ret;
 }

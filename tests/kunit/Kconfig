@@ -55,6 +55,14 @@ config ROCKCHIP_RGA_REQUEST_KUNIT_TEST
 	  Exercise fail-closed per-plane descriptor, offset, stride, and
 	  format validation without binding the RGA driver.
 
+config ROCKCHIP_RGA_FAULT_KUNIT_TEST
+	bool "Rockchip RGA fault-injection tests"
+	depends on KUNIT && DEBUG_FS
+	depends on !ROCKCHIP_MULTI_RGA
+	help
+	  Exercise real one-shot controls, debugfs permissions and maintained
+	  fault call sites with fake hardware. Run stage_ioctl.py first.
+
 config ROCKCHIP_MEDIA_DMA_POLICY_KUNIT_TEST
 	tristate "Rockchip media DMA policy tests"
 	depends on KUNIT

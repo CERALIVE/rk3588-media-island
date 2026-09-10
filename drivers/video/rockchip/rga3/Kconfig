@@ -38,6 +38,16 @@ config ROCKCHIP_RGA_DEBUGGER
 	help
 	  Enabling the debugger of multi RGA, you can use procfs and debugfs for debugging.
 
+config ROCKCHIP_RGA_CERALIVE_TEST
+	bool "CeraLive RGA fault-injection controls"
+	depends on DEBUG_FS
+	select ROCKCHIP_RGA_DEBUG_FS
+	default n
+	help
+	  Publish one-shot timeout, IOMMU fault, hang and reset-result controls
+	  under debugfs rga-test. For isolated fault drills only; never enable
+	  this option in a production kernel.
+
 config ROCKCHIP_RGA_GENPOOL
 	bool "Use genpool to manage cmd_buf"
 	default n
