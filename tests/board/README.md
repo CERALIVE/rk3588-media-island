@@ -154,6 +154,18 @@ the campaign regardless of the stimulus verdict. Host fixtures run the actual
 startup/scoring/cleanup sequence with reports at startup, stimulus and cleanup;
 clean GATED rows remain gated, not fatal.
 
+The matrix emits exactly one verdict per row, after that final validation. Both
+journal captures check exit status; both scanners distinguish grep's match (`0`),
+no-match (`1`) and error (`2` or higher) outcomes without quiet-mode early exit.
+Capture or scanner failure is `FAIL reason=journal-capture|journal-scan` and stops
+later stimuli, even when the available text looks clean or a subsequent capture
+succeeds. A final-refresh warning fails the row without stopping the campaign.
+The embedded host fixtures replay the actual campaign on the island snapshot fixtures:
+empty and ordinary clean controls, fatal and warning reports, failed captures at
+either checkpoint, scanner errors at either screen, and sweep-stop assertions.
+They reject premature or duplicate verdicts and exercise real grep directory-read
+errors too. These are harness tests, not new board measurements.
+
 The clock-enable row re-captures its journal after the recovery encode; its
 self-test rejects a report emitted only during that otherwise successful encode.
 It accepts the driver's numeric `clk_on failed: -5` diagnostic as well as the

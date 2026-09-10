@@ -239,6 +239,26 @@ or `verdict=GATED` with a separate `reason=<reason>` field. A ledger may preserv
 that spelling, with the reason in the same cell or accompanying evidence; it is
 the same classified verdict, not a reason-free failure or gate.
 
+The matrix emits one row verdict **after** cleanup and final journal validation.
+Its journal reasons use the existing `FAIL(<reason>)` vocabulary:
+
+- `FAIL(journal-capture)` — a journal capture command failed, including partial
+  output. The journal window is not proven complete.
+- `FAIL(journal-scan)` — the journal scanner errored (grep status other than
+  `0`/match or `1`/no-match). Empty output is not evidence of a clean scan.
+- `FAIL(journal-fatal)` — the final scan successfully detected a fatal signature.
+- `FAIL(journal)` — a bad-journal signature, including a lone warning, failed the
+  row without establishing a campaign-fatal report.
+
+Capture and scanner failures set the campaign's `fatal=<row>` marker and gate
+later rows with `stopped-after-<row>`, even if the saved text appears clean. This
+marker means **stop the campaign**, not proof of a kernel defect. An earlier
+capture/scanner failure stays failed even if the final refresh succeeds; its
+I/O reason is retained when a later scan finds a fatal report. Only successful
+captures and scans with no bad signatures permit `SURVIVE ... journal_bad=0`.
+A warning discovered only in the final refresh still fails its row, but does not
+by itself set the campaign-fatal marker.
+
 ---
 
 ## Future extensions (not in this effort)

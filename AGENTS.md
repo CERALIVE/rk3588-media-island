@@ -122,6 +122,13 @@ downstream — the matrix arms only FOUR controls, because
 (`NOT-IN-MATRIX`), and the other five had never been board-proven on the island
 at all, which is why `fault-controls-probe.sh` exists.
 
+**Matrix verdicts follow final journal validation, never precede it.** Both
+captures check command status, and both journal screens distinguish a match
+from no-match and scanner failure. `journal-capture` / `journal-scan` fail closed
+and stop the campaign even if the available text looks clean; a later successful
+capture cannot erase an earlier I/O failure. Host campaign regressions run on
+the island fixtures. See the T4 reason contract and `tests/board/README.md`.
+
 **`kernel-pin.env` is a MIRROR, not a decision.** Its four `KERNEL_*` values are
 byte-identical to `rk3588-kernel-patches/kernel-pin.env`, and a `pin-equality` CI
 job proves it against the consumer at its pinned commit. Bumping the kernel is a
