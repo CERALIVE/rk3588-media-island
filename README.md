@@ -157,6 +157,12 @@ from the 16-row matrix and requires its own authorized idle campaign. Source and
 host tests are not a board-qualification result; see
 [`docs/FAULT-CAMPAIGN.md`](docs/FAULT-CAMPAIGN.md).
 
+Both board drills have now run on real silicon — the matrix and the five-control
+sweep on a Rock 5B+ and an Orange Pi 5+ at island `v2026.9.2`. The idle-window row was attempted on the Rock
+and returned no verdict; its outcome is INCONCLUSIVE. What each campaign measured,
+and what it explicitly does not prove, is the campaign document's
+"Fault-seam contract and the 2026-09 campaigns" section.
+
 The MPP code-quality sweep and its per-finding dispositions are recorded in
 [`docs/HARDENING-FINDINGS.md`](docs/HARDENING-FINDINGS.md). Instrumented UML/QEMU
 KUnit covers production helpers; full RK3588 driver runtime coverage still needs
@@ -169,6 +175,8 @@ use of a shared clamp before narrowing a resource-sized span to `u32`.
 | `tests/fuzz/` | CI, no hardware | the UAPI surface survives hostile input |
 | static analysis | CI, no hardware | sparse findings are fatal and coccinelle inspects every selected object; smatch remains conditional on a suitable runner package |
 | every gate's `--self-test` | CI, no hardware | each gate refuses a mutated tree AND accepts a correct one |
+| `tests/board/fault-matrix.sh` | a real Rock 5B+ or Orange Pi 5+ | the sixteen fault rows recover the device, consume the armed one-shot exactly once, and leave a healthy session's throughput intact — via `--driver island` |
+| `tests/board/fault-controls-probe.sh` | a real Rock 5B+ or Orange Pi 5+ | the five controls no matrix row consumes fire exactly once with their documented errno; `--row idle-iommu-fault` is the separate, explicit-only idle experiment |
 | module contract | CI, source + built modules | every OF table is exported, the compiled aliases exist, and the hard-IRQ-only RKVENC2 path never uses `IRQF_ONESHOT` |
 | telemetry contract | CI + KUnit | tracepoint call sites and ordering, debugfs counters and session snapshots, static-key definitions, and the frozen MPP formatters remain intact |
 | `tests/dt/` | CI, built DTBs | both supported boards carry sole island MPP compatibles and every MPP client bypasses the unavailable BSP PMU-idle request; RGA remains mainline-owned |

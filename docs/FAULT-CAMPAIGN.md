@@ -237,12 +237,102 @@ These mutations prove the tests are sensitive to their named guarantees. They
 do not substitute for the required GREEN-ON-IMPORT fwport-revert proofs in the
 remaining lifecycle rows.
 
+## Fault-seam contract and the 2026-09 campaigns
+
+[`docs/FAULT-SEAM-CONTRACT.md`](FAULT-SEAM-CONTRACT.md) is the authoritative
+table for this seam: the nine controls plus the `target_session_pid` selector,
+each control's consumed counter, injected effect and errno, its island call sites, and the harness row that consumes it — plus the sixteen
+matrix rows and the `T4` verdict vocabulary every ledger cell is written in.
+Read it before reading a campaign result; a verdict literal on its own is not a
+diagnosis.
+
+Two findings from that table shape everything below. First, the
+`NOT-IN-MATRIX` finding: `rkvenc-invalid-ioctl --all-malformed` skips the
+`session-allocation-failure` case, so the sixteen-row matrix never consumes
+`fail_session_alloc_once` — the matrix arms four controls and only four. Second,
+the five controls no matrix row consumes (`session-alloc`, `clock-enable`,
+`service-attach`, `ccu-attach`, `irq-request`) had never been board-proven on the
+island at all, which is why `tests/board/fault-controls-probe.sh` exists.
+
+### What ran, on which silicon
+
+Two island campaigns ran on 2026-09-09, each under one non-interactive board lock,
+each restored to its protected slot and verified. Every transcript is in the root
+ledger; nothing below is claimed without one.
+
+| Campaign | Board / tuple | Matrix | Controls | Transcript |
+|---|---|---|---|---|
+| Island baseline | Orange Pi 5+, test slot A, kernel `7.2.0-ceralive-rk3588-test #ceralive1+test1`, image `5a7748d9…`, `patches_commit 365b2463…`, island `v2026.9.2` (`1fd357d8…`) | 16/16 executed — 13 SURVIVE / 3 FAIL / 0 GATED, `baseline_fps=30.400` | 5/5 executed — 0 PASS / 3 FAIL / 2 GATED | [OPi phase-4 RUN-2](https://github.com/CERALIVE/ceralive/blob/docs/media-island-ledger-evidence/docs/media-island/ledger/phase4.md) |
+| Island campaign | Rock 5B+, candidate slot B, same kernel build, image `3333237d…`, same `patches_commit`, island `v2026.9.2` | 16/16 executed — 14 SURVIVE / 2 FAIL / 0 GATED, `baseline_fps=30.200` | 5/5 executed — 0 PASS / 3 FAIL / 2 GATED | [Rock phase-4 RUN-4](https://github.com/CERALIVE/ceralive/blob/docs/media-island-ledger-evidence/docs/media-island/ledger/rock-5b-plus/phase4.md) |
+### The island control results, and what they do not cover
+
+The four matrix-armed controls fire on both island boards, on exactly the rows that arm
+them, each by exactly +1, with **identical** end-of-campaign totals:
+`delay_consumed 2`, `hang_task_once_consumed 3`,
+`inject_iommu_fault_once_consumed 1`, `fail_reset_once_consumed 1`. These are the recorded island totals.
+
+The five non-matrix controls are a different story, and no campaign proved one of
+them on either island board:
+
+| Control | Island (both boards) |
+|---|---|
+| `session-alloc` | `FAIL reason=stimulus` — armed 0→1, never consumed; the legacy ioctl harness could not attach a session (`expected ENOMEM, got EINVAL (22)`) |
+| `clock-enable` | `FAIL reason=no-injected-errno` — the injection WORKED (`fail_clock_enable_once_consumed` +1, armed encode failed, core reset and recovered); the drill's journal predicate looks for `-EIO`/`Input/output error` while the driver prints `clk_on failed: -5` |
+| `service-attach` | `FAIL` — consumed +1 on both boards, `reason=recovery-encode` on Rock and `reason=journal-report count=2` on OPi; it is the fatal stop |
+| `ccu-attach` | `GATED reason=stopped-after-service-attach` — never run |
+| `irq-request` | `GATED reason=stopped-after-service-attach` — never run |
+
+The two island `GATED` rows carry only their reason: no counter, journal or
+recovery claim is made for either.
+
+What stopped both island campaigns is one kernel report, and it is the same one:
+`BUG: KASAN: slab-use-after-free in debugfs_atomic_t_get`, inside the
+`service-attach` row's journal window, against the RKVENC2 context that
+`rkvenc_probe` allocated with `devm_kmalloc` and `unbind_store` freed. OPi found
+it first; Rock is the cross-board reproduction of that one finding, not a second
+one. Both runs recorded it as a measurement and attempted no fix.
+
+### Idle-window row — RAN, and INCONCLUSIVE
+
+The conditional idle-window control was gated ON (the clock-gated-MMIO audit
+found `N=13 UNGUARDED-REACHABLE`, and the owner's go is recorded in the effort's
+evidence), implemented on the island seam with KUnit coverage, and hosted CI is green
+on the final source tip. Its dedicated `idle-iommu-fault` row was then attempted
+on the Rock 5B+, and **it produced no verdict**.
+
+The first attempt stalled in its encode stimulus (exit 124 at the 180-second
+limit). Diagnosing that stall surfaced a separate, pre-existing ioctl ABI defect
+— the driver rejected the legacy zero-size discovery queries the shipped
+userspace actually sends — which was fixed on its own and is **confirmed working
+on silicon**: the retry's trace reached `idle_wait`, so the encode launched.
+Contact with the board was then lost during the armed six-second idle window, for
+approximately 17.5 minutes, and the board did not recover on its own; the owner
+physically power-cycled it, after which the protected slot restored and verified
+completely.
+
+The cause of that unreachability is **unresolved**. The candidate-boot journal was
+retrieved in full and ends cleanly with no KASAN, BUG, Oops, panic or call trace,
+and the image carries no pstore/ramoops backend, so nothing could have survived
+the reset either. A genuine kernel-level failure triggered by the injected fault
+and an unrelated physical ethernet disconnection — which the board owner directly
+reported as the likelier, mundane explanation — are indistinguishable in that
+evidence. So the row is INCONCLUSIVE, not a confirmed hardware defect and not a
+survival, and the 16-row matrix regression it gates did not run. The row needs a
+re-run with the wired connection independently verified before any hardware
+conclusion may be drawn. Full account:
+[Rock phase-4 RUN-5 → RUN-7](https://github.com/CERALIVE/ceralive/blob/docs/media-island-ledger-evidence/docs/media-island/ledger/rock-5b-plus/phase4.md).
+
 ## Board boundary
 
-No board was accessed for this change. The cold-boot per-codec encode and
-runtime fault campaign remain hardware-gated; their later transcripts must name
-the board, kernel build, and island revision.
-# Idle-window IOMMU instrumentation [PARTIAL]
+B8 (IOMMU fault recovery) has RUN on both boards, at island `v2026.9.2` on the
+edge-test kernel, and is **recorded but not ticked** — see the table above and
+[`docs/BOARD-QUALIFICATION.md`](BOARD-QUALIFICATION.md). Everything else in this
+document that is not tied to one of those two campaign transcripts remains
+hardware-gated: the cold-boot per-codec encode and the remaining qualification
+legs have not run, and their later transcripts must name the board, kernel build
+and island revision the way these do.
+
+## Idle-window IOMMU instrumentation [PARTIAL]
 
 `inject_iommu_fault_idle_ms` is a test-only 0600 atomic one-shot, default zero.
 The next selected successful encoder result consumes its positive millisecond

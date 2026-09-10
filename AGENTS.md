@@ -84,6 +84,10 @@ rk3588-media-island/
 | Know what a board must demonstrate before a tick | [`docs/BOARD-QUALIFICATION.md`](docs/BOARD-QUALIFICATION.md) |
 | RGA probe version-return / raster-mode regressions and their hardware limits | [`tests/board/README.md`](tests/board/README.md) — `make -C tests/board selftest` includes intercepted-ioctl regressions |
 | Measure forced-IDR latency | `tests/board/idr-latency.sh` — local engine IPC requester plus offline NAL/PTS scorer; collector and same-host clock requirements in [`tests/board/README.md`](tests/board/README.md#forced-idr-measurement). Self-test is not board proof. |
+| Look up a fault control, its counter, its errno, its call site or the row that consumes it | [`docs/FAULT-SEAM-CONTRACT.md`](docs/FAULT-SEAM-CONTRACT.md) — the authoritative table, plus the `T4` vocabulary every ledger cell is written in |
+| Run the 16-row island fault matrix on a board | `tests/board/fault-matrix.sh --driver island` — `--self-test` scores committed island fixtures and still prints `16 MPP rows registered` |
+| Prove the five controls no matrix row consumes, or the explicit-only idle-window row | `tests/board/fault-controls-probe.sh` (`--row all` is the five; `--row idle-iommu-fault` is the separate experiment) |
+| Read what those drills actually measured on silicon | [`docs/FAULT-CAMPAIGN.md`](docs/FAULT-CAMPAIGN.md) → "Fault-seam contract and the 2026-09 campaigns" |
 | Understand which licence branch applies to a file | [`LICENSE.md`](LICENSE.md) |
 | Build the modules | [`README.md`](README.md) → "Building the modules" |
 | MPP static-analysis dispositions and instrumented KUnit coverage | [`docs/HARDENING-FINDINGS.md`](docs/HARDENING-FINDINGS.md) — helper tests are not silicon validation |
@@ -108,6 +112,15 @@ and records PM status at callback time without resuming the device. Its probe is
 explicitly `fault-controls-probe.sh --row idle-iommu-fault`, never a matrix row
 or part of the five-control `--row all` sweep. See `docs/FAULT-CAMPAIGN.md` for
 the direct-callback boundary and current proof limits.
+
+**The maintained fault seam has a written contract.** [`docs/FAULT-SEAM-CONTRACT.md`](docs/FAULT-SEAM-CONTRACT.md)
+is the authoritative table: nine controls plus the `target_session_pid`
+selector, each one's consumed counter, injected effect, errno and island call sites, the harness row that consumes it, the sixteen matrix rows, and the
+`T4` literals a ledger cell may carry. Two of its findings drive everything
+downstream — the matrix arms only FOUR controls, because
+`rkvenc-invalid-ioctl --all-malformed` skips `session-allocation-failure`
+(`NOT-IN-MATRIX`), and the other five had never been board-proven on the island
+at all, which is why `fault-controls-probe.sh` exists.
 
 **`kernel-pin.env` is a MIRROR, not a decision.** Its four `KERNEL_*` values are
 byte-identical to `rk3588-kernel-patches/kernel-pin.env`, and a `pin-equality` CI
