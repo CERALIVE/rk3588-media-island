@@ -40,6 +40,11 @@ $(OUT):
 $(OUT)/%: %.c | $(OUT)
 	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS_$*)
 
+$(OUT)/probe-rga-uapi: uapi/rga-uapi.h
+
+$(OUT)/test-rga-probe: test-rga-probe.c probe-rga-uapi.c uapi/rga-uapi.h | $(OUT)
+	$(CC) $(CFLAGS) -o $@ $<
+
 async-fence-probe: | $(OUT)
 	@test -n "$(LIBRGA_PREFIX)" || { \
 	  printf '%s\n' 'LIBRGA_PREFIX must name a librga SDK root'; exit 2; \
@@ -54,7 +59,7 @@ async-fence-probe: | $(OUT)
 # hostbuild — the same sources through the host compiler, which is what the
 # --self-test legs execute on a dev host with no board attached.
 hostbuild:
-	$(MAKE) CROSS_COMPILE= OUT=build-host all
+	$(MAKE) CROSS_COMPILE= OUT=build-host all build-host/test-rga-probe
 
 selftest: hostbuild
 	@rc=0; \
@@ -63,6 +68,7 @@ selftest: hostbuild
 	  ./build-host/$$p --self-test || rc=1; \
 	done; \
 	exit $$rc
+	./build-host/test-rga-probe
 
 clean:
 	rm -rf $(OUT) build-host

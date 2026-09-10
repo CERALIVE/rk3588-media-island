@@ -5,16 +5,9 @@ per-core IRQ/fps sampler, journal counters, a dma-buf FD identity tracer, an
 encode-corruption oracle, and the driver that turns all of them into the
 Phase-0 baseline documents.
 
-**This directory is temporary.** It is the harness the plan's todo 4 builds and
-todo 6 moves into the island repository:
-
-| here (today) | island repo (after todo 6) |
-|---|---|
-| `docs/media-island/phase0/harness/*.sh`, `*.c`, `uapi/`, `lib/`, `Makefile` | `tests/board/` |
-| `docs/media-island/phase0/harness/tests/fixtures/` | `tests/fixtures/` |
-
-Every script resolves its fixtures through `harness_fixtures_dir`, which
-accepts **both** layouts, so the move is a `git mv` with no edits.
+This is the maintained harness home, moved into `tests/board/` at todo 6.
+Every script resolves its fixtures through `harness_fixtures_dir`, which also
+accepts the earlier Phase-0 layout for retained historical runs.
 
 ---
 
@@ -69,14 +62,14 @@ accepts **both** layouts, so the move is a `git mv` with no edits.
 ## Running the self-tests
 
 ```bash
-cd docs/media-island/phase0/harness
+cd tests/board
 
 for s in ./*.sh; do
   printf '=== %s ===\n' "$s"
   "$s" --self-test || echo "FAILED: $s"
 done
 
-make selftest          # host-builds the three C probes and runs their --self-test
+make selftest          # three probe self-tests plus mocked RGA regressions
 ./control-encode-per-codec.sh --self-test
 ./rkvenc-fault-campaign.sh --self-test
 ```
@@ -103,6 +96,32 @@ LD_PRELOAD="$PWD/build/librga-ioctl-trace.so" \
 `-Wall -Wextra -Werror` is not decoration. Every UAPI struct in `uapi/` carries
 `_Static_assert` layout and ioctl-number checks, so a drifted header is a **red
 build** rather than a malformed ioctl sent to a real encoder.
+
+### RGA probe corrections from todo 26 (2026-09-10)
+
+RUN19 reported valid driver `1.3.11` and three-core payloads with ioctl return
+`+1`; the original probe's `== 0` checks falsely reported both as failures.
+This is the driver's deliberate success convention, not a special case for
+that board: both version cases in the pinned donor's
+[`rga_ioctl()`](https://github.com/rockchip-linux/kernel/blob/b4ef083dc0c3608e744deabb43dc6b781aadbe6e/drivers/video/rockchip/rga3/rga_drv.c)
+set `ret = true` after successful `copy_to_user`, and `-EFAULT` on copy failure.
+The probe accepts nonnegative returns and reports errno only on failure.
+
+RUN20 observed `src.rd_mode=1` and `dst.rd_mode=1` in a working librga request.
+Changing only those two fields to zero caused `EINVAL` / `no core match`.
+The donor's
+[`RGA rd_mode` enum](https://github.com/rockchip-linux/kernel/blob/b4ef083dc0c3608e744deabb43dc6b781aadbe6e/drivers/video/rockchip/rga3/include/rga.h)
+defines `RGA_RASTER_MODE = 1 << 0`; `fill_img()` now selects it for both operands.
+
+`make selftest` runs `test-rga-probe.c` against the actual probe with intercepted
+open/close/ioctl calls. It covers zero and positive version replies, independent
+and combined errors (including stale errno on success), and both raster fields
+at blit submission. The probe's own self-test also pins both read modes to `1`.
+These tests contact no RGA device and do not certify a complete raw request:
+the omitted tail fields still need independent validation before a board rerun.
+In particular, these repairs do **not** clear the separate concurrent
+default-policy `EBUSY` at blit 175 from RUN20. Historical FAIL results remain
+historical; there is no new hardware pass from a tooling-only fix.
 
 ### The forbidden-verb screen
 

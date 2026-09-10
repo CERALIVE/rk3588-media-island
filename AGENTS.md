@@ -82,6 +82,7 @@ rk3588-media-island/
 | Look up a pinned upstream SHA | [`docs/REFERENCES.md`](docs/REFERENCES.md) |
 | See whether mainline has caught up on a block | [`docs/UPSTREAM-STATUS.md`](docs/UPSTREAM-STATUS.md) |
 | Know what a board must demonstrate before a tick | [`docs/BOARD-QUALIFICATION.md`](docs/BOARD-QUALIFICATION.md) |
+| RGA probe version-return / raster-mode regressions and their hardware limits | [`tests/board/README.md`](tests/board/README.md) — `make -C tests/board selftest` includes intercepted-ioctl regressions |
 | Understand which licence branch applies to a file | [`LICENSE.md`](LICENSE.md) |
 | Build the modules | [`README.md`](README.md) → "Building the modules" |
 | MPP static-analysis dispositions and instrumented KUnit coverage | [`docs/HARDENING-FINDINGS.md`](docs/HARDENING-FINDINGS.md) — helper tests are not silicon validation |

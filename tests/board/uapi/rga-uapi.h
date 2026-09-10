@@ -21,7 +21,8 @@
  * inside an over-allocated, zero-filled backing buffer. The kernel's
  * `copy_from_user(&req, arg, sizeof(struct rga_req))` therefore always reads
  * initialised memory of our own, whatever tail the running driver expects, and
- * every field we do not set takes the vendor's own zero default. Hand-copying
+ * every field we do not set remains zero; this does not establish that zero
+ * is semantically valid for every omitted field. Hand-copying
  * the full 1.3.7 tail would look more complete and would be a guess about a
  * struct the island does not import.
  *
@@ -92,6 +93,9 @@ enum rga_render_mode {
 	RGA_COLOR_PALETTE_MODE = 0x1,
 	RGA_COLOR_FILL_MODE = 0x2,
 };
+
+/* Donor rga.h, "RGA rd_mode": raster is bit 0, not the zero default. */
+#define RGA_RASTER_MODE (1u << 0)
 
 /* rga.h:165+ — the two surface formats this probe uses. */
 enum rga_surf_format_subset {
