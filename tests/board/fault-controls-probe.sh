@@ -1078,7 +1078,7 @@ idle_self_test() {
 	IDLE_SNAPSHOT_FN=fx_idle_snapshot
 	IDLE_WAIT_FN=fx_idle_wait
 	ENCODE_FN=fx_idle_encode
-	for driver in island; do
+	driver=island
 		for mode in suspended not-suspended none never twice no-fire sticky recovery errno journal baseline refire no-control partial busy; do
 			st_reset idle-iommu-fault
 			DRIVER=$driver
@@ -1105,7 +1105,6 @@ idle_self_test() {
 			esac
 			st_leg "idle-$driver-$mode" "$want" "$token"
 		done
-	done
 	rm -rf "$ST_WORK"
 	printf '%s' "$ST_LEGS"
 	if [[ $ST_LEGS == *'verdict=FAIL'* ]]; then return "$FAIL"; fi
