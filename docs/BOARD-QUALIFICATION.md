@@ -1,10 +1,11 @@
 # Board qualification — what real hardware must demonstrate
 
-**Status: scaffold.** The checklist legs below are named; none has been run.
-There is no Run log yet because there has been nothing to run — the driver source
-is not imported and no series has been generated. This document is written first
-on purpose: a checklist authored after the evidence exists is a description of
-whatever happened, not a gate.
+**Status: B6 passed on Orange Pi 5+; B8 attempted on both boards, not ticked.**
+B6 (RGA blit) records Orange Pi 5+ PASS and Rock 5B+ blocked. B8 (IOMMU fault
+recovery) has RUN on both boards at island `v2026.9.2` on the edge-test kernel,
+but neither board earned a B8 tick. The transcripts are in the Run log below.
+Every other leg (B1–B5, B7, B9, B10) is still unrun. This document remains a
+gate written before the evidence rather than a description of whatever happened.
 
 ## The proof boundary
 
@@ -101,6 +102,13 @@ GStreamer graph does not qualify the engine's session path. The restart leg
 requires a kernel built with `CONFIG_ROCKCHIP_MPP_CERALIVE_TEST` and accessible
 `/sys/kernel/debug/rkvenc-test` controls. No knob means no injected-fault result;
 never substitute a service restart or mock counter for that evidence.
+
+### B8 campaign entries
+
+The following entries record B8 attempts and outcomes. RUN-1 through
+RUN-3 are Rock admission blockers that never reached silicon; RUN-4 is the Rock
+campaign that did; the OPi entry is that board's own executed baseline; RUN-5 to
+RUN-7 are the idle-window attempt and its close-out. Nothing here is a tick.
 
 ### RUN-1 — B8 Rock 5B+ admission stopped (2026-09-09 UTC)
 
