@@ -18,6 +18,16 @@ a pin bump would then leave CI proving the series against a kernel nobody ships
 
 ## 1. `ci.yml` — the pull-request gate
 
+The optional RGA fault suite is selected in `tests/kunit/.kunitconfig`; CI
+requires both `rockchip-rga-fault-injection` and `rockchip-rga-fault-disabled`
+to report a pass. `stage_ioctl.py` also stages the real RGA controls, selected
+run/timeout/IOMMU/reset-writer functions and the provider's bus-error constant.
+Only hardware/resource/user-copy boundaries are substituted. The board matrix's
+self-test checks the four separately selected RGA rows, including deliberately
+wrong consumption counts, queue/reset state, journals and stimulus errnos.
+These gates prove host behavior, not RGA silicon recovery; production fragments
+remain unchanged. See `FAULT-SEAM-CONTRACT.md` for the bounded claims.
+
 | Job | Asserts |
 |---|---|
 | `shellcheck` | every tracked shell script lints clean at `-S style`, excluding only `SC1091` (a runtime-resolved `source` cannot be followed) |

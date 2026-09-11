@@ -11,6 +11,7 @@ readonly ROWS=(invalid-descriptor malformed-ioctls invalid-dimensions unsupporte
 	dmabuf-vanishing sigkill-mid-encode gstreamer-crash irq-timeout iommu-fault
 	hardware-hang reset-failure teardown-active concurrent-destruction rapid-cycles
 	concurrent-destroy-loops libmpp-4k5994-h265)
+readonly RGA_ROWS=(rga-irq-timeout rga-iommu-fault rga-hardware-hang rga-reset-failure)
 
 # The exact debugfs entry set the fault seam publishes: eight one-shot knobs,
 # their eight consumed counters, the selector and the delay pair. Held as ONE
@@ -50,6 +51,7 @@ readonly JOURNAL_BAD_SIGNATURES='WARNING:|BUG:|KASAN:|possible recursive locking
 OUT=
 ROW=all
 PROBE_MPP=
+PROBE_RGA=
 INVALID_IOCTL=
 HEALTHY_PID=
 HEALTHY_LOG=
@@ -75,7 +77,7 @@ SCORE_FPS=
 
 usage() {
 	printf 'usage: %s [--out DIR] [--row NAME|all] [--probe-mpp FILE] [--invalid-ioctl FILE]\n' "$0" >&2
-	printf '       %*s [--driver island|auto]\n' "${#0}" '' >&2
+	printf '       %*s [--driver island|auto|island-rga] [--probe-rga FILE]\n' "${#0}" '' >&2
 	printf '       %s --self-test\n' "$0" >&2
 }
 
@@ -405,7 +407,7 @@ score_snapshots() {
 	reset_delta=$(( $(metric_sum "$after" resets) - $(metric_sum "$before" resets) ))
 	SCORE_RESET_DELTA=$reset_delta; SCORE_REASON=reset-delta
 	case "$name" in
-	irq-timeout|iommu-fault|hardware-hang|reset-failure) ((reset_delta >= 1)) || return "$FAIL" ;;
+	irq-timeout|iommu-fault|hardware-hang|reset-failure|rga-irq-timeout|rga-iommu-fault|rga-hardware-hang) ((reset_delta >= 1)) || return "$FAIL" ;;
 	esac
 	fi
 
@@ -414,6 +416,10 @@ score_snapshots() {
 	irq-timeout|hardware-hang) counter=hang_task_once_consumed ;;
 	iommu-fault) counter=inject_iommu_fault_once_consumed ;;
 	reset-failure) counter=fail_reset_once_consumed ;;
+	rga-irq-timeout) counter=irq_timeout_once_consumed ;;
+	rga-hardware-hang) counter=hang_task_once_consumed ;;
+	rga-iommu-fault) counter=inject_iommu_fault_once_consumed ;;
+	rga-reset-failure) counter=fail_reset_once_consumed ;;
 	*) counter= ;;
 	esac
 	if [[ -n $counter ]]; then
@@ -775,7 +781,7 @@ st_fatal_stop() (
 
 st_option_values() {
 	local option got
-	for option in --driver --out --row --probe-mpp --invalid-ioctl; do
+	for option in --driver --out --row --probe-mpp --invalid-ioctl --probe-rga; do
 		CERALIVE_BOARD_TEST=0 timeout 2 bash "$HERE/fault-matrix.sh" "$option" >/dev/null 2>&1; got=$?
 		printf 'self-test=missing-option-value option=%s want=2 got=%s\n' "$option" "$got"
 		[[ $got == "$USAGE" ]] || return "$FAIL"
@@ -998,26 +1004,29 @@ self_test() {
 	st_option_values || rc=1
 	st_journal_windows "$scratch" "$island/initial-run" || rc=1
 	st_journal_validation "$scratch" "$island/initial-run" island || rc=1
+	rga_matrix_self_test "$scratch" || rc=1
 
 	rm -rf "$scratch"
 	((rc == 0)) || return "$FAIL"
-	printf 'VERDICT: PASS (16 MPP rows registered; RGA remains out of scope)\n'
+	printf 'VERDICT: PASS (16 MPP rows registered; 4 RGA rows registered separately)\n'
 }
 
 main() {
 	local self=0
 	while (($#)); do case "$1" in
-		--out|--row|--probe-mpp|--invalid-ioctl|--driver)
+		--out|--row|--probe-mpp|--invalid-ioctl|--driver|--probe-rga)
 			(($# >= 2)) || { usage; return "$USAGE"; }
 			case "$1" in
 			--out) OUT=$2;; --row) ROW=$2;;
 			--probe-mpp) PROBE_MPP=$2;; --invalid-ioctl) INVALID_IOCTL=$2;;
+			--probe-rga) PROBE_RGA=$2;;
 			--driver) DRIVER=$2;;
 			esac
 			shift 2;;
 		--self-test) self=1; shift;;
 		-h|--help) usage; return "$USAGE";; *) usage; return "$USAGE";; esac; done
 	((self)) && { self_test; return; }
+	[[ $DRIVER != island-rga ]] || { rga_matrix_main; return $?; }
 	[[ ${CERALIVE_BOARD_TEST:-0} == 1 && $EUID == 0 ]] || return "$GATED"
 	[[ -x $PROBE_MPP && -x $INVALID_IOCTL && -d $FAULT_DEBUG && -r /sys/kernel/debug/dma_buf/bufinfo ]] || return "$GATED"
 	[[ $ROW == all || " ${ROWS[*]} " == *" $ROW "* ]] || { usage; return "$USAGE"; }
@@ -1031,4 +1040,6 @@ main() {
 	matrix_rows
 }
 
+# shellcheck source=tests/board/lib/rga-fault-matrix.sh
+source "$HERE/lib/rga-fault-matrix.sh"
 main "$@"

@@ -9,6 +9,7 @@
 #define rga_request_scheduler_abort pm_test_scheduler_abort
 #include "../rga3/include/rga_drv.h"
 #include "../rga3/include/rga_job.h"
+#include "../rga3/rga_test.h"
 
 struct rga_drvdata_t *rga_drvdata;
 

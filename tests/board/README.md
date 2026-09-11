@@ -144,6 +144,33 @@ Neither fixture is a hardware-latency or zero-copy result.
 
 ## Running the self-tests
 
+### Separate RGA fault rows
+
+`fault-matrix.sh --driver island-rga --probe-rga <probe-rga-uapi binary>` selects
+`rga-irq-timeout`, `rga-iommu-fault`, `rga-hardware-hang`, `rga-reset-failure`.
+It does not extend or run the frozen 16-row MPP sweep. This is an explicitly
+active, isolated-device drill: under the caller's external board lock it arms
+only `/sys/kernel/debug/rga-test/` and writes the existing RGA debugger reset
+control for the result-failure row. It requires the default-off RGA test symbol,
+KASAN, PROVE_LOCKING, root, `CERALIVE_BOARD_TEST=1`, and no existing RGA session.
+Keep other RGA clients stopped throughout: there is no session selector.
+
+The output directory must not exist. A baseline probe must actually report a
+successful blit before any knob is armed; probe exit zero alone means only that
+the device answered. Preflight refusal is GATED, not an injected-error pass.
+After each stimulus all knobs are disarmed, a clean blit must succeed, counters
+must show exactly one consumption, and final journal validation must succeed.
+The sweep stops at its first failure or gate. Busy and IOMMU mapping counts are
+unavailable on this driver and stay explicit GAPs; there is no healthy-client
+FPS assertion. Reset failure tests a write errno, not physical reset failure.
+
+`fault-matrix.sh --self-test` includes synthetic RGA scoring mutations and
+stimulus/errno routing tests alongside all retained MPP checks. It contacts no
+board. See [the authoritative table](../../docs/FAULT-SEAM-CONTRACT.md) for the
+direct-callback/no-START proof boundaries; RGA board validation is future work.
+
+### Shared harness checks
+
 Both fault drills reject a value-taking option with no following argument with
 usage exit `2`, before board admission. Their self-tests exercise every such
 option under a timeout, and confirm valid arguments still reach the board gate.
