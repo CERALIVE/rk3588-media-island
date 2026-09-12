@@ -36557,10 +36557,10 @@ index 0000000000000000000000000000000000000000..12602951a1361734111489f597990898
 +#endif
 diff --git a/drivers/video/rockchip/rga3/rga2_reg_info.c b/drivers/video/rockchip/rga3/rga2_reg_info.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..372318edc71f0dfa1f12f3785c8899b1154784ed
+index 0000000000000000000000000000000000000000..a83a046ee04626bf0f35c8c7b41532f74f9658a6
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga2_reg_info.c
-@@ -0,0 +1,3565 @@
+@@ -0,0 +1,3608 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -39981,11 +39981,54 @@ index 0000000000000000000000000000000000000000..372318edc71f0dfa1f12f3785c8899b1
 +
 +	/* The hardware interrupt top-half don't need to lock the scheduler. */
 +	if (job == NULL) {
++		/*
++		 * Without a job nothing guarantees the block is powered, and
++		 * this is the hard-IRQ top half, so every sleeping resume is
++		 * off the table. pm_runtime_get_if_in_use() is the only get()
++		 * usable here: it takes dev->power.lock with irqs saved, never
++		 * resumes, and returns > 0 only when the device is already
++		 * RPM_ACTIVE with a reference taken on our behalf.
++		 *
++		 * When CONFIG_PM is off the block is never gated and the stub
++		 * answers -EINVAL, so no reference is taken and none is due.
++		 */
++		const bool pm_gated = IS_ENABLED(CONFIG_PM);
++		int work_cycle;
++
++		if (pm_gated && pm_runtime_get_if_in_use(scheduler->dev) <= 0) {
++			/*
++			 * A suspended block cannot be serviced at all: the
++			 * interrupt cannot be cleared and no status register
++			 * would answer with anything but bus garbage. Report
++			 * the line as unhandled rather than claiming a clear
++			 * that never happened, and speak only once so this
++			 * path can never become the storm it replaces.
++			 *
++			 * Note that rga_irq_handler() still rewrites this to
++			 * IRQ_HANDLED whenever running_job is NULL, so the
++			 * spurious-IRQ machinery does not observe it yet; that
++			 * wrapper is shared with RGA3 and is fixed separately.
++			 */
++			dev_err_once(scheduler->dev,
++				     "core[%d], invalid job while runtime-suspended; interrupt left unserviced\n",
++				     scheduler->core);
++
++			return IRQ_NONE;
++		}
++
 +		rga2_clear_intr(scheduler);
++		/*
++		 * One sample feeds both conversions below; two reads could
++		 * disagree inside a single message.
++		 */
++		work_cycle = rga_read(RGA2_WORK_CNT, scheduler);
 +		rga_fault(scheduler, "core[%d], invalid job, INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x], WORK_CYCLE[0x%x(%d)]\n",
 +			scheduler->core, rga_read(RGA2_INT, scheduler),
 +			rga_read(RGA2_STATUS2, scheduler), rga_read(RGA2_STATUS1, scheduler),
-+			rga_read(RGA2_WORK_CNT, scheduler), rga_read(RGA2_WORK_CNT, scheduler));
++			work_cycle, work_cycle);
++
++		if (pm_gated)
++			pm_runtime_put_autosuspend(scheduler->dev);
 +
 +		return IRQ_HANDLED;
 +	}
