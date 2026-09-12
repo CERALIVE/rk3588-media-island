@@ -75,7 +75,8 @@ trace events carry that scheduler's hardware core mask. `queue_depth` counts
 pending, not running, jobs and is decremented on dispatch, cancellation, and
 shutdown.
 
-Core counters are cumulative for the lifetime of their device context. `busy_ns`
+MPP core counters are cumulative for the lifetime of the bound client device;
+RGA core counters follow the module object. `busy_ns`
 spans successful hardware submission through completion for MPP, and through
 completion, timeout, cancellation, or shutdown for RGA. Core `tasks` counts jobs
 that reached hardware completion, including completion with an IRQ error.
@@ -88,11 +89,23 @@ counts imported MPP buffer extents or RGA command bytes. Reads use atomic
 snapshots; IRQ and worker updates never take a telemetry lock.
 MPP device removal drains per-core debugfs readers and clears the directory
 handle before devres releases that context. Subsequent reads through an already
-open counter file return `-EIO` instead of accessing freed storage. On partial
-telemetry initialization failure, service unwind unregisters clients before
-removing their parent tree. The module-static `rkvenc-test` counters are separate.
+open counter file return `-EIO` instead of accessing freed storage. Other bound
+cores remain visible. On partial telemetry initialization failure, service unwind
+unregisters clients before removing their parent tree, because removing the root
+first would leave clients holding stale child dentries. Core directories are
+enumerated at service probe and are not recreated by an individual client
+rebind; this lifetime rule adds no hot-rebind telemetry registration. The opt-in
+`/sys/kernel/debug/rkvenc-test/*_consumed` counters are module-static rather than
+part of the client allocation, so they survive a client unbind.
+
 `tests/kunit/mpp_debugfs_test.c` covers stale reads, removal without registration,
 and partial initialization; the telemetry contract checks probe-unwind ordering.
+It stages byte-preserved production registration and removal functions through
+`tests/kunit/stage_ioctl.py`, and exercises retained readers for all five core
+counters — `busy`, `busy_ns`, `tasks`, `errors`, `resets` — after device teardown
+and devres release, alongside untouched sibling-core visibility. Debugfs, VFS and
+devres are real there; only hardware teardown is substituted. That makes it a
+host regression, not RK3588 hot-unplug or concurrent-stream qualification.
 
 Every per-session file takes a session reference at open and drops it at
 release. Teardown removes the directory before dropping the owning reference,
