@@ -99,6 +99,22 @@ External source in CeraUI. This supersedes its earlier audio NO-DEVICE result,
 not the independent video/recovery/benchmark qualification gaps. This entry
 records a candidate and a follow-up; it ticks no qualification leg.
 
+### 2026-09-06 — Orange Pi 5+, round 3, PR #152 candidate, island `v2026.9.2`
+
+Kernel `7.2.0-ceralive-rk3588 #ceralive1 SMP PREEMPT @1788671395`, pipeline
+`1f56ca03`: full Kconfig closure, RAUC installation to slot A and registration of
+the installed `gstreamer1.0-rockchip-ceralive 1.14.4+ceralive.2` RGA factories all
+passed. Both UI-driven HDMI codec starts still failed converter selection with
+`no safe V4L2 converter factory matched the platform policy`, so `gates."4k60"`
+is FAIL; the boot journal also recorded a CeraUI SIGUSR1 death and restart whose
+sender was not identified. Direct real-HDMI H.265 and H.264 30-minute benchmarks
+and real-source decoder→RGA→encoder component recovery drills completed, but
+product recovery, preview impact and full benchmark qualification remain
+incomplete. Existing USB and audio evidence was extended, not replaced.
+[Round-3 report](qualification/orange-pi-1f56ca03-round3-2026-09-06.md).
+Requested product qualification remains FAIL / incomplete; this entry records a
+candidate and its direct measurements, and ticks no qualification leg.
+
 ### Phase-7 encoder hygiene prerequisites
 
 `tests/board/idr-latency.sh` provides a twenty-request engine IPC driver and an
