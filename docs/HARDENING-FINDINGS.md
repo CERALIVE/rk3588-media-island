@@ -215,3 +215,12 @@ allocation. DMA imports are a reference-counted fixture, not real DMA-BUFs.
 This task does not claim a kmemleak scan, real uaccess/compat behavior, hardware
 completion, probe/remove coverage, or a change to the detector tooling above.
 Final branch verification is reported with the input-boundary task's delivery.
+
+**Input-boundary delivery verified:** commits `e584127` (suite and fixes) and
+`8bf90ab` (case table/proof limits), pushed on `test/ioctl-input-boundaries` after
+a fresh fetch and no-op rebase onto `origin/main`. Local UML passed **78/78**;
+all 16 new cases and both 32-cycle/two-file lifecycle tests passed. Changed
+C/header/Python LSP error diagnostics were clean with kernel compile contexts.
+[CI run 34007195868](https://github.com/CERALIVE/rk3588-media-island/actions/runs/34007195868)
+passed all 13 jobs, including KUnit, strict arm64 module links, both DTBs, and the
+unchanged static-analysis gate. No PR was opened and no plan checkbox was edited.
