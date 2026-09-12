@@ -1360,33 +1360,22 @@ static void rga_mm_kref_release_buffer(struct kref *ref)
 	mutex_lock(&mm->lock);
 }
 
-/* Force release the current internal_buffer from the IDR. */
-static void rga_mm_force_releaser_buffer(struct rga_internal_buffer *buffer)
-{
-	struct rga_mm *mm = rga_drvdata->mm;
-	struct rga_buffer_import *import, *next;
-
-	WARN_ON(!mutex_is_locked(&mm->lock));
-
-	idr_remove(&mm->memory_idr, buffer->handle);
-	mm->buffer_count--;
-	list_for_each_entry_safe(import, next, &buffer->import_list, node) {
-		list_del(&import->node);
-		kfree(import);
-	}
-
-	rga_mm_unmap_buffer(buffer);
-	kfree(buffer);
-}
-
 /*
- * Called at driver close to release the memory's handle references.
+ * Called at driver removal. Nothing should be left: rga_fops pins the module
+ * while any file is open, so every session has already run
+ * rga_mm_session_release_buffer() and dropped the references its imports held,
+ * and a buffer leaves the IDR only when rga_mm_kref_release_buffer() takes its
+ * refcount to zero. Anything still here is held by a reference we cannot
+ * account for, so freeing it would drop the object out from under that holder.
+ * Report it and leak it instead.
  */
 static int rga_mm_buffer_destroy_for_idr(int id, void *ptr, void *data)
 {
 	struct rga_internal_buffer *internal_buffer = ptr;
 
-	rga_mm_force_releaser_buffer(internal_buffer);
+	WARN_ONCE(1, "rga: internal buffer leaked at driver removal\n");
+	rga_err("handle[%u] still referenced at driver removal, refcount = %u\n",
+		internal_buffer->handle, kref_read(&internal_buffer->refcount));
 
 	return 0;
 }
