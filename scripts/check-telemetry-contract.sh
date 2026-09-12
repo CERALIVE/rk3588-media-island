@@ -92,6 +92,8 @@ check_sources() {
 	require_text "$mpp/mpp_common.c" 'mpp_telemetry_mark_once' || return 1
 	require_text "$mpp/mpp_service.c" 'mpp_session_get(session)' || return 1
 	require_text "$mpp/mpp_service.c" 'mpp_session_put(session)' || return 1
+	require_function_order "$mpp/mpp_service.c" mpp_service_probe \
+		'mpp_remove_driver(srv, i)' 'mpp_telemetry_remove(srv)' || return 1
 	require_text "$rga/rga_debugger.c" 'RGA_TELEMETRY_ROOT_NAME' || return 1
 	require_text "$rga/rga_debugger.c" 'queue_depth' || return 1
 	require_text "$rga/rga_debugger.c" 'busy_ns' || return 1
@@ -192,6 +194,11 @@ debugfs_create_dir("rockchip-mpp", NULL);
 queue_depth busy_ns sessions mpp_telemetry_format_load mpp_telemetry_format_session
 debugfs_create_file_aux_num("stats", 0444, session->telemetry_dir, session, 0, &stats_fops);
 mpp_session_get(session); mpp_session_put(session);
+static int mpp_service_probe(void)
+{
+mpp_remove_driver(srv, i);
+mpp_telemetry_remove(srv);
+}
 EOF
 	cat >"$fixture/drivers/video/rockchip/rga3/rga_job.c" <<'EOF'
 int rga_job_commit(void)
@@ -226,6 +233,12 @@ CONFIG_ROCKCHIP_RGA_DEBUG_FS=y
 EOF
 
 	check_sources "$fixture" >/dev/null
+	sed -i '/^mpp_remove_driver(srv, i);/d' "$fixture/drivers/video/rockchip/mpp/mpp_service.c"
+	if check_sources "$fixture" >/dev/null 2>&1; then
+		fail "missing child-before-parent probe unwind mutation passed"
+	fi
+	sed -i '/^mpp_telemetry_remove(srv);/i mpp_remove_driver(srv, i);' \
+		"$fixture/drivers/video/rockchip/mpp/mpp_service.c"
 	sed -i '/TRACE_EVENT(mpp_task_done,/d' "$fixture/drivers/video/rockchip/mpp/mpp_trace.h"
 	if check_sources "$fixture" >/dev/null 2>&1; then
 		fail "missing MPP event mutation passed"
@@ -247,7 +260,7 @@ EOF
 		fail "missing RGA session stats mutation passed"
 	fi
 
-	printf 'telemetry-contract self-test: pass:6 fail:0 total:6\n'
+	printf 'telemetry-contract self-test: pass:7 fail:0 total:7\n'
 }
 
 case "${1:-}" in

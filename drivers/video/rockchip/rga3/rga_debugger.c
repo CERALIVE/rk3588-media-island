@@ -18,6 +18,7 @@
 
 #include "rga.h"
 #include "rga_debugger.h"
+#include "rga_test.h"
 #include "rga_drv.h"
 #include "rga_mm.h"
 #include "rga_common.h"
@@ -665,6 +666,9 @@ static ssize_t rga_reset_write(struct file *file, const char __user *ubuf,
 			pr_info("reset hardware core[%d]!\n", reset_core);
 
 			rga_request_scheduler_abort(scheduler);
+			/* Preserve real recovery; falsify only the debug write result. */
+			if (rga_test_fail_reset())
+				return -EIO;
 
 			break;
 		}

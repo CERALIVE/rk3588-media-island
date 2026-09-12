@@ -82,7 +82,15 @@ rk3588-media-island/
 | Look up a pinned upstream SHA | [`docs/REFERENCES.md`](docs/REFERENCES.md) |
 | See whether mainline has caught up on a block | [`docs/UPSTREAM-STATUS.md`](docs/UPSTREAM-STATUS.md) |
 | Know what a board must demonstrate before a tick | [`docs/BOARD-QUALIFICATION.md`](docs/BOARD-QUALIFICATION.md) |
+| Orange Pi merged PR #150 candidate evidence (OTA/ownership pass, HDMI converter failure, incomplete recovery/benchmark qualification) | [`docs/qualification/orange-pi-98f9f198-2026-09-06.md`](docs/qualification/orange-pi-98f9f198-2026-09-06.md); ten-class inventory in `tests/board/usb-matrix.yaml` |
+| Orange Pi round 3 / PR #152 candidate (installed RGA factories, real-capture benchmarks and component recovery; UI admission still fails) | [`docs/qualification/orange-pi-1f56ca03-round3-2026-09-06.md`](docs/qualification/orange-pi-1f56ca03-round3-2026-09-06.md); prior microphone evidence is retained in `tests/board/usb-matrix.yaml` |
 | RGA probe version-return / raster-mode regressions and their hardware limits | [`tests/board/README.md`](tests/board/README.md) — `make -C tests/board selftest` includes intercepted-ioctl regressions |
+| Measure forced-IDR latency | `tests/board/idr-latency.sh` — local engine IPC requester plus offline NAL/PTS scorer; collector and same-host clock requirements in [`tests/board/README.md`](tests/board/README.md#forced-idr-measurement). Self-test is not board proof. |
+| Look up a fault control, its counter, its errno, its call site or the row that consumes it | [`docs/FAULT-SEAM-CONTRACT.md`](docs/FAULT-SEAM-CONTRACT.md) — the authoritative table, plus the `T4` vocabulary every ledger cell is written in |
+| Run the 16-row island fault matrix on a board | `tests/board/fault-matrix.sh --driver island` — `--self-test` scores committed island fixtures and still prints `16 MPP rows registered` |
+| Run the separate four-row RGA fault matrix | `tests/board/fault-matrix.sh --driver island-rga --probe-rga <binary>` — default-off `ROCKCHIP_RGA_CERALIVE_TEST`; host-tested source, **not board-qualified**. Contract and limits in `docs/FAULT-SEAM-CONTRACT.md`. |
+| Prove the five controls no matrix row consumes, or the explicit-only idle-window row | `tests/board/fault-controls-probe.sh` (`--row all` is the five; `--row idle-iommu-fault` is the separate experiment) |
+| Read what those drills actually measured on silicon | [`docs/FAULT-CAMPAIGN.md`](docs/FAULT-CAMPAIGN.md) → "Fault-seam contract and the 2026-09 campaigns" |
 | Understand which licence branch applies to a file | [`LICENSE.md`](LICENSE.md) |
 | Build the modules | [`README.md`](README.md) → "Building the modules" |
 | MPP static-analysis dispositions and instrumented KUnit coverage | [`docs/HARDENING-FINDINGS.md`](docs/HARDENING-FINDINGS.md) — helper tests are not silicon validation |
@@ -93,6 +101,51 @@ rk3588-media-island/
 | Change a device-tree node's owner | `integration/` — and update the `docs/OWNERSHIP.md` row in the same change |
 
 ## KEY FACTS
+
+**MPP core debugfs follows the device lifetime.** `mpp_dev_remove()` drains
+per-core counter readers before devres frees their client context. Telemetry
+probe-error unwind removes clients before their parent debugfs tree; the
+module-static fault counters have a separate lifetime. The carried regression
+suite is `tests/kunit/mpp_debugfs_test.c`; see `docs/TELEMETRY.md`.
+
+**RGA fault injection is independent and default-off.** Four one-shot controls in
+`rga3/rga_test.{c,h}` mirror the MPP atomic/debugfs pattern without changing MPP.
+Timeout and hang suppress START; IOMMU injection calls the real callback without
+invalid DMA; reset failure changes only the debugger write result after abort.
+KUnit compiles the controls and byte-preserved driver functions with hardware
+fixtures, plus config-off stubs. The separate `island-rga` harness requires an
+isolated RGA device and reports absent busy/mapping counters as GAPs. No production
+fragment enables it and no board result is claimed. The rewrite remains deferred.
+
+**MPP discovery has a narrow legacy scalar shape.** HW_SUPPORT and CMD_SUPPORT
+accept size/offset/flags all zero and still access one checked user `u32`.
+Other scalar commands require size four; unsupported clients and wrong-hardware
+register ranges remain rejected. This is an ioctl compatibility fix, separate
+from idle-fault instrumentation. See `docs/IOCTL-BOUNDARY-TESTS.md`.
+
+**Idle IOMMU instrumentation is test-only and not board-qualified.** The optional
+`inject_iommu_fault_idle_ms` control owns delayed work in each encoder's device
+context, serializes enqueue with disable, cancels before teardown/system sleep,
+and records PM status at callback time without resuming the device. Its probe is
+explicitly `fault-controls-probe.sh --row idle-iommu-fault`, never a matrix row
+or part of the five-control `--row all` sweep. See `docs/FAULT-CAMPAIGN.md` for
+the direct-callback boundary and current proof limits.
+
+**The maintained fault seam has a written contract.** [`docs/FAULT-SEAM-CONTRACT.md`](docs/FAULT-SEAM-CONTRACT.md)
+is the authoritative table: nine controls plus the `target_session_pid`
+selector, each one's consumed counter, injected effect, errno and island call sites, the harness row that consumes it, the sixteen matrix rows, and the
+`T4` literals a ledger cell may carry. Two of its findings drive everything
+downstream — the matrix arms only FOUR controls, because
+`rkvenc-invalid-ioctl --all-malformed` skips `session-allocation-failure`
+(`NOT-IN-MATRIX`), and the other five had never been board-proven on the island
+at all, which is why `fault-controls-probe.sh` exists.
+
+**Matrix verdicts follow final journal validation, never precede it.** Both
+captures check command status, and both journal screens distinguish a match
+from no-match and scanner failure. `journal-capture` / `journal-scan` fail closed
+and stop the campaign even if the available text looks clean; a later successful
+capture cannot erase an earlier I/O failure. Host campaign regressions run on
+the island fixtures. See the T4 reason contract and `tests/board/README.md`.
 
 **`kernel-pin.env` is a MIRROR, not a decision.** Its four `KERNEL_*` values are
 byte-identical to `rk3588-kernel-patches/kernel-pin.env`, and a `pin-equality` CI
@@ -204,7 +257,7 @@ shell, valid regex, and it matches a backslash and a `t` rather than a tab. That
 defect shipped once here. Reintroducing it leaves shellcheck green and turns the
 harness self-test red; the transcript is [`docs/CI.md`](docs/CI.md) §3.
 
-**The source-dependent gates are live.** Series integrity reconstructs 84 source
+**The source-dependent gates are live.** Series integrity reconstructs 86 source
 files and eight applied integration payloads, shim/UAPI checks inspect the imported
 surface, sparse checks every selected object, and cross-compile asserts exactly
 `rk_vcodec.ko` plus `rga_multicore.ko` and rejects either module if its compiled OF aliases

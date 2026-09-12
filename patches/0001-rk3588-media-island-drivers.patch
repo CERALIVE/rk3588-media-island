@@ -5,7 +5,7 @@ Subject: [PATCH 1/9] video: rockchip: add the CeraLive RK3588 media island
 
 The Rockchip MPP service with its three compiled clients (RKVENC2, RKVDEC2, JPGDEC), the multi_rga 2D engine driver, and the UAPI headers they publish.
 
-84 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
+86 file(s), added under paths mainline does not carry, so every hunk is a create-mode diff.
 
 GENERATED from the rk3588-media-island source tree by scripts/build-series.py. The source is the truth and this series is its output; per-file provenance is docs/PROVENANCE.md and the originating commits' Origin: trailers, never this mailbox header.
 
@@ -3564,10 +3564,10 @@ index 0000000000000000000000000000000000000000..3ebeecc5719d09a0ff436a9d035d6cf9
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_common.c b/drivers/video/rockchip/mpp/mpp_common.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..763141a80ca6c120bdb0001018ac14596839831b
+index 0000000000000000000000000000000000000000..8b3648dc07596c3f883a1939ebe1734ca493510a
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_common.c
-@@ -0,0 +1,3503 @@
+@@ -0,0 +1,3510 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -5220,11 +5220,14 @@ index 0000000000000000000000000000000000000000..763141a80ca6c120bdb0001018ac1459
 +
 +	mpp_debug(DEBUG_IOCTL, "cmd %x process\n", req->cmd);
 +
-+	/* Scalar commands must not access a word outside the declared payload. */
++	/* Legacy discovery omits size, but still transfers one checked user word. */
 +	switch (req->cmd) {
 +	case MPP_CMD_QUERY_HW_SUPPORT:
-+	case MPP_CMD_QUERY_HW_ID:
 +	case MPP_CMD_QUERY_CMD_SUPPORT:
++		if (!req->size && !req->offset && !req->flags)
++			break;
++		fallthrough;
++	case MPP_CMD_QUERY_HW_ID:
 +	case MPP_CMD_INIT_CLIENT_TYPE:
 +	case MPP_CMD_INIT_DRIVER_DATA:
 +		if (req->size != sizeof(u32))
@@ -6620,6 +6623,10 @@ index 0000000000000000000000000000000000000000..763141a80ca6c120bdb0001018ac1459
 +
 +int mpp_dev_remove(struct mpp_dev *mpp)
 +{
++	/* Drain counter readers before the client context is freed by devres. */
++	debugfs_remove_recursive(mpp->telemetry_dir);
++	mpp->telemetry_dir = NULL;
++
 +	/* The hardware exit path may free resources used by the fault callback. */
 +	mpp_iommu_quiesce_fault_handler(mpp->iommu_info);
 +
@@ -22429,10 +22436,10 @@ index 0000000000000000000000000000000000000000..039752db69c71b3befeade39a91d81bf
 +};
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc2.c b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1b1e3352c
+index 0000000000000000000000000000000000000000..0c7c998c9157766178909ffb5297c4ce9c5cdf36
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvenc2.c
-@@ -0,0 +1,3845 @@
+@@ -0,0 +1,3995 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
@@ -22756,6 +22763,11 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +	struct mpp_clk_info hclk_info;
 +	struct mpp_clk_info core_clk_info;
 +	bool core_clk_enabled;
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++	struct mpp_fault_idle fault_idle;
++	struct mutex fault_idle_clock_lock;
++	bool fault_idle_initialized;
++#endif
 +	u32 default_max_load;
 +#ifdef CONFIG_ROCKCHIP_MPP_PROC_FS
 +	struct proc_dir_entry *procfs;
@@ -22800,6 +22812,62 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +};
 +
 +static int rkvenc2_free_rcbbuf(struct platform_device *pdev, struct rkvenc_dev *enc);
++
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++static void rkvenc_fault_idle_fire(struct mpp_fault_idle *idle)
++{
++	struct rkvenc_dev *enc = container_of(idle, struct rkvenc_dev, fault_idle);
++	struct mpp_dev *mpp = &enc->mpp;
++	unsigned long flags;
++	bool busy, suspended;
++	int ret;
++
++	/* Exclude a new clock-on between the idle check and the direct callback. */
++	mutex_lock(&enc->fault_idle_clock_lock);
++	spin_lock_irqsave(&mpp->queue->running_lock, flags);
++	busy = mpp->cur_task != NULL;
++	spin_unlock_irqrestore(&mpp->queue->running_lock, flags);
++	if (busy || enc->core_clk_enabled || !mpp->fault_handler ||
++	    !mpp->iommu_info || !mpp->iommu_info->domain || !mpp->iommu_info->pdev)
++		goto out;
++	suspended = mpp_fault_idle_suspended(mpp->dev);
++	dev_info(mpp->dev, "idle-iommu-fault state=%s busy=0 clocks=off entering\n",
++		 suspended ? "suspended" : "not-suspended");
++	ret = mpp->fault_handler(mpp->iommu_info->domain,
++				 &mpp->iommu_info->pdev->dev, 0xfffff000,
++				 0, mpp);
++	mpp_rkvenc_test_idle_record(suspended);
++	dev_info(mpp->dev, "idle-iommu-fault state=%s errno=%d returned\n",
++		 suspended ? "suspended" : "not-suspended", ret);
++out:
++	mutex_unlock(&enc->fault_idle_clock_lock);
++}
++
++static void rkvenc_fault_idle_init(struct rkvenc_dev *enc)
++{
++	mpp_fault_idle_init(&enc->fault_idle, rkvenc_fault_idle_fire);
++	mpp_rkvenc_test_idle_register(&enc->fault_idle);
++	enc->fault_idle_initialized = true;
++}
++
++static void rkvenc_fault_idle_disable(struct rkvenc_dev *enc)
++{
++	if (enc->fault_idle_initialized)
++		mpp_fault_idle_disable(&enc->fault_idle);
++}
++
++static void rkvenc_fault_idle_remove(struct rkvenc_dev *enc)
++{
++	if (enc->fault_idle_initialized) {
++		mpp_rkvenc_test_idle_unregister(&enc->fault_idle);
++		enc->fault_idle_initialized = false;
++	}
++}
++#else
++static inline void rkvenc_fault_idle_init(struct rkvenc_dev *enc) { }
++static inline void rkvenc_fault_idle_disable(struct rkvenc_dev *enc) { }
++static inline void rkvenc_fault_idle_remove(struct rkvenc_dev *enc) { }
++#endif
 +
 +static struct rkvenc_hw_info rkvenc_v2_hw_info = {
 +	.hw = {
@@ -25192,7 +25260,7 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +	return ret;
 +}
 +
-+static int rkvenc_clk_on(struct mpp_dev *mpp)
++static int rkvenc_clk_on_unlocked(struct mpp_dev *mpp)
 +{
 +	struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
 +	int ret;
@@ -25221,16 +25289,37 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +	return ret;
 +}
 +
++static int rkvenc_clk_on(struct mpp_dev *mpp)
++{
++	int ret;
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++	struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
++
++	mutex_lock(&enc->fault_idle_clock_lock);
++#endif
++	ret = rkvenc_clk_on_unlocked(mpp);
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++	mutex_unlock(&enc->fault_idle_clock_lock);
++#endif
++	return ret;
++}
++
 +static int rkvenc_clk_off(struct mpp_dev *mpp)
 +{
 +	struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
 +
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++	mutex_lock(&enc->fault_idle_clock_lock);
++#endif
 +	clk_disable_unprepare(enc->aclk_info.clk);
 +	clk_disable_unprepare(enc->hclk_info.clk);
 +	if (enc->core_clk_enabled) {
 +		clk_disable_unprepare(enc->core_clk_info.clk);
 +		enc->core_clk_enabled = false;
 +	}
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++	mutex_unlock(&enc->fault_idle_clock_lock);
++#endif
 +
 +	return 0;
 +}
@@ -25296,6 +25385,11 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +	mpp_debug_func(DEBUG_TASK_INFO, "kref_read %d, ret %d\n",
 +			kref_read(&task->ref), ret);
 +
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++	if (!ret && to_rkvenc_dev(mpp)->fault_idle_initialized)
++		mpp_rkvenc_test_idle_arm(&to_rkvenc_dev(mpp)->fault_idle,
++					task->session->pid);
++#endif
 +	rkvenc2_task_pop_pending(task);
 +
 +	return ret;
@@ -25810,6 +25904,7 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +		list_for_each_entry(core, &ccu->core_list, core_link) {
 +			if (core == enc)
 +				continue;
++			rkvenc_fault_idle_disable(core);
 +			rkvenc2_free_rcbbuf(core->mpp.iommu_info ?
 +					    core->mpp.iommu_info->pdev : NULL,
 +					    core);
@@ -26044,6 +26139,9 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +	if (!enc)
 +		return -ENOMEM;
 +
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++	mutex_init(&enc->fault_idle_clock_lock);
++#endif
 +	mpp = &enc->mpp;
 +	platform_set_drvdata(pdev, mpp);
 +	if (mpp_rkvenc_test_fail_service_attach())
@@ -26092,6 +26190,7 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +	mpp->fault_handler = rkvenc2_iommu_fault_handle;
 +	rkvenc_procfs_init(mpp);
 +	rkvenc_procfs_ccu_init(mpp);
++	rkvenc_fault_idle_init(enc);
 +
 +	/* if current is main-core, register current device to mpp service */
 +	if (mpp == enc->ccu->main_core)
@@ -26119,6 +26218,9 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +	if (!enc)
 +		return -ENOMEM;
 +
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++	mutex_init(&enc->fault_idle_clock_lock);
++#endif
 +	mpp = &enc->mpp;
 +	platform_set_drvdata(pdev, mpp);
 +	if (mpp_rkvenc_test_fail_service_attach())
@@ -26154,6 +26256,7 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +	mpp->session_max_buffers = RKVENC_SESSION_MAX_BUFFERS;
 +	enc->hw_info = to_rkvenc_info(mpp->var->hw_info);
 +	rkvenc_procfs_init(mpp);
++	rkvenc_fault_idle_init(enc);
 +	mpp_dev_register_srv(mpp, mpp->srv);
 +
 +	return 0;
@@ -26235,12 +26338,22 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +	struct device_node *np = dev->of_node;
 +
 +	if (strstr(np->name, "ccu")) {
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++		struct rkvenc_ccu *ccu = dev_get_drvdata(dev);
++		struct rkvenc_dev *core;
++
++		mutex_lock(&ccu->lock);
++		list_for_each_entry(core, &ccu->core_list, core_link)
++			rkvenc_fault_idle_disable(core);
++		mutex_unlock(&ccu->lock);
++#endif
 +		dev_info(dev, "remove ccu\n");
 +	} else if (strstr(np->name, "core")) {
 +		struct mpp_dev *mpp = dev_get_drvdata(dev);
 +		struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
 +
 +		dev_info(dev, "remove core\n");
++		rkvenc_fault_idle_remove(enc);
 +		mpp_dev_unregister_srv(mpp, mpp->srv);
 +		rkvenc_release_irq(pdev, mpp);
 +		rkvenc2_free_rcbbuf(pdev, enc);
@@ -26252,6 +26365,7 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +		struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
 +
 +		dev_info(dev, "remove device\n");
++		rkvenc_fault_idle_remove(enc);
 +		mpp_dev_unregister_srv(mpp, mpp->srv);
 +		rkvenc_release_irq(pdev, mpp);
 +		rkvenc2_free_rcbbuf(pdev, enc);
@@ -26264,9 +26378,48 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +{
 +	struct device *dev = &pdev->dev;
 +
-+	if (!strstr(dev_name(dev), "ccu"))
++	if (!strstr(dev_name(dev), "ccu")) {
++		rkvenc_fault_idle_disable(to_rkvenc_dev(dev_get_drvdata(dev)));
 +		mpp_dev_shutdown(pdev);
++	}
 +}
++
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++static int rkvenc_fault_idle_prepare(struct device *dev)
++{
++	if (!strstr(dev_name(dev), "ccu"))
++		rkvenc_fault_idle_disable(to_rkvenc_dev(dev_get_drvdata(dev)));
++	return 0;
++}
++
++static void rkvenc_fault_idle_complete(struct device *dev)
++{
++	struct rkvenc_dev *enc;
++
++	if (strstr(dev_name(dev), "ccu"))
++		return;
++	enc = to_rkvenc_dev(dev_get_drvdata(dev));
++	if (enc->fault_idle_initialized)
++		mpp_fault_idle_enable(&enc->fault_idle);
++}
++
++static int rkvenc_fault_runtime_suspend(struct device *dev)
++{
++	return mpp_common_pm_ops.runtime_suspend(dev);
++}
++
++static int rkvenc_fault_runtime_resume(struct device *dev)
++{
++	return mpp_common_pm_ops.runtime_resume(dev);
++}
++
++static const struct dev_pm_ops rkvenc_fault_pm_ops = {
++	.prepare = rkvenc_fault_idle_prepare,
++	.complete = rkvenc_fault_idle_complete,
++	SET_RUNTIME_PM_OPS(rkvenc_fault_runtime_suspend, rkvenc_fault_runtime_resume, NULL)
++	SET_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend, pm_runtime_force_resume)
++};
++#endif
 +
 +struct platform_driver rockchip_rkvenc2_driver = {
 +	.probe = rkvenc_probe,
@@ -26275,18 +26428,23 @@ index 0000000000000000000000000000000000000000..65de300a15754d0aedcb8b1e14098db1
 +	.driver = {
 +		.name = RKVENC_DRIVER_NAME,
 +		.of_match_table = of_match_ptr(mpp_rkvenc_dt_match),
++#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++		.pm = &rkvenc_fault_pm_ops,
++#else
 +		.pm = &mpp_common_pm_ops,
++#endif
 +	},
 +};
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc_test.c b/drivers/video/rockchip/mpp/mpp_rkvenc_test.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..4d3f873dce2bad8ef309edc2aeacbe4813f5d0a9
+index 0000000000000000000000000000000000000000..2718e0760339f9140733fa310a01f52d27820103
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvenc_test.c
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,161 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +#include <linux/debugfs.h>
 +#include <linux/err.h>
++#include <linux/seq_file.h>
 +
 +#include "mpp_rkvenc_test.h"
 +
@@ -26299,6 +26457,11 @@ index 0000000000000000000000000000000000000000..4d3f873dce2bad8ef309edc2aeacbe48
 +static struct mpp_fault_knob hang_task;
 +static struct mpp_fault_knob inject_iommu_fault;
 +static struct mpp_fault_knob delay_task_completion;
++static struct mpp_fault_knob inject_iommu_fault_idle;
++static atomic_t inject_iommu_fault_idle_fired = ATOMIC_INIT(0);
++static atomic_t inject_iommu_fault_idle_state = ATOMIC_INIT(0);
++static LIST_HEAD(fault_idle_devices);
++static DEFINE_MUTEX(fault_idle_devices_lock);
 +static atomic_t target_session_pid = ATOMIC_INIT(0);
 +static struct dentry *mpp_rkvenc_test_dir;
 +
@@ -26311,6 +26474,42 @@ index 0000000000000000000000000000000000000000..4d3f873dce2bad8ef309edc2aeacbe48
 +	snprintf(consumed_name, sizeof(consumed_name), "%s_consumed", name);
 +	debugfs_create_atomic_t(consumed_name, 0400, mpp_rkvenc_test_dir,
 +				&knob->consumed);
++}
++
++static int mpp_rkvenc_test_idle_state_show(struct seq_file *file, void *unused)
++{
++	int state = atomic_read(&inject_iommu_fault_idle_state);
++
++	seq_puts(file, state == 1 ? "suspended\n" :
++		 state == 2 ? "not-suspended\n" : "none\n");
++	return 0;
++}
++DEFINE_SHOW_ATTRIBUTE(mpp_rkvenc_test_idle_state);
++
++void mpp_rkvenc_test_idle_register(struct mpp_fault_idle *idle)
++{
++	mutex_lock(&fault_idle_devices_lock);
++	list_add_tail(&idle->registry, &fault_idle_devices);
++	mutex_unlock(&fault_idle_devices_lock);
++}
++
++void mpp_rkvenc_test_idle_unregister(struct mpp_fault_idle *idle)
++{
++	mutex_lock(&fault_idle_devices_lock);
++	mpp_fault_idle_disable(idle);
++	list_del_init(&idle->registry);
++	mutex_unlock(&fault_idle_devices_lock);
++}
++
++void mpp_rkvenc_test_idle_arm(struct mpp_fault_idle *idle, pid_t pid)
++{
++	mpp_fault_idle_arm(idle, &inject_iommu_fault_idle, &target_session_pid, pid);
++}
++
++void mpp_rkvenc_test_idle_record(bool suspended)
++{
++	atomic_set(&inject_iommu_fault_idle_state, suspended ? 1 : 2);
++	atomic_inc(&inject_iommu_fault_idle_fired);
 +}
 +
 +int mpp_rkvenc_test_init(void)
@@ -26333,12 +26532,26 @@ index 0000000000000000000000000000000000000000..4d3f873dce2bad8ef309edc2aeacbe48
 +				mpp_rkvenc_test_dir, &delay_task_completion.armed);
 +	debugfs_create_atomic_t("delay_consumed", 0400, mpp_rkvenc_test_dir,
 +				&delay_task_completion.consumed);
++	debugfs_create_atomic_t("inject_iommu_fault_idle_ms", 0600,
++				mpp_rkvenc_test_dir, &inject_iommu_fault_idle.armed);
++	debugfs_create_atomic_t("inject_iommu_fault_idle_consumed", 0400,
++				mpp_rkvenc_test_dir, &inject_iommu_fault_idle.consumed);
++	debugfs_create_atomic_t("inject_iommu_fault_idle_fired", 0400,
++				mpp_rkvenc_test_dir, &inject_iommu_fault_idle_fired);
++	debugfs_create_file("inject_iommu_fault_idle_state", 0400,
++			   mpp_rkvenc_test_dir, NULL, &mpp_rkvenc_test_idle_state_fops);
 +
 +	return 0;
 +}
 +
 +void mpp_rkvenc_test_exit(void)
 +{
++	struct mpp_fault_idle *idle;
++
++	mutex_lock(&fault_idle_devices_lock);
++	list_for_each_entry(idle, &fault_idle_devices, registry)
++		mpp_fault_idle_disable(idle);
++	mutex_unlock(&fault_idle_devices_lock);
 +	debugfs_remove_recursive(mpp_rkvenc_test_dir);
 +	mpp_rkvenc_test_dir = NULL;
 +}
@@ -26373,32 +26586,16 @@ index 0000000000000000000000000000000000000000..4d3f873dce2bad8ef309edc2aeacbe48
 +	return mpp_fault_consume_flag(&fail_reset);
 +}
 +
-+static bool mpp_rkvenc_test_target_matches(pid_t session_pid)
-+{
-+	int target = atomic_read(&target_session_pid);
-+
-+	return !target || target == session_pid;
-+}
-+
-+static bool mpp_rkvenc_test_consume_targeted(struct mpp_fault_knob *knob,
-+					      pid_t session_pid)
-+{
-+	if (!mpp_rkvenc_test_target_matches(session_pid))
-+		return false;
-+	if (!mpp_fault_consume_flag(knob))
-+		return false;
-+	atomic_set(&target_session_pid, 0);
-+	return true;
-+}
-+
 +bool mpp_rkvenc_test_hang_task(pid_t session_pid)
 +{
-+	return mpp_rkvenc_test_consume_targeted(&hang_task, session_pid);
++	return mpp_fault_consume_targeted(&hang_task, &target_session_pid,
++					  session_pid);
 +}
 +
 +bool mpp_rkvenc_test_inject_iommu_fault(pid_t session_pid)
 +{
-+	return mpp_rkvenc_test_consume_targeted(&inject_iommu_fault, session_pid);
++	return mpp_fault_consume_targeted(&inject_iommu_fault,
++					  &target_session_pid, session_pid);
 +}
 +
 +unsigned int mpp_rkvenc_test_completion_delay_ms(void)
@@ -26407,16 +26604,18 @@ index 0000000000000000000000000000000000000000..4d3f873dce2bad8ef309edc2aeacbe48
 +}
 diff --git a/drivers/video/rockchip/mpp/mpp_rkvenc_test.h b/drivers/video/rockchip/mpp/mpp_rkvenc_test.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..9df851e3be19aa07b0fe69bd3fc6d0ac2a1f5db3
+index 0000000000000000000000000000000000000000..d0058f199bc7ab5d376dd304539ffa6e2ef7ea1f
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_rkvenc_test.h
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,175 @@
 +/* SPDX-License-Identifier: GPL-2.0-only */
 +#ifndef __MPP_RKVENC_TEST_H__
 +#define __MPP_RKVENC_TEST_H__
 +
 +#include <linux/atomic.h>
 +#include <linux/types.h>
++#include <linux/pm_runtime.h>
++#include <linux/workqueue.h>
 +
 +struct mpp_fault_knob {
 +	atomic_t armed;
@@ -26443,7 +26642,121 @@ index 0000000000000000000000000000000000000000..9df851e3be19aa07b0fe69bd3fc6d0ac
 +	return delay_ms;
 +}
 +
++static inline bool mpp_fault_consume_targeted(struct mpp_fault_knob *knob,
++					      atomic_t *target,
++					      pid_t session_pid)
++{
++	int observed = atomic_read(target);
++
++	if (observed && observed != session_pid)
++		return false;
++	if (!mpp_fault_consume_flag(knob))
++		return false;
++	/* Do not erase a different selector written while this shot was firing. */
++	atomic_cmpxchg(target, observed, 0);
++	return true;
++}
++
++struct mpp_fault_idle {
++	struct delayed_work work;
++	spinlock_t fault_idle_lock;
++	bool arming_enabled;
++	void (*fire)(struct mpp_fault_idle *idle);
++	struct list_head registry;
++#if IS_ENABLED(CONFIG_KUNIT)
++	void (*before_enqueue)(struct mpp_fault_idle *idle);
++#endif
++};
++
++static inline bool mpp_fault_idle_suspended(struct device *dev)
++{
++	unsigned long flags;
++	bool suspended;
++
++	spin_lock_irqsave(&dev->power.lock, flags);
++	suspended = dev->power.runtime_status == RPM_SUSPENDED;
++	spin_unlock_irqrestore(&dev->power.lock, flags);
++	return suspended;
++}
++
++static inline void mpp_fault_idle_work(struct work_struct *work)
++{
++	struct mpp_fault_idle *idle = container_of(to_delayed_work(work),
++							 struct mpp_fault_idle, work);
++	unsigned long flags;
++	bool enabled;
++
++	spin_lock_irqsave(&idle->fault_idle_lock, flags);
++	enabled = idle->arming_enabled;
++	spin_unlock_irqrestore(&idle->fault_idle_lock, flags);
++	if (enabled)
++		idle->fire(idle);
++}
++
++static inline void mpp_fault_idle_init(struct mpp_fault_idle *idle,
++				     void (*fire)(struct mpp_fault_idle *))
++{
++	spin_lock_init(&idle->fault_idle_lock);
++	INIT_DELAYED_WORK(&idle->work, mpp_fault_idle_work);
++	INIT_LIST_HEAD(&idle->registry);
++	idle->fire = fire;
++	idle->arming_enabled = true;
++}
++
++static inline bool mpp_fault_idle_arm(struct mpp_fault_idle *idle,
++				     struct mpp_fault_knob *knob,
++				     atomic_t *target, pid_t pid)
++{
++	unsigned long flags;
++	unsigned int delay;
++	int observed;
++	bool scheduled = false;
++
++	spin_lock_irqsave(&idle->fault_idle_lock, flags);
++	if (!idle->arming_enabled || work_busy(&idle->work.work))
++		goto out;
++	observed = atomic_read(target);
++	if (observed && observed != pid)
++		goto out;
++	delay = mpp_fault_consume_delay(knob);
++	if (!delay)
++		goto out;
++	atomic_cmpxchg(target, observed, 0);
++#if IS_ENABLED(CONFIG_KUNIT)
++	if (idle->before_enqueue)
++		idle->before_enqueue(idle);
++#endif
++	/* Disable cannot finish cancelling between eligibility and enqueue. */
++	scheduled = schedule_delayed_work(&idle->work, msecs_to_jiffies(delay));
++out:
++	spin_unlock_irqrestore(&idle->fault_idle_lock, flags);
++	return scheduled;
++}
++
++static inline void mpp_fault_idle_disable(struct mpp_fault_idle *idle)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&idle->fault_idle_lock, flags);
++	idle->arming_enabled = false;
++	spin_unlock_irqrestore(&idle->fault_idle_lock, flags);
++	cancel_delayed_work_sync(&idle->work);
++}
++
++static inline void mpp_fault_idle_enable(struct mpp_fault_idle *idle)
++{
++	unsigned long flags;
++
++	spin_lock_irqsave(&idle->fault_idle_lock, flags);
++	idle->arming_enabled = true;
++	spin_unlock_irqrestore(&idle->fault_idle_lock, flags);
++}
++
 +#if IS_ENABLED(CONFIG_ROCKCHIP_MPP_CERALIVE_TEST)
++void mpp_rkvenc_test_idle_register(struct mpp_fault_idle *idle);
++void mpp_rkvenc_test_idle_unregister(struct mpp_fault_idle *idle);
++void mpp_rkvenc_test_idle_arm(struct mpp_fault_idle *idle, pid_t pid);
++void mpp_rkvenc_test_idle_record(bool suspended);
 +int mpp_rkvenc_test_init(void);
 +void mpp_rkvenc_test_exit(void);
 +bool mpp_rkvenc_test_fail_service_attach(void);
@@ -26472,10 +26785,10 @@ index 0000000000000000000000000000000000000000..9df851e3be19aa07b0fe69bd3fc6d0ac
 +#endif
 diff --git a/drivers/video/rockchip/mpp/mpp_service.c b/drivers/video/rockchip/mpp/mpp_service.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..5ef8ac8e2e724dba709dec3b8afc4ad37631a444
+index 0000000000000000000000000000000000000000..af66c0b99f01d0616660f8bc39a6ba4d40a56e89
 --- /dev/null
 +++ b/drivers/video/rockchip/mpp/mpp_service.c
-@@ -0,0 +1,884 @@
+@@ -0,0 +1,880 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Copyright (c) 2019 Fuzhou Rockchip Electronics Co., Ltd
@@ -26827,11 +27140,7 @@ index 0000000000000000000000000000000000000000..5ef8ac8e2e724dba709dec3b8afc4ad3
 +	return 0;
 +
 +fail:
-+	debugfs_remove_recursive(srv->telemetry_root);
-+	srv->telemetry_root = NULL;
-+	srv->telemetry_cores = NULL;
-+	srv->telemetry_sessions = NULL;
-+
++	/* Device teardown must remove its child dentries before the root goes. */
 +	return ret;
 +}
 +
@@ -27272,9 +27581,9 @@ index 0000000000000000000000000000000000000000..5ef8ac8e2e724dba709dec3b8afc4ad3
 +	return 0;
 +
 +fail_telemetry:
-+	mpp_telemetry_remove(srv);
 +	for (i = 0; i < MPP_DRIVER_BUTT; i++)
 +		mpp_remove_driver(srv, i);
++	mpp_telemetry_remove(srv);
 +	mpp_procfs_remove(srv);
 +
 +fail_procfs:
@@ -32445,10 +32754,10 @@ index 0000000000000000000000000000000000000000..784781726ea0b8779dcbdef6441cf561
 +#endif
 diff --git a/drivers/video/rockchip/rga3/Kconfig b/drivers/video/rockchip/rga3/Kconfig
 new file mode 100644
-index 0000000000000000000000000000000000000000..340a462bd7c6490359d13468c826615413f7cb6d
+index 0000000000000000000000000000000000000000..cf4816f7b0b89e332a7cb27a171d938954d0e50b
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/Kconfig
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,74 @@
 +# SPDX-License-Identifier: GPL-2.0
 +menuconfig ROCKCHIP_MULTI_RGA
 +	tristate "MULTI_RGA"
@@ -32489,6 +32798,16 @@ index 0000000000000000000000000000000000000000..340a462bd7c6490359d13468c8266154
 +	help
 +	  Enabling the debugger of multi RGA, you can use procfs and debugfs for debugging.
 +
++config ROCKCHIP_RGA_CERALIVE_TEST
++	bool "CeraLive RGA fault-injection controls"
++	depends on DEBUG_FS
++	select ROCKCHIP_RGA_DEBUG_FS
++	default n
++	help
++	  Publish one-shot timeout, IOMMU fault, hang and reset-result controls
++	  under debugfs rga-test. For isolated fault drills only; never enable
++	  this option in a production kernel.
++
 +config ROCKCHIP_RGA_GENPOOL
 +	bool "Use genpool to manage cmd_buf"
 +	default n
@@ -32515,10 +32834,10 @@ index 0000000000000000000000000000000000000000..340a462bd7c6490359d13468c8266154
 +endif
 diff --git a/drivers/video/rockchip/rga3/Makefile b/drivers/video/rockchip/rga3/Makefile
 new file mode 100644
-index 0000000000000000000000000000000000000000..d4386ee6061d7962a24382eeb1dc3ab321bac178
+index 0000000000000000000000000000000000000000..324a5e76ae7055ac1d4f4e0f1732684585570947
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/Makefile
-@@ -0,0 +1,10 @@
+@@ -0,0 +1,11 @@
 +# SPDX-License-Identifier: GPL-2.0
 +
 +ccflags-y += -I$(src) -I$(src)/include
@@ -32527,6 +32846,7 @@ index 0000000000000000000000000000000000000000..d4386ee6061d7962a24382eeb1dc3ab3
 +	   rga_job.o rga_hw_config.o rga2_reg_info.o rga_policy.o rga_mm.o \
 +	   rga_fence.o rga_trace.o
 +rga_multicore-$(CONFIG_ROCKCHIP_RGA_DEBUGGER) += rga_debugger.o
++rga_multicore-$(CONFIG_ROCKCHIP_RGA_CERALIVE_TEST) += rga_test.o
 +
 +obj-$(CONFIG_ROCKCHIP_MULTI_RGA) += rga_multicore.o
 diff --git a/drivers/video/rockchip/rga3/include/rga.h b/drivers/video/rockchip/rga3/include/rga.h
@@ -36125,10 +36445,10 @@ index 0000000000000000000000000000000000000000..aeba404d133469bd9fe3f158280d0597
 +#endif
 diff --git a/drivers/video/rockchip/rga3/include/rga_request_validation.h b/drivers/video/rockchip/rga3/include/rga_request_validation.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..1d29e9cafd1e3517988ecd89f193bdb08bd50166
+index 0000000000000000000000000000000000000000..12602951a1361734111489f597990898a4dec5d7
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/include/rga_request_validation.h
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,106 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +#ifndef __ROCKCHIP_RGA_REQUEST_VALIDATION_H__
 +#define __ROCKCHIP_RGA_REQUEST_VALIDATION_H__
@@ -36166,6 +36486,13 @@ index 0000000000000000000000000000000000000000..1d29e9cafd1e3517988ecd89f193bdb0
 +	bool format_supported;
 +	struct rga_plane_buffer planes[RGA_REQUEST_MAX_PLANES];
 +};
++
++static inline bool rga_request_rotation_swaps_axes(u8 rotate_mode, s32 sina,
++						    s32 cosa)
++{
++	return (rotate_mode & 0x0f) == 1 && cosa == 0 &&
++		(sina == 65536 || sina == -65536);
++}
 +
 +static inline bool rga_request_format_valid(u32 format)
 +{
@@ -36230,10 +36557,10 @@ index 0000000000000000000000000000000000000000..1d29e9cafd1e3517988ecd89f193bdb0
 +#endif
 diff --git a/drivers/video/rockchip/rga3/rga2_reg_info.c b/drivers/video/rockchip/rga3/rga2_reg_info.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..3e62e90dacf465e455e24ca4c6319ab54d070e05
+index 0000000000000000000000000000000000000000..a83a046ee04626bf0f35c8c7b41532f74f9658a6
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga2_reg_info.c
-@@ -0,0 +1,3554 @@
+@@ -0,0 +1,3608 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -38973,22 +39300,33 @@ index 0000000000000000000000000000000000000000..3e62e90dacf465e455e24ca4c6319ab5
 +		iommu_auto_gate = rga_read(RGA_IOMMU_AUTO_GATING, scheduler);
 +	}
 +
-+	if (scheduler->resets.count) {
-+		if (media_reset_cycle(scheduler->resets.count, scheduler->resets.controls,
-+				      scheduler->resets.controls))
-+			i = RGA_RESET_TIMEOUT;
-+	} else {
-+		rga_write(m_RGA2_SYS_CTRL_ACLK_SRESET_P | m_RGA2_SYS_CTRL_CCLK_SRESET_P |
-+			  m_RGA2_SYS_CTRL_RST_PROTECT_P, RGA2_SYS_CTRL, scheduler);
++	/*
++	 * RGA2 resets through RGA2_SYS_CTRL, never through the external reset
++	 * controls its device-tree node supplies.
++	 *
++	 * The register write asserts RST_PROTECT alongside the ACLK/CCLK soft
++	 * resets and the loop below waits for the block to report the reset
++	 * complete. reset_control_bulk_assert()/_deassert() can express neither:
++	 * there is no RST_PROTECT equivalent and no completion to wait on, so an
++	 * external cycle releases SRST_A_RGA2 while AXI transactions are still in
++	 * flight. Those transactions are never retired, so the shared PD_VDPU NIU
++	 * never reaches idle and the next genpd power-off latches a stale idle
++	 * request -- observed later as an uncorrectable SError, or as an
++	 * indefinite CPU stall on the first RGA2 MMIO access.
++	 *
++	 * This runs once per job on RK3588, not only on the error path, so the
++	 * external cycle is a per-job hazard rather than a recovery-only one.
++	 */
++	rga_write(m_RGA2_SYS_CTRL_ACLK_SRESET_P | m_RGA2_SYS_CTRL_CCLK_SRESET_P |
++		  m_RGA2_SYS_CTRL_RST_PROTECT_P, RGA2_SYS_CTRL, scheduler);
 +
-+		for (i = 0; i < RGA_RESET_TIMEOUT; i++) {
-+			reg = rga_read(RGA2_SYS_CTRL, scheduler) & 1;
++	for (i = 0; i < RGA_RESET_TIMEOUT; i++) {
++		reg = rga_read(RGA2_SYS_CTRL, scheduler) & 1;
 +
-+			if (reg == 0)
-+				break;
++		if (reg == 0)
++			break;
 +
-+			udelay(1);
-+		}
++		udelay(1);
 +	}
 +
 +	if (scheduler->data->mmu == RGA_IOMMU) {
@@ -39643,11 +39981,54 @@ index 0000000000000000000000000000000000000000..3e62e90dacf465e455e24ca4c6319ab5
 +
 +	/* The hardware interrupt top-half don't need to lock the scheduler. */
 +	if (job == NULL) {
++		/*
++		 * Without a job nothing guarantees the block is powered, and
++		 * this is the hard-IRQ top half, so every sleeping resume is
++		 * off the table. pm_runtime_get_if_in_use() is the only get()
++		 * usable here: it takes dev->power.lock with irqs saved, never
++		 * resumes, and returns > 0 only when the device is already
++		 * RPM_ACTIVE with a reference taken on our behalf.
++		 *
++		 * When CONFIG_PM is off the block is never gated and the stub
++		 * answers -EINVAL, so no reference is taken and none is due.
++		 */
++		const bool pm_gated = IS_ENABLED(CONFIG_PM);
++		int work_cycle;
++
++		if (pm_gated && pm_runtime_get_if_in_use(scheduler->dev) <= 0) {
++			/*
++			 * A suspended block cannot be serviced at all: the
++			 * interrupt cannot be cleared and no status register
++			 * would answer with anything but bus garbage. Report
++			 * the line as unhandled rather than claiming a clear
++			 * that never happened, and speak only once so this
++			 * path can never become the storm it replaces.
++			 *
++			 * Note that rga_irq_handler() still rewrites this to
++			 * IRQ_HANDLED whenever running_job is NULL, so the
++			 * spurious-IRQ machinery does not observe it yet; that
++			 * wrapper is shared with RGA3 and is fixed separately.
++			 */
++			dev_err_once(scheduler->dev,
++				     "core[%d], invalid job while runtime-suspended; interrupt left unserviced\n",
++				     scheduler->core);
++
++			return IRQ_NONE;
++		}
++
 +		rga2_clear_intr(scheduler);
++		/*
++		 * One sample feeds both conversions below; two reads could
++		 * disagree inside a single message.
++		 */
++		work_cycle = rga_read(RGA2_WORK_CNT, scheduler);
 +		rga_fault(scheduler, "core[%d], invalid job, INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x], WORK_CYCLE[0x%x(%d)]\n",
 +			scheduler->core, rga_read(RGA2_INT, scheduler),
 +			rga_read(RGA2_STATUS2, scheduler), rga_read(RGA2_STATUS1, scheduler),
-+			rga_read(RGA2_WORK_CNT, scheduler), rga_read(RGA2_WORK_CNT, scheduler));
++			work_cycle, work_cycle);
++
++		if (pm_gated)
++			pm_runtime_put_autosuspend(scheduler->dev);
 +
 +		return IRQ_HANDLED;
 +	}
@@ -42199,10 +42580,10 @@ index 0000000000000000000000000000000000000000..569ad8fbb3fc08d63a6b650fbc962c1d
 +};
 diff --git a/drivers/video/rockchip/rga3/rga_common.c b/drivers/video/rockchip/rga3/rga_common.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..084c931e7d1a82110a96807bddeae683b60f2b19
+index 0000000000000000000000000000000000000000..725c03a0de09cfd7320c519573dff6abc2f04b4d
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_common.c
-@@ -0,0 +1,1141 @@
+@@ -0,0 +1,1147 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -43209,14 +43590,20 @@ index 0000000000000000000000000000000000000000..084c931e7d1a82110a96807bddeae683
 +{
 +	switch (task->render_mode) {
 +	case BITBLT_MODE:
-+	case COLOR_PALETTE_MODE:
++	case COLOR_PALETTE_MODE: {
++		struct rga_img_info_t dst = task->dst;
++
++		if (rga_request_rotation_swaps_axes(task->rotate_mode,
++						    task->sina, task->cosa))
++			swap(dst.act_w, dst.act_h);
 +		if (rga_validate_image(job, &task->src, 0) ||
-+		    rga_validate_image(job, &task->dst, 2))
++		    rga_validate_image(job, &dst, 2))
 +			return -EINVAL;
 +		if (task->bsfilter_flag &&
 +		    rga_validate_image(job, &task->pat, 1))
 +			return -EINVAL;
 +		return 0;
++	}
 +	case COLOR_FILL_MODE:
 +		return rga_validate_image(job, &task->dst, 2);
 +	case UPDATE_PALETTE_TABLE_MODE:
@@ -43346,10 +43733,10 @@ index 0000000000000000000000000000000000000000..084c931e7d1a82110a96807bddeae683
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_debugger.c b/drivers/video/rockchip/rga3/rga_debugger.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..fb55ba557ff6b9a1b35ac646f83eb41514796192
+index 0000000000000000000000000000000000000000..600bd5d94f1d63bb92e6108be1055e91247b54a6
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_debugger.c
-@@ -0,0 +1,1275 @@
+@@ -0,0 +1,1279 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -43370,6 +43757,7 @@ index 0000000000000000000000000000000000000000..fb55ba557ff6b9a1b35ac646f83eb415
 +
 +#include "rga.h"
 +#include "rga_debugger.h"
++#include "rga_test.h"
 +#include "rga_drv.h"
 +#include "rga_mm.h"
 +#include "rga_common.h"
@@ -44017,6 +44405,9 @@ index 0000000000000000000000000000000000000000..fb55ba557ff6b9a1b35ac646f83eb415
 +			pr_info("reset hardware core[%d]!\n", reset_core);
 +
 +			rga_request_scheduler_abort(scheduler);
++			/* Preserve real recovery; falsify only the debug write result. */
++			if (rga_test_fail_reset())
++				return -EIO;
 +
 +			break;
 +		}
@@ -45505,10 +45896,10 @@ index 0000000000000000000000000000000000000000..2eabff20024a5b2cea7138a428b2daf7
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_drv.c b/drivers/video/rockchip/rga3/rga_drv.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..09a21037f8c0dad8b246abe8841e5cd58805e8f4
+index 0000000000000000000000000000000000000000..feebc4b4cd6ca042ce097086dd441ef33d95c326
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_drv.c
-@@ -0,0 +1,2020 @@
+@@ -0,0 +1,2029 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -45523,6 +45914,7 @@ index 0000000000000000000000000000000000000000..09a21037f8c0dad8b246abe8841e5cd5
 +#include "rga_mm.h"
 +
 +#include "rga_job.h"
++#include "rga_test.h"
 +#include "rga_fence.h"
 +#include "rga_hw_config.h"
 +
@@ -47426,10 +47818,16 @@ index 0000000000000000000000000000000000000000..09a21037f8c0dad8b246abe8841e5cd5
 +	if (ret)
 +		goto err_remove_managers;
 +
-+#ifdef CONFIG_ROCKCHIP_RGA_DEBUGGER
-+	ret = rga_debugger_init(&rga_drvdata->debugger);
++	ret = rga_test_init();
 +	if (ret)
 +		goto err_remove_fence;
++
++#ifdef CONFIG_ROCKCHIP_RGA_DEBUGGER
++	ret = rga_debugger_init(&rga_drvdata->debugger);
++	if (ret) {
++		rga_test_exit();
++		goto err_remove_fence;
++	}
 +#endif
 +
 +	pr_info("Module initialized. v%s\n", DRIVER_VERSION);
@@ -47472,6 +47870,8 @@ index 0000000000000000000000000000000000000000..09a21037f8c0dad8b246abe8841e5cd5
 +static void __exit rga_exit(void)
 +{
 +	int i;
++
++	rga_test_exit();
 +
 +#ifdef CONFIG_ROCKCHIP_RGA_DEBUGGER
 +	rga_debugger_remove(&rga_drvdata->debugger);
@@ -48456,10 +48856,10 @@ index 0000000000000000000000000000000000000000..6fe05d4e879927175aed9392b6959628
 +};
 diff --git a/drivers/video/rockchip/rga3/rga_iommu.c b/drivers/video/rockchip/rga3/rga_iommu.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..aeace228cdddeaed86017ed0dca1d8c17b376253
+index 0000000000000000000000000000000000000000..9081cf55d7f7e42ce5679aa7681a967f7a13b5a3
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_iommu.c
-@@ -0,0 +1,544 @@
+@@ -0,0 +1,564 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -48473,6 +48873,7 @@ index 0000000000000000000000000000000000000000..aeace228cdddeaed86017ed0dca1d8c1
 +#include "rga_job.h"
 +#include "rga_common.h"
 +#include "rga_hw_config.h"
++#include "rga_test.h"
 +
 +#include <soc/rockchip/rockchip_iommu.h>
 +
@@ -48766,6 +49167,25 @@ index 0000000000000000000000000000000000000000..aeace228cdddeaed86017ed0dca1d8c1
 +	return 0;
 +}
 +
++#if IS_ENABLED(CONFIG_ROCKCHIP_RGA_CERALIVE_TEST)
++bool rga_iommu_test_prepare(struct rga_scheduler_t *scheduler)
++{
++	struct rga_iommu_info *info = scheduler->iommu_info;
++
++	/* RGA2's private MMU must not steal a shot meant for an IOMMU core. */
++	return info && (info->rockchip_fault_handler || info->generic_fault_handler) &&
++		rga_test_inject_iommu_fault();
++}
++
++void rga_iommu_test_fault(struct rga_scheduler_t *scheduler)
++{
++	/* Direct callback only: no invalid address is submitted to hardware. */
++	rga_iommu_intr_fault_handler(scheduler->iommu_info->domain,
++				     scheduler->iommu_info->dev,
++				     ~0UL & PAGE_MASK, IOMMU_FAULT_READ, scheduler);
++}
++#endif
++
 +static int rga_iommu_set_fault_handler(struct rga_scheduler_t *scheduler)
 +{
 +	struct rga_iommu_info *info = scheduler->iommu_info;
@@ -49006,10 +49426,10 @@ index 0000000000000000000000000000000000000000..aeace228cdddeaed86017ed0dca1d8c1
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_job.c b/drivers/video/rockchip/rga3/rga_job.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..aa828362c12deae51e9e050c7b1d3ac30e7ea07a
+index 0000000000000000000000000000000000000000..c3ac3e7da8cb6c6035090ab91a966094aeb31ffe
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_job.c
-@@ -0,0 +1,2100 @@
+@@ -0,0 +1,2118 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -49026,6 +49446,7 @@ index 0000000000000000000000000000000000000000..aa828362c12deae51e9e050c7b1d3ac3
 +#include "rga_common.h"
 +#include "rga_request_validation.h"
 +#include "rga_trace.h"
++#include "rga_test.h"
 +#include "../mpp/media_request_size.h"
 +
 +enum rga_acquire_fence_state {
@@ -49283,6 +49704,7 @@ index 0000000000000000000000000000000000000000..aa828362c12deae51e9e050c7b1d3ac3
 +static int rga_job_run(struct rga_job *job, struct rga_scheduler_t *scheduler)
 +{
 +	int ret = 0;
++	bool iommu_fault;
 +
 +	/* enable power */
 +	ret = rga_power_enable(scheduler);
@@ -49291,7 +49713,15 @@ index 0000000000000000000000000000000000000000..aa828362c12deae51e9e050c7b1d3ac3
 +		return ret;
 +	}
 +
-+	ret = scheduler->ops->set_reg(job, scheduler);
++	iommu_fault = rga_iommu_test_prepare(scheduler);
++	if (iommu_fault || rga_test_irq_timeout() || rga_test_hang_task()) {
++		/* Keep timeout/cancel ownership, but never start DMA for this shot. */
++		job->timestamp.hw_execute = ktime_get();
++		job->timestamp.hw_recode = job->timestamp.hw_execute;
++		job->session->last_active = job->timestamp.hw_execute;
++	} else {
++		ret = scheduler->ops->set_reg(job, scheduler);
++	}
 +	if (ret < 0) {
 +		rga_job_err(job, "set reg failed");
 +		rga_power_disable(scheduler);
@@ -49303,6 +49733,14 @@ index 0000000000000000000000000000000000000000..aa828362c12deae51e9e050c7b1d3ac3
 +	trace_rga_job_started(scheduler->core, job->request_id);
 +	media_recovery_started(&scheduler->recovery);
 +	media_dump_event(&scheduler->dump, MEDIA_STARTED, job->request_id, 0);
++
++	if (iommu_fault) {
++		/* The callback owns irq_lock; job_mutex keeps this job published. */
++		rga_iommu_test_fault(scheduler);
++		rga_telemetry_record_busy(scheduler, job, false);
++		rga_power_disable(scheduler);
++		return job->ret;
++	}
 +
 +	return ret;
 +}
@@ -56004,6 +56442,122 @@ index 0000000000000000000000000000000000000000..351decd40262afaec1353cf7e5aa5309
 +
 +	return core;
 +}
+diff --git a/drivers/video/rockchip/rga3/rga_test.c b/drivers/video/rockchip/rga3/rga_test.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..2d9a4303d28e149d3aad8210b08f8227eb17114e
+--- /dev/null
++++ b/drivers/video/rockchip/rga3/rga_test.c
+@@ -0,0 +1,60 @@
++// SPDX-License-Identifier: GPL-2.0-only
++#include <linux/debugfs.h>
++#include <linux/err.h>
++
++#include "rga_test.h"
++
++static struct rga_fault_knob irq_timeout;
++static struct rga_fault_knob hang_task;
++static struct rga_fault_knob fail_reset;
++static struct rga_fault_knob inject_iommu_fault;
++static struct dentry *rga_test_dir;
++
++static void rga_test_add_flag(const char *name, struct rga_fault_knob *knob)
++{
++	char consumed_name[64];
++
++	debugfs_create_atomic_t(name, 0600, rga_test_dir, &knob->armed);
++	snprintf(consumed_name, sizeof(consumed_name), "%s_consumed", name);
++	debugfs_create_atomic_t(consumed_name, 0400, rga_test_dir,
++				&knob->consumed);
++}
++
++int rga_test_init(void)
++{
++	rga_test_dir = debugfs_create_dir("rga-test", NULL);
++	if (IS_ERR(rga_test_dir))
++		return PTR_ERR(rga_test_dir);
++
++	rga_test_add_flag("irq_timeout_once", &irq_timeout);
++	rga_test_add_flag("hang_task_once", &hang_task);
++	rga_test_add_flag("fail_reset_once", &fail_reset);
++	rga_test_add_flag("inject_iommu_fault_once", &inject_iommu_fault);
++	return 0;
++}
++
++void rga_test_exit(void)
++{
++	debugfs_remove_recursive(rga_test_dir);
++	rga_test_dir = NULL;
++}
++
++bool rga_test_irq_timeout(void)
++{
++	return rga_fault_consume_flag(&irq_timeout);
++}
++
++bool rga_test_hang_task(void)
++{
++	return rga_fault_consume_flag(&hang_task);
++}
++
++bool rga_test_fail_reset(void)
++{
++	return rga_fault_consume_flag(&fail_reset);
++}
++
++bool rga_test_inject_iommu_fault(void)
++{
++	return rga_fault_consume_flag(&inject_iommu_fault);
++}
+diff --git a/drivers/video/rockchip/rga3/rga_test.h b/drivers/video/rockchip/rga3/rga_test.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..1d1ea7c07a1ed01ba63ffa67350b2d7aa4f11c79
+--- /dev/null
++++ b/drivers/video/rockchip/rga3/rga_test.h
+@@ -0,0 +1,44 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++#ifndef __RGA_TEST_H__
++#define __RGA_TEST_H__
++
++#include <linux/atomic.h>
++#include <linux/types.h>
++
++struct rga_fault_knob {
++	atomic_t armed;
++	atomic_t consumed;
++};
++
++static inline bool rga_fault_consume_flag(struct rga_fault_knob *knob)
++{
++	if (atomic_cmpxchg(&knob->armed, 1, 0) != 1)
++		return false;
++
++	atomic_inc(&knob->consumed);
++	return true;
++}
++
++struct rga_scheduler_t;
++
++#if IS_ENABLED(CONFIG_ROCKCHIP_RGA_CERALIVE_TEST)
++int rga_test_init(void);
++void rga_test_exit(void);
++bool rga_test_irq_timeout(void);
++bool rga_test_hang_task(void);
++bool rga_test_fail_reset(void);
++bool rga_test_inject_iommu_fault(void);
++bool rga_iommu_test_prepare(struct rga_scheduler_t *scheduler);
++void rga_iommu_test_fault(struct rga_scheduler_t *scheduler);
++#else
++static inline int rga_test_init(void) { return 0; }
++static inline void rga_test_exit(void) { }
++static inline bool rga_test_irq_timeout(void) { return false; }
++static inline bool rga_test_hang_task(void) { return false; }
++static inline bool rga_test_fail_reset(void) { return false; }
++static inline bool rga_test_inject_iommu_fault(void) { return false; }
++static inline bool rga_iommu_test_prepare(struct rga_scheduler_t *scheduler) { return false; }
++static inline void rga_iommu_test_fault(struct rga_scheduler_t *scheduler) { }
++#endif
++
++#endif
 diff --git a/drivers/video/rockchip/rga3/rga_trace.c b/drivers/video/rockchip/rga3/rga_trace.c
 new file mode 100644
 index 0000000000000000000000000000000000000000..454fde49c262a6ff5e4a7e28b79b807c4ffbc5e1

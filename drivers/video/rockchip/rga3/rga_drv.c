@@ -12,6 +12,7 @@
 #include "rga_mm.h"
 
 #include "rga_job.h"
+#include "rga_test.h"
 #include "rga_fence.h"
 #include "rga_hw_config.h"
 
@@ -1915,10 +1916,16 @@ static int __init rga_init(void)
 	if (ret)
 		goto err_remove_managers;
 
-#ifdef CONFIG_ROCKCHIP_RGA_DEBUGGER
-	ret = rga_debugger_init(&rga_drvdata->debugger);
+	ret = rga_test_init();
 	if (ret)
 		goto err_remove_fence;
+
+#ifdef CONFIG_ROCKCHIP_RGA_DEBUGGER
+	ret = rga_debugger_init(&rga_drvdata->debugger);
+	if (ret) {
+		rga_test_exit();
+		goto err_remove_fence;
+	}
 #endif
 
 	pr_info("Module initialized. v%s\n", DRIVER_VERSION);
@@ -1961,6 +1968,8 @@ err_free_drvdata:
 static void __exit rga_exit(void)
 {
 	int i;
+
+	rga_test_exit();
 
 #ifdef CONFIG_ROCKCHIP_RGA_DEBUGGER
 	rga_debugger_remove(&rga_drvdata->debugger);

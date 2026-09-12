@@ -97,12 +97,13 @@ static void mpp_ioctl_scalar_size_test(struct kunit *test)
 	ioctl_region(1, &data, sizeof(data));
 	for (i = 0; i < ARRAY_SIZE(sizes); i++) {
 		unsigned int copies = ioctl_memory.copies;
+		bool valid = sizes[i] == 0 || sizes[i] == sizeof(data);
 
 		msg.size = sizes[i];
 		data = 0xa5a5a5a5;
 		KUNIT_EXPECT_EQ_MSG(test, mpp_dev_ioctl(&f->files[0], MPP_IOC_CFG_V1,
-			0x10000), sizes[i] == sizeof(data) ? 0L : -EINVAL, "scalar size %u", sizes[i]);
-		if (sizes[i] != sizeof(data)) {
+			0x10000), valid ? 0L : -EINVAL, "scalar size %u", sizes[i]);
+		if (!valid) {
 			KUNIT_EXPECT_EQ(test, data, 0xa5a5a5a5U);
 			KUNIT_EXPECT_EQ(test, ioctl_memory.copies - copies, 1U);
 		} else {
@@ -124,7 +125,7 @@ static void mpp_ioctl_client_test(struct kunit *test)
 	struct mpp_ioctl_fixture *f = test->priv;
 	struct mpp_msg_v1 msg = { .cmd = MPP_CMD_INIT_CLIENT_TYPE,
 		.size = sizeof(u32), .data_ptr = 0x20000 };
-	u32 clients[] = { 0, MPP_DEVICE_BUTT, UINT_MAX, 0x80000000 };
+	u32 clients[] = { 0, 0x12, 0x13, MPP_DEVICE_BUTT, UINT_MAX, 0x80000000 };
 	int i;
 
 	ioctl_region(0, &msg, sizeof(msg));
@@ -150,16 +151,71 @@ static void mpp_ioctl_input_scalar_test(struct kunit *test)
 		msg.cmd = commands[i];
 		for (j = 0; j < ARRAY_SIZE(sizes); j++) {
 			unsigned int copies = ioctl_memory.copies;
+			bool legacy_query = commands[i] == MPP_CMD_QUERY_CMD_SUPPORT && !sizes[j];
 
+			data = MPP_CMD_INIT_BASE;
 			msg.size = sizes[j];
-			KUNIT_EXPECT_EQ(test, mpp_dev_ioctl(&f->files[0], MPP_IOC_CFG_V1, 0x10000), -EINVAL);
-			KUNIT_EXPECT_EQ(test, ioctl_memory.copies - copies, 1U);
+			KUNIT_EXPECT_EQ(test, mpp_dev_ioctl(&f->files[0], MPP_IOC_CFG_V1, 0x10000),
+					legacy_query ? 0L : -EINVAL);
+			KUNIT_EXPECT_EQ(test, ioctl_memory.copies - copies, legacy_query ? 3U : 1U);
+			KUNIT_EXPECT_EQ(test, data, (u32)(legacy_query ? MPP_CMD_INIT_BUTT : MPP_CMD_INIT_BASE));
 		}
 	}
 	msg.cmd = MPP_CMD_QUERY_CMD_SUPPORT;
+	data = MPP_CMD_INIT_BASE;
 	msg.size = sizeof(data);
 	KUNIT_EXPECT_EQ(test, mpp_dev_ioctl(&f->files[0], MPP_IOC_CFG_V1, 0x10000), 0L);
 	KUNIT_EXPECT_EQ(test, data, (u32)MPP_CMD_INIT_BUTT);
+}
+
+static void mpp_ioctl_legacy_query_shape_test(struct kunit *test)
+{
+	struct mpp_ioctl_fixture *f = test->priv;
+	const u32 commands[] = { MPP_CMD_QUERY_HW_SUPPORT, MPP_CMD_QUERY_CMD_SUPPORT };
+	const u32 bad_offsets[] = { 1, 4, UINT_MAX };
+	const u32 bad_flags[] = { MPP_FLAGS_LAST_MSG, 4, 16, UINT_MAX };
+	const u64 bad_pointers[] = { 0, U64_MAX };
+	struct mpp_msg_v1 msg = { .data_ptr = 0x20000 };
+	u32 data;
+	int i, j;
+
+	ioctl_region(0, &msg, sizeof(msg));
+	for (i = 0; i < ARRAY_SIZE(commands); i++) {
+		msg.cmd = commands[i];
+		msg.data_ptr = 0x20000;
+		ioctl_region(1, &data, sizeof(data));
+		data = MPP_CMD_INIT_BASE;
+		KUNIT_EXPECT_EQ(test, mpp_dev_ioctl(&f->files[0], MPP_IOC_CFG_V1, 0x10000), 0L);
+		KUNIT_EXPECT_EQ(test, data, commands[i] == MPP_CMD_QUERY_HW_SUPPORT ? 0U : (u32)MPP_CMD_INIT_BUTT);
+		for (j = 0; j < ARRAY_SIZE(bad_offsets); j++) {
+			unsigned int copies = ioctl_memory.copies;
+
+			data = 0xa5a5a5a5;
+			msg.offset = bad_offsets[j];
+			KUNIT_EXPECT_EQ(test, mpp_dev_ioctl(&f->files[0], MPP_IOC_CFG_V1, 0x10000), -EINVAL);
+			KUNIT_EXPECT_EQ(test, ioctl_memory.copies - copies, 1U);
+			KUNIT_EXPECT_EQ(test, data, 0xa5a5a5a5U);
+		}
+		msg.offset = 0;
+		for (j = 0; j < ARRAY_SIZE(bad_flags); j++) {
+			unsigned int copies = ioctl_memory.copies;
+
+			msg.flags = bad_flags[j];
+			KUNIT_EXPECT_EQ(test, mpp_dev_ioctl(&f->files[0], MPP_IOC_CFG_V1, 0x10000), -EINVAL);
+			KUNIT_EXPECT_EQ(test, ioctl_memory.copies - copies, 1U);
+			KUNIT_EXPECT_EQ(test, data, 0xa5a5a5a5U);
+		}
+		msg.flags = 0;
+		for (j = 0; j < ARRAY_SIZE(bad_pointers); j++) {
+			msg.data_ptr = bad_pointers[j];
+			KUNIT_EXPECT_EQ(test, mpp_dev_ioctl(&f->files[0], MPP_IOC_CFG_V1, 0x10000),
+					commands[i] == MPP_CMD_QUERY_HW_SUPPORT ? -EFAULT : -EINVAL);
+		}
+		msg.data_ptr = 0x20000;
+		ioctl_region(1, &data, sizeof(data) - 1);
+		KUNIT_EXPECT_EQ(test, mpp_dev_ioctl(&f->files[0], MPP_IOC_CFG_V1, 0x10000),
+				commands[i] == MPP_CMD_QUERY_HW_SUPPORT ? -EFAULT : -EINVAL);
+	}
 }
 
 static void mpp_ioctl_session_cycles_test(struct kunit *test)
@@ -198,6 +254,7 @@ static struct kunit_case mpp_ioctl_cases[] = {
 	KUNIT_CASE(mpp_ioctl_scalar_size_test),
 	KUNIT_CASE(mpp_ioctl_client_test),
 	KUNIT_CASE(mpp_ioctl_input_scalar_test),
+	KUNIT_CASE(mpp_ioctl_legacy_query_shape_test),
 	KUNIT_CASE(mpp_ioctl_session_cycles_test),
 	{}
 };

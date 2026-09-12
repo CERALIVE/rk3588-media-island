@@ -88,6 +88,23 @@ def stage(tree: Path) -> None:
     shutil.copyfile(ROOT / "include/uapi/linux/rk-mpp.h", tree / "include/uapi/linux/rk-mpp.h")
     tests = target / "kunit"
     shutil.copytree(ROOT / "tests/kunit", tests, dirs_exist_ok=True)
+    shutil.copyfile(DRIVERS / "rga3/rga_test.c", target / "rga3/rga_test.c")
+    provider = (ROOT / "integration/0002-iommu-rockchip-export-for-mpp.patch").read_text()
+    bus_error = re.findall(r"^\+(#define ROCKCHIP_IOMMU_FAULT_BUS_ERROR[^\n]*)$", provider, re.MULTILINE)
+    if len(bus_error) != 1:
+        raise DefinitionError("ROCKCHIP_IOMMU_FAULT_BUS_ERROR", len(bus_error))
+    (tests / "rga_fault_provider.inc").write_text(bus_error[0] + "\n")
+    emit(tests / "rga_fault_source.inc", (
+        (DRIVERS / "rga3/rga_job.c", (
+            "rga_telemetry_record_busy", "rga_telemetry_reset", "rga_job_run",
+            "rga_job_timeout_query_state", "rga_job_scheduler_timeout_clean",
+        )),
+        (DRIVERS / "rga3/rga_iommu.c", (
+            "rga_iommu_intr_fault_handler", "rga_iommu_test_prepare",
+            "rga_iommu_test_fault",
+        )),
+        (DRIVERS / "rga3/rga_debugger.c", ("rga_reset_write",)),
+    ))
     common = DRIVERS / "mpp/mpp_common.c"
     source = common.read_text()
     structs = re.findall(r"^struct mpp_msg_v1 \{.*?^\};", source, re.MULTILINE | re.DOTALL)
@@ -100,6 +117,13 @@ def stage(tree: Path) -> None:
         raise DefinitionError("rga_acquire_fence_state", len(enums))
     (tests / "ioctl_rga_types.inc").write_text(enums[0] + "\n")
     emit(tests / "ioctl_mpp_source.inc", ((common, MPP),))
+    emit(tests / "telemetry_mpp_source.inc", (
+        (DRIVERS / "mpp/mpp_service.c", (
+            "mpp_telemetry_atomic64_get", "mpp_debugfs_create_atomic64",
+            "mpp_telemetry_init", "mpp_telemetry_remove",
+        )),
+        (common, ("mpp_dev_remove",)),
+    ))
     emit(tests / "ioctl_rga_source.inc", (
         (DRIVERS / "rga3/rga_drv.c", RGA_DRV),
         (DRIVERS / "rga3/rga_job.c", RGA_JOB),

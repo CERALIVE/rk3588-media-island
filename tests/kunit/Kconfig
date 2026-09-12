@@ -38,6 +38,14 @@ config ROCKCHIP_MPP_TELEMETRY_KUNIT_TEST
 	help
 	  Freeze the operator-visible MPP load row produced by the driver.
 
+config ROCKCHIP_MPP_DEBUGFS_KUNIT_TEST
+	bool "Rockchip MPP core debugfs lifetime tests"
+	depends on KUNIT && DEBUG_FS
+	depends on !ROCKCHIP_MPP_SERVICE
+	help
+	  Exercise maintained telemetry registration and device removal with real
+	  debugfs readers and devres allocations. Run stage_ioctl.py first.
+
 config ROCKCHIP_RGA_FENCE_KUNIT_TEST
 	tristate "Rockchip RGA release-fence tests"
 	depends on KUNIT
@@ -54,6 +62,14 @@ config ROCKCHIP_RGA_REQUEST_KUNIT_TEST
 	help
 	  Exercise fail-closed per-plane descriptor, offset, stride, and
 	  format validation without binding the RGA driver.
+
+config ROCKCHIP_RGA_FAULT_KUNIT_TEST
+	bool "Rockchip RGA fault-injection tests"
+	depends on KUNIT && DEBUG_FS
+	depends on !ROCKCHIP_MULTI_RGA
+	help
+	  Exercise real one-shot controls, debugfs permissions and maintained
+	  fault call sites with fake hardware. Run stage_ioctl.py first.
 
 config ROCKCHIP_MEDIA_DMA_POLICY_KUNIT_TEST
 	tristate "Rockchip media DMA policy tests"

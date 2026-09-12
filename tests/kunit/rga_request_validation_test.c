@@ -186,6 +186,20 @@ static void rga_plane_accepts_aligned_crop_test(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, rga_plane_request_validate(&plane), 0);
 }
 
+static void rga_rotation_swaps_axes_for_quarter_turn_test(struct kunit *test)
+{
+	KUNIT_EXPECT_TRUE(test,
+		rga_request_rotation_swaps_axes(1, 65536, 0));
+	KUNIT_EXPECT_TRUE(test,
+		rga_request_rotation_swaps_axes(1, -65536, 0));
+}
+
+static void rga_rotation_keeps_axes_for_scale_marker_test(struct kunit *test)
+{
+	KUNIT_EXPECT_FALSE(test,
+		rga_request_rotation_swaps_axes(1, 0, 65536));
+}
+
 static struct kunit_case rga_request_validation_cases[] = {
 	KUNIT_CASE(rga_plane_rejects_missing_descriptor_test),
 	KUNIT_CASE(rga_plane_rejects_horizontal_offset_outside_stride_test),
@@ -205,6 +219,8 @@ static struct kunit_case rga_request_validation_cases[] = {
 	KUNIT_CASE(rga_plane_accepts_three_separate_planes_test),
 	KUNIT_CASE(rga_plane_accepts_two_separate_planes_test),
 	KUNIT_CASE(rga_plane_accepts_aligned_crop_test),
+	KUNIT_CASE(rga_rotation_swaps_axes_for_quarter_turn_test),
+	KUNIT_CASE(rga_rotation_keeps_axes_for_scale_marker_test),
 	{}
 };
 

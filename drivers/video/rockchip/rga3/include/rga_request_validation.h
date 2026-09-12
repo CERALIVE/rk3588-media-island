@@ -36,6 +36,13 @@ struct rga_plane_request {
 	struct rga_plane_buffer planes[RGA_REQUEST_MAX_PLANES];
 };
 
+static inline bool rga_request_rotation_swaps_axes(u8 rotate_mode, s32 sina,
+						    s32 cosa)
+{
+	return (rotate_mode & 0x0f) == 1 && cosa == 0 &&
+		(sina == 65536 || sina == -65536);
+}
+
 static inline bool rga_request_format_valid(u32 format)
 {
 	return format <= RGA_REQUEST_FORMAT_MAX &&

@@ -1,0 +1,156 @@
+schema_version: 1
+board: orange-pi-5-plus
+host: 192.168.78.151
+observed_at: "2026-09-06T03:50:40Z"
+usb_audio_followup_at: "2026-09-06T04:34:42Z"
+image_commit: 98f9f198365ffd163bb0e66da65e7f6328ceef3a
+kernel_build: "7.2.0-ceralive-rk3588 #ceralive1 SMP PREEMPT @1788664077"
+island_release: v2026.9.2
+qualification: incomplete
+evidence: docs/qualification/orange-pi-98f9f198-2026-09-06.md
+raw_evidence: test-results/opi-pr150-98f9f198-20260906/todo37-inventory.txt
+notes:
+  - This file did not previously exist; schema version 1 records observations, not runner certification.
+  - NO-DEVICE means no matching powered/enumerated device, not knowledge of objects beside the board.
+  - FAIL on an incomplete class means qualification was not satisfied, not an invented device malfunction.
+  - Native passthrough rows retain the codec-axis exception; they must not require transcoding to the other codec.
+  - USB audio observations below supersede the initial NO-DEVICE audio inventory after an operator attachment; video rows were not re-exercised.
+round3_inventory:
+  observed_at: "2026-09-06T06:04:43Z"
+  image_commit: 1f56ca03c94dcc462a8b1f7a88c1c87e64532b42
+  kernel_build: "7.2.0-ceralive-rk3588 #ceralive1 SMP PREEMPT @1788671395"
+  gstreamer_rockchip_package: 1.14.4+ceralive.2
+  raw_evidence: test-results/opi-round3-1f56ca03-20260906/todo37-inventory.txt
+  uvc_device_count: 0
+  video_row_ids_still_no_device: [1, 2, 3, 4, 5, 6, 7, 8, 10]
+  usb_microphone:
+    product: DJI MIC MINI
+    vid_pid: "2ca3:4011"
+    usb_path: "1-1.4"
+    alsa_card_index: 0
+    alsa_card_id: usbaudio
+    capture_pcm: pcmC0D0c
+    advertised_format: S24_3LE
+    advertised_rate_hz: 48000
+    advertised_channels: 2
+    functional_retest: not-run
+    prior_capture_evidence: The device-specific PASS below remains scoped to its original image and timestamp; this scan does not recreate or promote it.
+  connected_bluetooth_devices: []
+  onboard_hdmi_is_not_uvc: true
+rows:
+  - id: 1
+    class: UVC H.264 and Osmo dual-mode ladders/retention
+    result: NO-DEVICE
+    functional_test: not-run
+    reason: No UVC interface or DJI camera enumerated.
+  - id: 2
+    class: Native H.264 passthrough
+    result: NO-DEVICE
+    functional_test: not-run
+    codec_axis_exception: native-h264-only
+    reason: No compressed H.264 UVC source.
+  - id: 3
+    class: UVC H.265 transcode and native passthrough
+    result: NO-DEVICE
+    functional_test: not-run
+    codec_axis_exception: native-h265-only-for-passthrough
+    reason: No compressed H.265 UVC source.
+  - id: 4
+    class: UVC MJPEG through mppjpegdec
+    result: NO-DEVICE
+    functional_test: not-run
+    reason: No MJPEG UVC source; element registration is not decode proof.
+  - id: 5
+    class: MS2130-class USB capture plus UAC
+    result: NO-DEVICE
+    functional_test: not-run
+    reason: No MS2130-class USB video dongle; the separately attached DJI microphone is not a video-plus-UAC capture dongle.
+  - id: 6
+    class: Cam Link 4K
+    result: NO-DEVICE
+    functional_test: not-run
+    reason: No Cam Link enumerated.
+  - id: 7
+    class: Raw NV12 UVC
+    result: NO-DEVICE
+    functional_test: not-run
+    reason: No raw UVC source; synthetic NV12 is not a substitute.
+  - id: 8
+    class: Two UVC devices on one xHCI root
+    result: NO-DEVICE
+    functional_test: not-run
+    reason: Zero UVC devices enumerated.
+  - id: 9
+    class: UAC 48k stereo / UAC 96k 24-bit / HDMI 8-channel / HFP microphone
+    result: FAIL
+    functional_test: partial
+    reason: USB 48k stereo capture now passes; the full class remains incomplete because HDMI eight-channel operation was not tested and no 96k/HFP device is available.
+    uac_48k: PASS
+    uac_96k_24bit: NO-DEVICE
+    uac_96k_24bit_reason: The only enumerated USB audio device advertises 48000 Hz only; resampled output would not prove native 96k capture.
+    hfp: NO-DEVICE
+    hdmi_8channel: not-run
+    usb_microphones:
+      - product: DJI MIC MINI
+        manufacturer: DJI Technology Co., Ltd.
+        usb_vid: "2ca3"
+        usb_pid: "4011"
+        usb_path: "1-1.4"
+        usb_speed_mbps: 12
+        alsa_card_index: 4
+        alsa_card_id: usbaudio
+        alsa_card_name: DJI MIC MINI
+        alsa_selector: "hw:CARD=usbaudio"
+        capture_pcm: "pcmC4D0c"
+        result: PASS
+        pass_scope: Bounded device-targeted PipeWire capture with valid non-silent PCM, not a long soak or acoustic-fidelity certification.
+        hardware_capture:
+          state: RUNNING
+          format: S24_3LE
+          bits: 24
+          rate_hz: 48000
+          channels: 2
+          usb_interface: 3
+          usb_altsetting: 1
+          endpoint: "0x81"
+          advertised_rates_hz: [48000]
+        recording:
+          tool: pw-record
+          target: alsa_input.usb-DJI_Technology_Co.__Ltd._DJI_MIC_MINI_XSP12345678B-01.analog-stereo
+          stop: Intentional SIGINT at six seconds; timeout exit 124 is expected, not the PASS criterion.
+          codec: pcm_s32le
+          container_bits: 32
+          duration_seconds: 5.973333
+          samples_per_channel: 286720
+          file_bytes: 2293804
+          peak_dbfs: -27.172505
+          rms_dbfs: -41.846446
+          channel_content: Both channels had identical measured statistics; independent microphone feeds were not established.
+          retained_audio: false
+        ui:
+          observed_at: "2026-09-06T04:36:20Z"
+          label: DJI MIC MINI Analog Stereo
+          badge: External
+          selectable: true
+          enabled: true
+          selection_changed: false
+          stream_started: false
+        evidence:
+          inventory: test-results/opi-pr150-98f9f198-20260906/usb-audio-followup-inventory.txt
+          capture: test-results/opi-pr150-98f9f198-20260906/usb-audio-followup-capture-v3.txt
+          selector: test-results/opi-pr150-98f9f198-20260906/usb-audio-selector.png
+          final_health: test-results/opi-pr150-98f9f198-20260906/usb-audio-followup-final-health.txt
+    observed_hdmi_audio:
+      observed_at: "2026-09-06T03:50:40Z"
+      state: RUNNING
+      format: S32_LE
+      rate_hz: 48000
+      channels: 2
+      owner: PipeWire
+      receiver: AAC-LC 48000 Hz stereo
+      fidelity_and_sync: not-measured
+  - id: 10
+    class: USB capture hotplug/replug and typed failures
+    result: NO-DEVICE
+    functional_test: not-run
+    reason: No USB capture source to unplug/replug; onboard HDMI was not physically hotplugged.

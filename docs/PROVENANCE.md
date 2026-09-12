@@ -132,7 +132,7 @@ to name the donor directly.
 | `drivers/video/rockchip/mpp/hack/mpp_rkvdec2_hack_rk3568.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/hack/mpp_rkvdec2_link_hack_rk3568.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_av1dec.c` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
-| `drivers/video/rockchip/mpp/mpp_common.c` | realized series | same | REBASED | Checked register-offset copy sizing; scalar ioctl payload-size enforcement. See MODERNIZATION.md and IOCTL-BOUNDARY-TESTS.md. | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_common.c` | realized series | same | REBASED | Checked register-offset copy sizing; scalar ioctl size enforcement with the zero-size/offset/flags discovery exception for HW_SUPPORT and CMD_SUPPORT; drain per-core debugfs readers before devres releases the client (efd4ef587). See MODERNIZATION.md, IOCTL-BOUNDARY-TESTS.md and TELEMETRY.md. | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/media_request_size.h` | CeraLive | same | FIRST-PARTY | Shared overflow-checked request sizing, covered by UML KUnit. | `GPL-2.0-only` |
 | `drivers/video/rockchip/mpp/mpp_common.h` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_debug.h` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
@@ -153,15 +153,17 @@ to name the donor directly.
 | `drivers/video/rockchip/mpp/mpp_rkvdec2_link.h` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_rkvenc.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_rkvenc2.c` | realized series | same | REBASED | Separate internal register messages from `__user` requests; preserve address spaces for sparse; clamp SRAM before narrowing to the RCB size. | `(GPL-2.0+ OR MIT)` |
-| `drivers/video/rockchip/mpp/mpp_service.c` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
+| `drivers/video/rockchip/mpp/mpp_service.c` | realized series | same | REBASED | On telemetry probe failure, unregister clients before removing the parent debugfs tree (efd4ef587); preserve child handles until device teardown. See TELEMETRY.md. | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_vdpp.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_vdpu1.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_vdpu2.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_vepu1.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/mpp_vepu2.c` | donor | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
 | `drivers/video/rockchip/mpp/rockchip_iep2_regs.h` | realized series | same | VERBATIM |  | `(GPL-2.0+ OR MIT)` |
-| `drivers/video/rockchip/rga3/Kconfig` | realized series | same | ADAPTED | Build `ROCKCHIP_MULTI_RGA` as a module without excluding mainline RGA. | `GPL-2.0` |
-| `drivers/video/rockchip/rga3/Makefile` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/Kconfig` | realized series | same | ADAPTED | Build `ROCKCHIP_MULTI_RGA` as a module without excluding mainline RGA; add the default-off RGA fault seam (A8). | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/Makefile` | realized series | same | ADAPTED | Link `rga_test.o` only with the opt-in test symbol (A8). | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga_test.c` | CeraLive | — | FIRST-PARTY | Four independent atomic/debugfs one-shot controls, mirroring the first-party MPP seam (A8). | `GPL-2.0-only` |
+| `drivers/video/rockchip/rga3/rga_test.h` | CeraLive | — | FIRST-PARTY | Atomic check-and-clear primitive and config-off entry-point stubs (A8). | `GPL-2.0-only` |
 | `drivers/video/rockchip/rga3/include/rga.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/include/rga2_reg_info.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/include/rga3_reg_info.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
@@ -177,12 +179,12 @@ to name the donor directly.
 | `drivers/video/rockchip/rga3/rga2_reg_info.c` | realized series | same | REBASED | Make the file-local immutable ROP table explicit for sparse. | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga3_reg_info.c` | vendor backlog | same | ADAPTED | Preserve the 7.2/yisding port and enable frame-end auto-reset so one frame cannot leave stale FIFO state for the next. | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_common.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
-| `drivers/video/rockchip/rga3/rga_debugger.c` | realized series | same | REBASED | iosys_map debug dumps; pde_data only. | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga_debugger.c` | realized series | same | ADAPTED | iosys_map debug dumps; pde_data only; opt-in reset-write result injection after recovery (A8). | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_dma_buf.c` | realized series | same | REBASED | Bounded iosys_map CPU reads. | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_drv.c` | realized series | same | ADAPTED | Replace `strncpy`, annotate ioctl user pointers, make file-local operations static; checked pool sizing and kvzalloc ownership; preserve configuration errno at both ioctl wrappers; configure and use 2000 ms autosuspend with synchronous probe/teardown (A6). | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_fence.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_hw_config.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
-| `drivers/video/rockchip/rga3/rga_iommu.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga_iommu.c` | realized series | same | ADAPTED | Opt-in installed-handler eligibility and direct fault-callback injection without invalid DMA (A8). | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_job.c` | realized series | same | ADAPTED | Preserve the trusted in-kernel pointer for sparse; overflow-safe array sizing and kvzalloc ownership; reject unknown user sync/core/render selectors before task-list publication; release a cancelled running job's PM ref regardless of reset status (A7). | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_mm.c` | realized series | same | REBASED | Preserve the trusted dma-buf object pointer for sparse; iosys_map staging ownership. | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_policy.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
@@ -218,6 +220,7 @@ negative behaviour is also part of the maintained contract.
 | A5 | `mpp/mpp_jpgdec.c` | Unwind common PM/device initialization if IRQ registration fails; preserve the IRQ errno. | RUNTIME-PM-AUDIT.md PM-B02 and direct-probe KUnit. | Replacement probe lifecycle provides equivalent cleanup. |
 | A6 | `rga3/rga_drv.c` | Autosuspend idle domains after 2000 ms while retaining explicit clock gating and immediate probe/error/remove suspension. | RUNTIME-PM-AUDIT.md PM-A01, production-policy mutation checks and real-PM KUnit. | A measured replacement policy preserves idle power management and error balance. |
 | A7 | `rga3/rga_job.c` | Cancel by removed running-job ownership, not the scheduler status left by reset. | RUNTIME-PM-AUDIT.md PM-B01; production reset→next→cancel KUnit reproduces the leak. | Replacement ownership protocol releases exactly one ref per running job. |
+| A8 | `rga3/rga_test.c`, `rga3/rga_test.h`, `rga3/Kconfig`, `rga3/Makefile`, `rga3/rga_drv.c`, `rga3/rga_job.c`, `rga3/rga_iommu.c`, `rga3/rga_debugger.c` | Add an independently gated fault seam; module init/exit owns its debugfs tree; job run suppresses START for timeout/hang or injects the real IOMMU callback before error cleanup; reset writer falsifies only its result. | Owner-authorized RGA extension; `tests/kunit/rga_fault*_test.c`; `docs/FAULT-SEAM-CONTRACT.md`. No board proof. This row also amends the driver/job import deltas above. | Retire the isolated fault harness or replace it with equally observable one-shot controls and config-off stubs. |
 
 ## Integration patches
 
@@ -273,6 +276,8 @@ the shared helpers. The coherent-allocation `vaddr` remains distinct from the
 exporter-owned map; it is not a reconstructed dma-buf mapping.
 The six new `media_*.h` headers take the independently asserted source census
 from 78 to 84; integration and mailbox counts remain eight and nine.
+The later RGA fault harness adds exactly `rga_test.c` and `rga_test.h`, taking
+the current source census to 86 without changing those integration/mailbox counts.
 
 The pinned Linux 7.2 tree was configured with arm64 `defconfig`, the pinned
 device fragment and `configs/rk3588-media-island.fragment`. After generating

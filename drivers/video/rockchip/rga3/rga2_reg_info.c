@@ -2737,22 +2737,33 @@ static void rga2_soft_reset(struct rga_scheduler_t *scheduler)
 		iommu_auto_gate = rga_read(RGA_IOMMU_AUTO_GATING, scheduler);
 	}
 
-	if (scheduler->resets.count) {
-		if (media_reset_cycle(scheduler->resets.count, scheduler->resets.controls,
-				      scheduler->resets.controls))
-			i = RGA_RESET_TIMEOUT;
-	} else {
-		rga_write(m_RGA2_SYS_CTRL_ACLK_SRESET_P | m_RGA2_SYS_CTRL_CCLK_SRESET_P |
-			  m_RGA2_SYS_CTRL_RST_PROTECT_P, RGA2_SYS_CTRL, scheduler);
+	/*
+	 * RGA2 resets through RGA2_SYS_CTRL, never through the external reset
+	 * controls its device-tree node supplies.
+	 *
+	 * The register write asserts RST_PROTECT alongside the ACLK/CCLK soft
+	 * resets and the loop below waits for the block to report the reset
+	 * complete. reset_control_bulk_assert()/_deassert() can express neither:
+	 * there is no RST_PROTECT equivalent and no completion to wait on, so an
+	 * external cycle releases SRST_A_RGA2 while AXI transactions are still in
+	 * flight. Those transactions are never retired, so the shared PD_VDPU NIU
+	 * never reaches idle and the next genpd power-off latches a stale idle
+	 * request -- observed later as an uncorrectable SError, or as an
+	 * indefinite CPU stall on the first RGA2 MMIO access.
+	 *
+	 * This runs once per job on RK3588, not only on the error path, so the
+	 * external cycle is a per-job hazard rather than a recovery-only one.
+	 */
+	rga_write(m_RGA2_SYS_CTRL_ACLK_SRESET_P | m_RGA2_SYS_CTRL_CCLK_SRESET_P |
+		  m_RGA2_SYS_CTRL_RST_PROTECT_P, RGA2_SYS_CTRL, scheduler);
 
-		for (i = 0; i < RGA_RESET_TIMEOUT; i++) {
-			reg = rga_read(RGA2_SYS_CTRL, scheduler) & 1;
+	for (i = 0; i < RGA_RESET_TIMEOUT; i++) {
+		reg = rga_read(RGA2_SYS_CTRL, scheduler) & 1;
 
-			if (reg == 0)
-				break;
+		if (reg == 0)
+			break;
 
-			udelay(1);
-		}
+		udelay(1);
 	}
 
 	if (scheduler->data->mmu == RGA_IOMMU) {
@@ -3407,11 +3418,54 @@ static int rga2_irq(struct rga_scheduler_t *scheduler)
 
 	/* The hardware interrupt top-half don't need to lock the scheduler. */
 	if (job == NULL) {
+		/*
+		 * Without a job nothing guarantees the block is powered, and
+		 * this is the hard-IRQ top half, so every sleeping resume is
+		 * off the table. pm_runtime_get_if_in_use() is the only get()
+		 * usable here: it takes dev->power.lock with irqs saved, never
+		 * resumes, and returns > 0 only when the device is already
+		 * RPM_ACTIVE with a reference taken on our behalf.
+		 *
+		 * When CONFIG_PM is off the block is never gated and the stub
+		 * answers -EINVAL, so no reference is taken and none is due.
+		 */
+		const bool pm_gated = IS_ENABLED(CONFIG_PM);
+		int work_cycle;
+
+		if (pm_gated && pm_runtime_get_if_in_use(scheduler->dev) <= 0) {
+			/*
+			 * A suspended block cannot be serviced at all: the
+			 * interrupt cannot be cleared and no status register
+			 * would answer with anything but bus garbage. Report
+			 * the line as unhandled rather than claiming a clear
+			 * that never happened, and speak only once so this
+			 * path can never become the storm it replaces.
+			 *
+			 * Note that rga_irq_handler() still rewrites this to
+			 * IRQ_HANDLED whenever running_job is NULL, so the
+			 * spurious-IRQ machinery does not observe it yet; that
+			 * wrapper is shared with RGA3 and is fixed separately.
+			 */
+			dev_err_once(scheduler->dev,
+				     "core[%d], invalid job while runtime-suspended; interrupt left unserviced\n",
+				     scheduler->core);
+
+			return IRQ_NONE;
+		}
+
 		rga2_clear_intr(scheduler);
+		/*
+		 * One sample feeds both conversions below; two reads could
+		 * disagree inside a single message.
+		 */
+		work_cycle = rga_read(RGA2_WORK_CNT, scheduler);
 		rga_fault(scheduler, "core[%d], invalid job, INTR[0x%x], HW_STATUS[0x%x], CMD_STATUS[0x%x], WORK_CYCLE[0x%x(%d)]\n",
 			scheduler->core, rga_read(RGA2_INT, scheduler),
 			rga_read(RGA2_STATUS2, scheduler), rga_read(RGA2_STATUS1, scheduler),
-			rga_read(RGA2_WORK_CNT, scheduler), rga_read(RGA2_WORK_CNT, scheduler));
+			work_cycle, work_cycle);
+
+		if (pm_gated)
+			pm_runtime_put_autosuspend(scheduler->dev);
 
 		return IRQ_HANDLED;
 	}

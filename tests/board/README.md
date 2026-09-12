@@ -26,9 +26,13 @@ accepts the earlier Phase-0 layout for retained historical runs.
 | `sample-cores.sh` | did the second encoder core run, and at what per-process fps? | 3(d) dual-core |
 | `count-journal.sh` | how many copy/fallback events happened in a measured window? | 3(b) copy census |
 | `fd-trace.sh` | did a buffer cross this boundary, or was it copied? | 3(b) copy census |
+| `idr-latency.sh` | how many encoder-input frames after each acknowledged IPC request precede the muxed IDR? | Phase 7 encoder hygiene |
 | `encode-psnr-oracle.sh` | is the shipped encoder CLEAN or DIRTY at fixed QP? | 3(e) ENC-CORRUPT |
+| `rga-psnr-oracle.sh` | does the RGA3 crop/scale/transpose victim preserve 600 frames at async depths 2 and 0, above 35 dB mean PSNR? | comparison kernel / todo 26 RGA oracle |
 | `control-encode-per-codec.sh` | does a cold boot encode every supported control codec, with H.265 deliberately first? | todo 9 / board gates 14, 16 and 17 |
 | `rkvenc-fault-campaign.sh` | do the canonical malformed ioctls keep their exact errno while the known BASE-only harness case stays honestly red? | todo 9 |
+| `fault-matrix.sh --driver island\|auto` | do the sixteen fault rows leave the device recovered, with the armed one-shot consumed exactly once and the healthy session's throughput intact? All island telemetry assertions remain required | island fault recovery / the 16-row matrix |
+| `fault-controls-probe.sh` | do the five fault controls no matrix row consumes actually fire, exactly once, with their documented errno and a recovering device? The island seam is required; `--row idle-iommu-fault` is the separate, explicit-only idle experiment | island fault coverage / the five non-matrix controls |
 | `run-baseline.sh` | all five, written into the baseline document and the ledger | 3(a)–(e) |
 
 ---
@@ -57,9 +61,186 @@ accepts the earlier Phase-0 layout for retained historical runs.
    `assert_payload_is_read_only` before it is sent, and the whole directory is
    screened by an independent grep in CI (below).
 
+   The Phase-7 `idr-latency.sh --request` arm is explicitly active: it requests
+   keyframes from an already-running engine, locally under the external board
+   lock with `CERALIVE_BOARD_TEST=1`. It does not start or stop that engine or
+   perform fault injection. The caller owns those separate drill operations.
+
+## Forced-IDR measurement
+
+Python 3.11+ is required on the **engine host** for `--request`; scoring can run
+on the development host with Python and `ffprobe`. Self-test additionally needs
+FFmpeg with `libx264` and `libx265`. No package is installed by this harness.
+
+```bash
+bash tests/board/idr-latency.sh --self-test
+CERALIVE_BOARD_TEST=1 bash tests/board/idr-latency.sh \
+  --request /run/cerastream/control.sock /tmp/requests.tsv
+bash tests/board/idr-latency.sh \
+  --score recording.ts input.tsv requests.tsv 324000000
+```
+
+The final argument is the **measured mux PTS offset in 90 kHz ticks**, not a
+constant to copy from this example. The collector must retain every program
+encoder sink-pad buffer in `input.tsv` as `CLOCK_MONOTONIC_nanoseconds<TAB>PTS_90k`.
+Use the same host clock as Python's `time.monotonic_ns()`, and convert input PTS
+using the muxer's timestamp rounding. Capture starts before the first request
+and ends after the last response has produced output. The request file contains
+`id<TAB>send_ns<TAB>ack_ns<TAB>applied`, twenty rows with exclusive file creation.
+There is no input-pad collector or stream recorder inside this tool: the
+calling drill supplies those artifacts, plus per-frame DMA-BUF tracing.
+
+Scoring requires exact input/output PTS sequence equality modulo 2^33 and no
+B-frame reordering. It reads AVC type 5 or HEVC types 19/20 from Annex-B packet
+NALs, not ffprobe's generic keyframe flag (HEVC CRA is not IDR). Multiple slices
+of one picture are allowed; mixed slice kinds and ambiguous pictures are refused.
+The first input at or after request **send** time is latency frame 1; later
+frames count upward. Missing IDRs remain null/FAIL, and every value above 1
+remains FAIL. A rejected acknowledgement or incomplete trace cannot pass.
+
+For a hardware forced-keyframe claim, retain the encoder GOP configuration and
+ensure scheduled IDRs cannot coincide with the request windows; this scorer
+detects IDRs but cannot infer why the encoder generated one. The software
+self-test deliberately uses known periodic GOPs to prove the parser and score,
+then a real local Unix socket peer to prove RPC framing and acknowledgements.
+Neither fixture is a hardware-latency or zero-copy result.
+
+## Fault-control write boundary
+
+   `fault-controls-probe.sh` is a named exception, and it is a narrow one. It
+   performs exactly two kinds of write. First, it arms one-shot fault knobs in
+   the seam directory `/sys/kernel/debug/rkvenc-test/` — the same nodes
+   `fault-matrix.sh` already arms for its four matrix controls. Second, for the
+   three controls that only fire inside the driver's probe path
+   (`service-attach`, `ccu-attach`, `irq-request`) it detaches and reattaches
+   **one** encoder core, by writing that core's name into the `unbind` and then
+   the `bind` attribute of its platform-bus driver directory. Both the core name
+   and the driver directory are read off the bus at run time, so no board
+   device-node address is spelled anywhere in this directory and the literal
+   screen below stays empty.
+
+   This paragraph is itself screened. The exception is described here in prose
+   precisely because the acceptance gate below greps every byte of this
+   directory, documentation included — so the two write kinds are named by what
+   they do (arm a seam knob; detach and reattach one core through its driver's
+   bus attributes) rather than by a literal a reader could paste into a script.
+   Both campaigns of 2026-09-09 exercised this path and the screen stayed empty.
+
+   Nothing else is touched: no unit is controlled, no module is loaded or
+   unloaded, and a `trap` retries outstanding core restoration on exit,
+   including after a failed assertion. A failed reattachment returns failure,
+   retains the core's restoration marker and stops subsequent probe mutations;
+   it is never silently treated as successful cleanup. Both write kinds require an `edge-test` kernel
+   carrying `CONFIG_KASAN=y`, `CONFIG_PROVE_LOCKING=y` and the active profile's
+   fault-seam symbol, plus `CERALIVE_BOARD_TEST=1`, root, and a caller holding
+   the external board lock — the drill exits `77` rather than writing anything
+   if any of those is missing, and it must never be pointed at a production
+   kernel. The three probe-time rows are gated once more on top of that:
+   `docs/FAULT-SEAM-CONTRACT.md` must record `bind-attr: yes` for the active
+   driver, and without that recorded check each row reports
+   `GATED reason=no-bind-attr` and performs no write at all.
+
 ---
 
 ## Running the self-tests
+
+### Separate RGA fault rows
+
+`fault-matrix.sh --driver island-rga --probe-rga <probe-rga-uapi binary>` selects
+`rga-irq-timeout`, `rga-iommu-fault`, `rga-hardware-hang`, `rga-reset-failure`.
+It does not extend or run the frozen 16-row MPP sweep. This is an explicitly
+active, isolated-device drill: under the caller's external board lock it arms
+only `/sys/kernel/debug/rga-test/` and writes the existing RGA debugger reset
+control for the result-failure row. It requires the default-off RGA test symbol,
+KASAN, PROVE_LOCKING, root, `CERALIVE_BOARD_TEST=1`, and no existing RGA session.
+Keep other RGA clients stopped throughout: there is no session selector.
+
+The output directory must not exist. A baseline probe must actually report a
+successful blit before any knob is armed; probe exit zero alone means only that
+the device answered. Preflight refusal is GATED, not an injected-error pass.
+After each stimulus all knobs are disarmed, a clean blit must succeed, counters
+must show exactly one consumption, and final journal validation must succeed.
+The sweep stops at its first failure or gate. Busy and IOMMU mapping counts are
+unavailable on this driver and stay explicit GAPs; there is no healthy-client
+FPS assertion. Reset failure tests a write errno, not physical reset failure.
+
+`fault-matrix.sh --self-test` includes synthetic RGA scoring mutations and
+stimulus/errno routing tests alongside all retained MPP checks. It contacts no
+board. See [the authoritative table](../../docs/FAULT-SEAM-CONTRACT.md) for the
+direct-callback/no-START proof boundaries; RGA board validation is future work.
+
+### Shared harness checks
+
+Both fault drills reject a value-taking option with no following argument with
+usage exit `2`, before board admission. Their self-tests exercise every such
+option under a timeout, and confirm valid arguments still reach the board gate.
+
+The matrix opens each journal window before healthy-encode startup and refreshes
+it after cleanup, even for failed startup or GATED stimuli. A fatal report stops
+the campaign regardless of the stimulus verdict. Host fixtures run the actual
+startup/scoring/cleanup sequence with reports at startup, stimulus and cleanup;
+clean GATED rows remain gated, not fatal.
+
+The matrix emits exactly one verdict per row, after that final validation. Both
+journal captures check exit status; both scanners distinguish grep's match (`0`),
+no-match (`1`) and error (`2` or higher) outcomes without quiet-mode early exit.
+Capture or scanner failure is `FAIL reason=journal-capture|journal-scan` and stops
+later stimuli, even when the available text looks clean or a subsequent capture
+succeeds. A final-refresh warning fails the row without stopping the campaign.
+The embedded host fixtures replay the actual campaign on the island snapshot fixtures:
+empty and ordinary clean controls, fatal and warning reports, failed captures at
+either checkpoint, scanner errors at either screen, and sweep-stop assertions.
+They reject premature or duplicate verdicts and exercise real grep directory-read
+errors too. These are harness tests, not new board measurements.
+
+The clock-enable row re-captures its journal after the recovery encode; its
+self-test rejects a report emitted only during that otherwise successful encode.
+It accepts the driver's numeric `clk_on failed: -5` diagnostic as well as the
+symbolic/strerror forms, but not an unrelated `-5` or a different numeric errno.
+
+Every controls-probe journal capture checks the reader's exit status before
+scoring. Missing/unreadable output and unprefixed reader-error diagnostics fail
+closed; they never count as `journal_bad=0`. Its host fixtures exercise all eight
+capture points (including both clock and idle captures) with nonzero status,
+partial/empty output, reader errors, missing files and non-file output, while
+accepting genuinely empty windows and ordinary kernel records.
+
+The optional idle-window experiment is explicit-only:
+`fault-controls-probe.sh --row idle-iommu-fault --driver island`.
+It is not part of that probe's five-control `--row all` sweep and never enters
+the 16-row matrix, which runs a competing healthy encoder. With no encode
+running, it arms `inject_iommu_fault_idle_ms=3000`, completes one 30-buffer
+encode, leaves the device untouched for six seconds, and checks consumption,
+actual firing, PM-at-fire state, callback errno, journal and recovery. All four
+idle debugfs files must exist together. Absence gates this row; a partial block
+fails inventory. Its self-test exercises both PM readings and both driver
+profiles with synthetic fixtures, including deliberately incorrect counters,
+missing firing/state, recovery failure, journal reports and busy admission.
+None of that fixture output is silicon evidence.
+
+The RGA oracle's `--self-test` uses real software FFmpeg to distinguish identical,
+corrupt, truncated and extra-frame output. Its hardware arm runs **locally on the
+board**, under the external board lock, with `CERALIVE_BOARD_TEST=1` and a
+checksum-pinned 1920×1080 H.264 input containing at least 600 frames:
+
+```bash
+CERALIVE_BOARD_TEST=1 FFMPEG=/path/to/rkmpp-enabled-ffmpeg \
+  bash tests/board/rga-psnr-oracle.sh --input /path/to/input.h264 \
+  --sha256 <input-sha256> --out /tmp/new-rga-oracle-run
+```
+
+The victim uses RGA3 core 0, crops 960×540 at (160,90), scales to 640×360,
+rotates clockwise and encodes HEVC at 3 Mbit/s. Software scoring compares the
+decoded 360×640 output with the crop/bicubic-scale/transpose reference. The
+35 dB mean-PSNR bar comes from
+[`ffmpeg-suite.sh` at the pinned upstream record](https://github.com/yisding/rock-5b-ysp/blob/ca3da04280c48c004e522c15f31862bf88a2d1b9/kernel-drivers/tests/ffmpeg-suite.sh#L712-L747);
+600 frames and the depth-0 control are CeraLive's comparison requirements.
+This is an end-to-end victim, not an isolated RGA-only score: decoder or encoder
+corruption can also make it red. Command failure or missing frames is
+`INCOMPLETE`, never `NOT-REPRODUCED`. The output directory must be new; each
+command, software version, bitstream, decoded file and scoring log is retained.
+The calling locked session must capture stdout and the surrounding kernel journal.
+No hardware result is claimed by creating or self-testing this harness.
 
 ```bash
 cd tests/board
@@ -203,6 +384,24 @@ against, and because two of these facts contradict assumptions in the plan.
   `c_RkRgaBlit()` then returns **-19 (`-ENODEV`)** and leaves the destination
   untouched. An application that gates on the init return value alone believes
   RGA is available. That is the A2 answer, and it is a trap worth remembering.
+
+---
+
+## Where the fault-drill fixtures live
+
+The two fault drills score against different fixture sources, and the difference
+is worth stating because only one of them is committed.
+
+- **`tests/fixtures/reliability/orange-pi-5-plus/`** — real captures from that
+  board, and what `fault-matrix.sh --self-test` scores its **island** profile
+  against.
+- **`fault-controls-probe.sh` has no committed fixture directory.** Its
+  `--self-test` builds a synthetic one-shot seam — a shell "driver", not a fake
+  device — in a fresh `mktemp -d` on every run, then scores both directions
+  against it, including deliberately wrong counters, a missing firing or state
+  file, a failed recovery, a journal report and a busy admission. There is no
+  `tests/fixtures/fault-controls/` directory, and adding one would only freeze
+  what the drill already generates deterministically.
 
 ---
 

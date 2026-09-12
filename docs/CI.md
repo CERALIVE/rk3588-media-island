@@ -18,6 +18,16 @@ a pin bump would then leave CI proving the series against a kernel nobody ships
 
 ## 1. `ci.yml` — the pull-request gate
 
+The optional RGA fault suite is selected in `tests/kunit/.kunitconfig`; CI
+requires both `rockchip-rga-fault-injection` and `rockchip-rga-fault-disabled`
+to report a pass. `stage_ioctl.py` also stages the real RGA controls, selected
+run/timeout/IOMMU/reset-writer functions and the provider's bus-error constant.
+Only hardware/resource/user-copy boundaries are substituted. The board matrix's
+self-test checks the four separately selected RGA rows, including deliberately
+wrong consumption counts, queue/reset state, journals and stimulus errnos.
+These gates prove host behavior, not RGA silicon recovery; production fragments
+remain unchanged. See `FAULT-SEAM-CONTRACT.md` for the bounded claims.
+
 | Job | Asserts |
 |---|---|
 | `shellcheck` | every tracked shell script lints clean at `-S style`, excluding only `SC1091` (a runtime-resolved `source` cannot be followed) |
@@ -35,6 +45,15 @@ a pin bump would then leave CI proving the series against a kernel nobody ships
 | `static-analysis` | sparse inspects every selected composite object with findings promoted to errors, followed by coccinelle over both island directories; the plan's conditional smatch arm is not enabled without a suitable runner package |
 
 ### The kernel job, in the order it does things
+
+The `self-tests` job also runs `scripts/check-fault-seam-contract.sh` normally
+and with `--self-test`. The standalone checker compares both maintained board
+harnesses' knob/counter names with the maintained driver's debugfs registrations;
+negative mutations add an unknown consumer to each harness. It also executes
+the required summary's actual shell step across six cases: code-job skips,
+failures and cancellations must fail; documentation-only skips may pass.
+It loads only maintained source, board scripts and the workflow, and does not
+import the series generator. Host checks are not board qualification.
 
 `cross-compile-modules` is the only expensive job, and each step exists for a
 reason worth stating:
