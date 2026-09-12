@@ -161,7 +161,13 @@ static int rga_shadow_add_node(struct rga_virt_addr *virt_addr,
 		return -ENOMEM;
 	}
 
-	shadow->shadow_page = alloc_page(GFP_KERNEL | GFP_DMA32);
+	/*
+	 * Only [offset, offset + len) is ever copied from the original page,
+	 * but the whole shadow page is mapped for the device so that every sg
+	 * entry stays page-aligned. Zero on allocation so the unwritten head
+	 * and tail bytes cannot expose stale kernel memory to RGA.
+	 */
+	shadow->shadow_page = alloc_page(GFP_KERNEL | GFP_DMA32 | __GFP_ZERO);
 	if (!shadow->shadow_page) {
 		rga_err("shadow_page alloc page failed\n");
 		kfree(shadow);

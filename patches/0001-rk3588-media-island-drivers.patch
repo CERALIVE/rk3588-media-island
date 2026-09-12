@@ -51550,10 +51550,10 @@ index 0000000000000000000000000000000000000000..c3ac3e7da8cb6c6035090ab91a966094
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_mm.c b/drivers/video/rockchip/rga3/rga_mm.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..565bc90acdafe5cf8177f90828f9753d7d6200fd
+index 0000000000000000000000000000000000000000..b7cbb632a56b16987e77a5383eb2bc5ecb21b711
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_mm.c
-@@ -0,0 +1,4300 @@
+@@ -0,0 +1,4306 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -51717,7 +51717,13 @@ index 0000000000000000000000000000000000000000..565bc90acdafe5cf8177f90828f9753d
 +		return -ENOMEM;
 +	}
 +
-+	shadow->shadow_page = alloc_page(GFP_KERNEL | GFP_DMA32);
++	/*
++	 * Only [offset, offset + len) is ever copied from the original page,
++	 * but the whole shadow page is mapped for the device so that every sg
++	 * entry stays page-aligned. Zero on allocation so the unwritten head
++	 * and tail bytes cannot expose stale kernel memory to RGA.
++	 */
++	shadow->shadow_page = alloc_page(GFP_KERNEL | GFP_DMA32 | __GFP_ZERO);
 +	if (!shadow->shadow_page) {
 +		rga_err("shadow_page alloc page failed\n");
 +		kfree(shadow);
