@@ -15,6 +15,28 @@ notes:
   - FAIL on an incomplete class means qualification was not satisfied, not an invented device malfunction.
   - Native passthrough rows retain the codec-axis exception; they must not require transcoding to the other codec.
   - USB audio observations below supersede the initial NO-DEVICE audio inventory after an operator attachment; video rows were not re-exercised.
+round3_inventory:
+  observed_at: "2026-09-06T06:04:43Z"
+  image_commit: 1f56ca03c94dcc462a8b1f7a88c1c87e64532b42
+  kernel_build: "7.2.0-ceralive-rk3588 #ceralive1 SMP PREEMPT @1788671395"
+  gstreamer_rockchip_package: 1.14.4+ceralive.2
+  raw_evidence: test-results/opi-round3-1f56ca03-20260906/todo37-inventory.txt
+  uvc_device_count: 0
+  video_row_ids_still_no_device: [1, 2, 3, 4, 5, 6, 7, 8, 10]
+  usb_microphone:
+    product: DJI MIC MINI
+    vid_pid: "2ca3:4011"
+    usb_path: "1-1.4"
+    alsa_card_index: 0
+    alsa_card_id: usbaudio
+    capture_pcm: pcmC0D0c
+    advertised_format: S24_3LE
+    advertised_rate_hz: 48000
+    advertised_channels: 2
+    functional_retest: not-run
+    prior_capture_evidence: The device-specific PASS below remains scoped to its original image and timestamp; this scan does not recreate or promote it.
+  connected_bluetooth_devices: []
+  onboard_hdmi_is_not_uvc: true
 rows:
   - id: 1
     class: UVC H.264 and Osmo dual-mode ladders/retention
