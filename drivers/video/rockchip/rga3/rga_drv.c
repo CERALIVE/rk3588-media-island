@@ -1861,7 +1861,6 @@ static int __init rga_init(void)
 		return -ENOMEM;
 	}
 
-	mutex_init(&rga_drvdata->lock);
 	init_rwsem(&rga_drvdata->rwsem);
 	rga_drvdata->shutdown = false;
 	atomic_set(&rga_drvdata->telemetry_queue_depth, 0);

@@ -35399,10 +35399,10 @@ index 0000000000000000000000000000000000000000..b9fcfa507997d60325220f6edb59a73d
 +#endif
 diff --git a/drivers/video/rockchip/rga3/include/rga_drv.h b/drivers/video/rockchip/rga3/include/rga_drv.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..148f07b694a877afa6aab8602a036824f18ef7f4
+index 0000000000000000000000000000000000000000..47b747738edfe4cfd8284233c2a580542eaae7cc
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/include/rga_drv.h
-@@ -0,0 +1,612 @@
+@@ -0,0 +1,607 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -35721,9 +35721,8 @@ index 0000000000000000000000000000000000000000..148f07b694a877afa6aab8602a036824
 +	int order;
 +	int page_count;
 +	/*
-+	 * DMA address of page_table for the RGA2 device: an offset into the
-+	 * persistently mapped ring for non-handle jobs, or a per-job
-+	 * dma_map_single() mapping (unmapped at put) for handle jobs.
++	 * DMA address of page_table for the RGA2 device: a per-job
++	 * dma_map_single() mapping, unmapped and freed at put.
 +	 */
 +	dma_addr_t page_table_dma;
 +	struct device *page_table_dev;
@@ -35953,15 +35952,11 @@ index 0000000000000000000000000000000000000000..148f07b694a877afa6aab8602a036824
 +};
 +
 +struct rga_drvdata_t {
-+	/* used by rga2's mmu lock */
-+	struct mutex lock;
-+
 +	struct rga_scheduler_t *scheduler[RGA_MAX_SCHEDULER];
 +	int num_of_scheduler;
 +	int device_count[RGA_DEVICE_BUTT];
 +	/* The scheduler_index used by default for memory mapping. */
 +	int map_scheduler_index;
-+	struct rga_mmu_base *mmu_base;
 +
 +	struct delayed_work power_off_work;
 +
@@ -36184,10 +36179,10 @@ index 0000000000000000000000000000000000000000..12e7e81e3f47f12f4aeb43a1212a11e7
 +#endif /* __LINUX_RGA_HW_CONFIG_H_ */
 diff --git a/drivers/video/rockchip/rga3/include/rga_iommu.h b/drivers/video/rockchip/rga3/include/rga_iommu.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..39b7ffd690891b4f692f4e3e84a55c73780ba973
+index 0000000000000000000000000000000000000000..59e80acb565f3775c106219e4ae17bf029244061
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/include/rga_iommu.h
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,57 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +#ifndef __RGA_MMU_INFO_H__
 +#define __RGA_MMU_INFO_H__
@@ -36230,38 +36225,10 @@ index 0000000000000000000000000000000000000000..39b7ffd690891b4f692f4e3e84a55c73
 +#define RGA_IOMMU_IRQ_BUS_ERROR			0x02 /* bus read error */
 +#define RGA_IOMMU_IRQ_MASK			(RGA_IOMMU_IRQ_PAGE_FAULT | RGA_IOMMU_IRQ_BUS_ERROR)
 +
-+/*
-+ * The maximum input is 8192*8192, the maximum output is 4096*4096
-+ * The size of physical pages requested is:
-+ * (( maximum_input_value *
-+ *         maximum_input_value * format_bpp ) / 4K_page_size) + 1
-+ */
-+#define RGA2_PHY_PAGE_SIZE	 (((8192 * 8192 * 4) / 4096) + 1)
-+
-+struct rga_mmu_base {
-+	unsigned int *buf_virtual;
-+	struct page **pages;
-+	u8 buf_order;
-+	u8 pages_order;
-+
-+	int32_t front;
-+	int32_t back;
-+	int32_t size;
-+	int32_t curr;
-+
-+	/* streaming DMA mapping of buf_virtual against the RGA2 device */
-+	struct device *map_dev;
-+	dma_addr_t dma_addr;
-+};
-+
 +int rga_user_memory_check(struct page **pages, u32 w, u32 h, u32 format, int flag);
 +int rga_set_mmu_base(struct rga_job *job,
 +		     struct rga_job_task_buffers *task_buffers,
 +		     struct rga2_req *req);
-+unsigned int *rga_mmu_buf_get(struct rga_mmu_base *mmu_base, uint32_t size);
-+
-+struct rga_mmu_base *rga_mmu_base_init(struct device *map_dev, size_t size);
-+void rga_mmu_base_free(struct rga_mmu_base **mmu_base);
 +
 +int rga_iommu_detach(struct rga_iommu_info *info);
 +int rga_iommu_attach(struct rga_iommu_info *info);
@@ -45896,10 +45863,10 @@ index 0000000000000000000000000000000000000000..2eabff20024a5b2cea7138a428b2daf7
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_drv.c b/drivers/video/rockchip/rga3/rga_drv.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..feebc4b4cd6ca042ce097086dd441ef33d95c326
+index 0000000000000000000000000000000000000000..126da8099fe899c2f8368146b4c27849ef5e710c
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_drv.c
-@@ -0,0 +1,2029 @@
+@@ -0,0 +1,2028 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -47763,7 +47730,6 @@ index 0000000000000000000000000000000000000000..feebc4b4cd6ca042ce097086dd441ef3
 +		return -ENOMEM;
 +	}
 +
-+	mutex_init(&rga_drvdata->lock);
 +	init_rwsem(&rga_drvdata->rwsem);
 +	rga_drvdata->shutdown = false;
 +	atomic_set(&rga_drvdata->telemetry_queue_depth, 0);
@@ -48856,10 +48822,10 @@ index 0000000000000000000000000000000000000000..6fe05d4e879927175aed9392b6959628
 +};
 diff --git a/drivers/video/rockchip/rga3/rga_iommu.c b/drivers/video/rockchip/rga3/rga_iommu.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..9081cf55d7f7e42ce5679aa7681a967f7a13b5a3
+index 0000000000000000000000000000000000000000..7c9584834d99be43a95dc455ed6ce9f9c274d6f7
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_iommu.c
-@@ -0,0 +1,564 @@
+@@ -0,0 +1,394 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -48918,10 +48884,9 @@ index 0000000000000000000000000000000000000000..9081cf55d7f7e42ce5679aa7681a967f
 +static uint32_t rga_job_buffer_mmu_base(struct rga_job_buffer *job_buf)
 +{
 +	/*
-+	 * The page table is a streaming DMA buffer of the RGA2 device (the
-+	 * shared ring is mapped at bind time, per-job handle tables at fill
-+	 * time); publish the CPU-filled entries to the device and program
-+	 * the retained DMA address.
++	 * The page table is a per-job streaming DMA buffer of the RGA2
++	 * device, mapped at fill time; publish the CPU-filled entries to the
++	 * device and program the retained DMA address.
 +	 */
 +	dma_sync_single_for_device(job_buf->page_table_dev,
 +				   job_buf->page_table_dma,
@@ -48959,160 +48924,6 @@ index 0000000000000000000000000000000000000000..9081cf55d7f7e42ce5679aa7681a967f
 +			rga_job_buffer_mmu_base(&task_buffers->els_buffer);
 +
 +	return 0;
-+}
-+
-+static int rga_mmu_buf_get_try(struct rga_mmu_base *t, uint32_t size)
-+{
-+	int ret = 0;
-+
-+	if ((t->back - t->front) > t->size) {
-+		if (t->front + size > t->back - t->size) {
-+			rga_log("front %d, back %d dsize %d size %d",
-+				t->front, t->back, t->size, size);
-+			ret = -ENOMEM;
-+			goto out;
-+		}
-+	} else {
-+		if ((t->front + size) > t->back) {
-+			rga_log("front %d, back %d dsize %d size %d",
-+				t->front, t->back, t->size, size);
-+			ret = -ENOMEM;
-+			goto out;
-+		}
-+
-+		if (t->front + size > t->size) {
-+			if (size > (t->back - t->size)) {
-+				rga_log("front %d, back %d dsize %d size %d",
-+					t->front, t->back, t->size, size);
-+				ret = -ENOMEM;
-+				goto out;
-+			}
-+			t->front = 0;
-+		}
-+	}
-+out:
-+	return ret;
-+}
-+
-+unsigned int *rga_mmu_buf_get(struct rga_mmu_base *mmu_base, uint32_t size)
-+{
-+	int ret;
-+	unsigned int *buf = NULL;
-+
-+	WARN_ON(!mutex_is_locked(&rga_drvdata->lock));
-+
-+	size = ALIGN(size, 16);
-+
-+	ret = rga_mmu_buf_get_try(mmu_base, size);
-+	if (ret < 0) {
-+		rga_err("Get MMU mem failed\n");
-+		return NULL;
-+	}
-+
-+	buf = mmu_base->buf_virtual + mmu_base->front;
-+
-+	mmu_base->front += size;
-+
-+	if (mmu_base->back + size > 2 * mmu_base->size)
-+		mmu_base->back = size + mmu_base->size;
-+	else
-+		mmu_base->back += size;
-+
-+	return buf;
-+}
-+
-+struct rga_mmu_base *rga_mmu_base_init(struct device *map_dev, size_t size)
-+{
-+	int order = 0;
-+	struct rga_mmu_base *mmu_base;
-+
-+	mmu_base = kzalloc(sizeof(*mmu_base), GFP_KERNEL);
-+	if (mmu_base == NULL) {
-+		pr_err("Cannot alloc mmu_base!\n");
-+		return ERR_PTR(-ENOMEM);
-+	}
-+
-+	/*
-+	 * malloc pre scale mid buf mmu table:
-+	 * size * channel_num * address_size
-+	 */
-+	mmu_base->buf_virtual = (uint32_t *)rga_get_free_pages(GFP_KERNEL | GFP_DMA32,
-+		&order, size * 3 * sizeof(*mmu_base->buf_virtual));
-+	if (mmu_base->buf_virtual == NULL) {
-+		pr_err("Can not alloc pages for mmu_page_table\n");
-+		goto err_free_mmu_base;
-+	}
-+	mmu_base->buf_order = order;
-+
-+	mmu_base->pages = (struct page **)rga_get_free_pages(GFP_KERNEL | GFP_DMA32,
-+		&order, size * sizeof(*mmu_base->pages));
-+	if (mmu_base->pages == NULL) {
-+		pr_err("Can not alloc pages for mmu_base->pages\n");
-+		goto err_free_buf_virtual;
-+	}
-+	mmu_base->pages_order = order;
-+
-+	/*
-+	 * The page-table ring is CPU-filled and device-read for the whole
-+	 * driver lifetime, so own it as a streaming DMA mapping of the RGA2
-+	 * device and sync the touched range on each job instead of touching
-+	 * unmapped memory behind the DMA API's back.
-+	 */
-+	mmu_base->dma_addr = dma_map_single(map_dev, mmu_base->buf_virtual,
-+					    size * 3 * sizeof(*mmu_base->buf_virtual),
-+					    DMA_TO_DEVICE);
-+	if (dma_mapping_error(map_dev, mmu_base->dma_addr)) {
-+		pr_err("Can not map mmu_page_table for device\n");
-+		goto err_free_pages;
-+	}
-+	mmu_base->map_dev = map_dev;
-+
-+	mmu_base->front = 0;
-+	mmu_base->back = RGA2_PHY_PAGE_SIZE * 3;
-+	mmu_base->size = RGA2_PHY_PAGE_SIZE * 3;
-+
-+	return mmu_base;
-+
-+err_free_pages:
-+	free_pages((unsigned long)mmu_base->pages, mmu_base->pages_order);
-+	mmu_base->pages_order = 0;
-+
-+err_free_buf_virtual:
-+	free_pages((unsigned long)mmu_base->buf_virtual, mmu_base->buf_order);
-+	mmu_base->buf_order = 0;
-+
-+err_free_mmu_base:
-+	kfree(mmu_base);
-+
-+	return ERR_PTR(-ENOMEM);
-+}
-+
-+void rga_mmu_base_free(struct rga_mmu_base **mmu_base)
-+{
-+	struct rga_mmu_base *base = *mmu_base;
-+
-+	if (base->map_dev != NULL) {
-+		dma_unmap_single(base->map_dev, base->dma_addr,
-+				 base->size * sizeof(*base->buf_virtual),
-+				 DMA_TO_DEVICE);
-+		base->map_dev = NULL;
-+		base->dma_addr = 0;
-+	}
-+
-+	if (base->buf_virtual != NULL) {
-+		free_pages((unsigned long)base->buf_virtual, base->buf_order);
-+		base->buf_virtual = NULL;
-+		base->buf_order = 0;
-+	}
-+
-+	if (base->pages != NULL) {
-+		free_pages((unsigned long)base->pages, base->pages_order);
-+		base->pages = NULL;
-+		base->pages_order = 0;
-+	}
-+
-+	kfree(base);
-+	*mmu_base = NULL;
 +}
 +
 +static int rga_iommu_intr_fault_handler(struct iommu_domain *iommu, struct device *iommu_dev,
@@ -49356,20 +49167,8 @@ index 0000000000000000000000000000000000000000..9081cf55d7f7e42ce5679aa7681a967f
 +			break;
 +
 +		case RGA_MMU:
-+			if (rga_drvdata->mmu_base != NULL)
-+				continue;
-+
-+			rga_drvdata->mmu_base = rga_mmu_base_init(scheduler->dev,
-+								  RGA2_PHY_PAGE_SIZE);
-+			if (IS_ERR(rga_drvdata->mmu_base)) {
-+				dev_err(scheduler->dev, "rga mmu base init failed!\n");
-+				ret = PTR_ERR(rga_drvdata->mmu_base);
-+				rga_drvdata->mmu_base = NULL;
-+
-+				goto err_unbind;
-+			}
-+
-+			main_mmu_index = i;
++			if (main_mmu_index < 0)
++				main_mmu_index = i;
 +
 +			break;
 +		default:
@@ -49418,9 +49217,6 @@ index 0000000000000000000000000000000000000000..9081cf55d7f7e42ce5679aa7681a967f
 +	for (i = 0; i < rga_drvdata->num_of_scheduler; i++)
 +		if (rga_drvdata->scheduler[i]->iommu_info)
 +			rga_iommu_clear_fault_handler(rga_drvdata->scheduler[i]->iommu_info);
-+
-+	if (rga_drvdata->mmu_base)
-+		rga_mmu_base_free(&rga_drvdata->mmu_base);
 +
 +	rga_drvdata->map_scheduler_index = -1;
 +}
@@ -51550,10 +51346,10 @@ index 0000000000000000000000000000000000000000..c3ac3e7da8cb6c6035090ab91a966094
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_mm.c b/drivers/video/rockchip/rga3/rga_mm.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..565bc90acdafe5cf8177f90828f9753d7d6200fd
+index 0000000000000000000000000000000000000000..55452c441ec33a92b7af21598bbd73178942d714
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_mm.c
-@@ -0,0 +1,4300 @@
+@@ -0,0 +1,4279 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -54060,25 +53856,12 @@ index 0000000000000000000000000000000000000000..565bc90acdafe5cf8177f90828f9753d
 +			return -EINVAL;
 +		}
 +
-+		if (job->flags & RGA_JOB_USE_HANDLE) {
-+			page_table = (uint32_t *)rga_get_free_pages(GFP_KERNEL | GFP_DMA32,
-+				&order, page_count * sizeof(uint32_t *));
-+			if (page_table == NULL) {
-+				rga_job_err(job, "%s can not alloc pages for page_table, order = %d\n",
-+					__func__, order);
-+				return -ENOMEM;
-+			}
-+		} else {
-+			mutex_lock(&rga_drvdata->lock);
-+
-+			page_table = rga_mmu_buf_get(rga_drvdata->mmu_base, page_count);
-+			if (page_table == NULL) {
-+				rga_err("mmu_buf get error!\n");
-+				mutex_unlock(&rga_drvdata->lock);
-+				return -EFAULT;
-+			}
-+
-+			mutex_unlock(&rga_drvdata->lock);
++		page_table = (uint32_t *)rga_get_free_pages(GFP_KERNEL | GFP_DMA32,
++			&order, page_count * sizeof(uint32_t *));
++		if (page_table == NULL) {
++			rga_job_err(job, "%s can not alloc pages for page_table, order = %d\n",
++				__func__, order);
++			return -ENOMEM;
 +		}
 +
 +		if (job_buf->y_addr) {
@@ -54144,25 +53927,12 @@ index 0000000000000000000000000000000000000000..565bc90acdafe5cf8177f90828f9753d
 +			return -EFAULT;
 +		}
 +
-+		if (job->flags & RGA_JOB_USE_HANDLE) {
-+			page_table = (uint32_t *)rga_get_free_pages(GFP_KERNEL | GFP_DMA32,
-+				&order, page_count * sizeof(uint32_t *));
-+			if (page_table == NULL) {
-+				rga_job_err(job, "%s can not alloc pages for page_table, order = %d\n",
-+					__func__, order);
-+				return -ENOMEM;
-+			}
-+		} else {
-+			mutex_lock(&rga_drvdata->lock);
-+
-+			page_table = rga_mmu_buf_get(rga_drvdata->mmu_base, page_count);
-+			if (page_table == NULL) {
-+				rga_job_err(job, "mmu_buf get error!\n");
-+				mutex_unlock(&rga_drvdata->lock);
-+				return -EFAULT;
-+			}
-+
-+			mutex_unlock(&rga_drvdata->lock);
++		page_table = (uint32_t *)rga_get_free_pages(GFP_KERNEL | GFP_DMA32,
++			&order, page_count * sizeof(uint32_t *));
++		if (page_table == NULL) {
++			rga_job_err(job, "%s can not alloc pages for page_table, order = %d\n",
++				__func__, order);
++			return -ENOMEM;
 +		}
 +
 +		sgt = rga_mm_get_rga2_sgt(job, job_buf, job_buf->addr, dir,
@@ -54185,30 +53955,22 @@ index 0000000000000000000000000000000000000000..565bc90acdafe5cf8177f90828f9753d
 +
 +	/*
 +	 * The hardware reads the CPU-filled table through DMA, so give the
-+	 * table a proper streaming mapping of the RGA2 device: per-job
-+	 * handle tables are mapped here (the mapping itself publishes the
-+	 * entries) and unmapped at put; ring windows borrow the persistent
-+	 * mapping made at bind time and are synced before each job.
++	 * table a proper streaming mapping of the RGA2 device. The table is
++	 * owned by this job buffer alone: it is mapped here (the mapping
++	 * itself publishes the entries) and unmapped and freed at put, so
++	 * its lifetime is the job's lifetime by construction.
 +	 */
-+	if (job->flags & RGA_JOB_USE_HANDLE) {
-+		job_buf->page_table_dma =
-+			dma_map_single(job->scheduler->dev, page_table,
-+				       page_count * sizeof(*page_table),
-+				       DMA_TO_DEVICE);
-+		if (dma_mapping_error(job->scheduler->dev, job_buf->page_table_dma)) {
-+			rga_job_err(job, "can not DMA-map page_table for RGA2\n");
-+			ret = -EFAULT;
-+			goto err_free_page_table;
-+		}
-+		job_buf->page_table_dev = job->scheduler->dev;
-+		job_buf->page_table_mapped = true;
-+	} else {
-+		job_buf->page_table_dma = rga_drvdata->mmu_base->dma_addr +
-+			(page_table - rga_drvdata->mmu_base->buf_virtual) *
-+			sizeof(*page_table);
-+		job_buf->page_table_dev = rga_drvdata->mmu_base->map_dev;
-+		job_buf->page_table_mapped = false;
++	job_buf->page_table_dma =
++		dma_map_single(job->scheduler->dev, page_table,
++			       page_count * sizeof(*page_table),
++			       DMA_TO_DEVICE);
++	if (dma_mapping_error(job->scheduler->dev, job_buf->page_table_dma)) {
++		rga_job_err(job, "can not DMA-map page_table for RGA2\n");
++		ret = -EFAULT;
++		goto err_free_page_table;
 +	}
++	job_buf->page_table_dev = job->scheduler->dev;
++	job_buf->page_table_mapped = true;
 +
 +	job_buf->page_table = page_table;
 +	job_buf->order = order;
@@ -54218,8 +53980,7 @@ index 0000000000000000000000000000000000000000..565bc90acdafe5cf8177f90828f9753d
 +
 +err_free_page_table:
 +	rga_mm_put_rga2_bounce(job, job_buf, DMA_NONE);
-+	if (job->flags & RGA_JOB_USE_HANDLE)
-+		free_pages((unsigned long)page_table, order);
++	free_pages((unsigned long)page_table, order);
 +	return ret;
 +}
 +
@@ -54738,6 +54499,29 @@ index 0000000000000000000000000000000000000000..565bc90acdafe5cf8177f90828f9753d
 +	mutex_unlock(&mm->lock);
 +}
 +
++/*
++ * Release the job buffer's RGA2 page table. Idempotent: every caller may run
++ * on an unwind path where the table was never allocated, and clearing
++ * page_table here is what keeps a second call from unmapping or freeing twice.
++ */
++static void rga_mm_put_page_table(struct rga_job_buffer *job_buf)
++{
++	if (job_buf->page_table == NULL)
++		return;
++
++	if (job_buf->page_table_mapped) {
++		dma_unmap_single(job_buf->page_table_dev,
++				 job_buf->page_table_dma,
++				 job_buf->page_count *
++				 sizeof(*job_buf->page_table),
++				 DMA_TO_DEVICE);
++		job_buf->page_table_mapped = false;
++	}
++
++	free_pages((unsigned long)job_buf->page_table, job_buf->order);
++	job_buf->page_table = NULL;
++}
++
 +static void rga_mm_put_channel_handle_info(struct rga_mm *mm,
 +					   struct rga_job *job,
 +					   struct rga_job_buffer *job_buf,
@@ -54763,18 +54547,7 @@ index 0000000000000000000000000000000000000000..565bc90acdafe5cf8177f90828f9753d
 +		job_buf->v_addr = NULL;
 +	}
 +
-+	if (job_buf->page_table) {
-+		if (job_buf->page_table_mapped) {
-+			dma_unmap_single(job_buf->page_table_dev,
-+					 job_buf->page_table_dma,
-+					 job_buf->page_count *
-+					 sizeof(*job_buf->page_table),
-+					 DMA_TO_DEVICE);
-+			job_buf->page_table_mapped = false;
-+		}
-+		free_pages((unsigned long)job_buf->page_table, job_buf->order);
-+		job_buf->page_table = NULL;
-+	}
++	rga_mm_put_page_table(job_buf);
 +
 +	rga_mm_release_job_iommu_mappings(job_buf);
 +}
@@ -55134,7 +54907,7 @@ index 0000000000000000000000000000000000000000..565bc90acdafe5cf8177f90828f9753d
 +	rga_mm_unmap_buffer(job_buffer->addr);
 +	kfree(job_buffer->addr);
 +
-+	job_buffer->page_table = NULL;
++	rga_mm_put_page_table(job_buffer);
 +}
 +
 +static int rga_mm_map_channel_job_buffer(struct rga_job *job,
@@ -55290,6 +55063,8 @@ index 0000000000000000000000000000000000000000..565bc90acdafe5cf8177f90828f9753d
 +					    enum dma_data_direction dir)
 +{
 +	struct rga_internal_buffer *buffer = job_buffer->addr;
++
++	rga_mm_put_page_table(job_buffer);
 +
 +	if (rga_mm_is_invalid_dma_buffer(buffer->dma_buffer))
 +		return;

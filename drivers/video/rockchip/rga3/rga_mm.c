@@ -2504,25 +2504,12 @@ static int rga_mm_set_mmu_base(struct rga_job *job,
 			return -EINVAL;
 		}
 
-		if (job->flags & RGA_JOB_USE_HANDLE) {
-			page_table = (uint32_t *)rga_get_free_pages(GFP_KERNEL | GFP_DMA32,
-				&order, page_count * sizeof(uint32_t *));
-			if (page_table == NULL) {
-				rga_job_err(job, "%s can not alloc pages for page_table, order = %d\n",
-					__func__, order);
-				return -ENOMEM;
-			}
-		} else {
-			mutex_lock(&rga_drvdata->lock);
-
-			page_table = rga_mmu_buf_get(rga_drvdata->mmu_base, page_count);
-			if (page_table == NULL) {
-				rga_err("mmu_buf get error!\n");
-				mutex_unlock(&rga_drvdata->lock);
-				return -EFAULT;
-			}
-
-			mutex_unlock(&rga_drvdata->lock);
+		page_table = (uint32_t *)rga_get_free_pages(GFP_KERNEL | GFP_DMA32,
+			&order, page_count * sizeof(uint32_t *));
+		if (page_table == NULL) {
+			rga_job_err(job, "%s can not alloc pages for page_table, order = %d\n",
+				__func__, order);
+			return -ENOMEM;
 		}
 
 		if (job_buf->y_addr) {
@@ -2588,25 +2575,12 @@ static int rga_mm_set_mmu_base(struct rga_job *job,
 			return -EFAULT;
 		}
 
-		if (job->flags & RGA_JOB_USE_HANDLE) {
-			page_table = (uint32_t *)rga_get_free_pages(GFP_KERNEL | GFP_DMA32,
-				&order, page_count * sizeof(uint32_t *));
-			if (page_table == NULL) {
-				rga_job_err(job, "%s can not alloc pages for page_table, order = %d\n",
-					__func__, order);
-				return -ENOMEM;
-			}
-		} else {
-			mutex_lock(&rga_drvdata->lock);
-
-			page_table = rga_mmu_buf_get(rga_drvdata->mmu_base, page_count);
-			if (page_table == NULL) {
-				rga_job_err(job, "mmu_buf get error!\n");
-				mutex_unlock(&rga_drvdata->lock);
-				return -EFAULT;
-			}
-
-			mutex_unlock(&rga_drvdata->lock);
+		page_table = (uint32_t *)rga_get_free_pages(GFP_KERNEL | GFP_DMA32,
+			&order, page_count * sizeof(uint32_t *));
+		if (page_table == NULL) {
+			rga_job_err(job, "%s can not alloc pages for page_table, order = %d\n",
+				__func__, order);
+			return -ENOMEM;
 		}
 
 		sgt = rga_mm_get_rga2_sgt(job, job_buf, job_buf->addr, dir,
@@ -2629,30 +2603,22 @@ static int rga_mm_set_mmu_base(struct rga_job *job,
 
 	/*
 	 * The hardware reads the CPU-filled table through DMA, so give the
-	 * table a proper streaming mapping of the RGA2 device: per-job
-	 * handle tables are mapped here (the mapping itself publishes the
-	 * entries) and unmapped at put; ring windows borrow the persistent
-	 * mapping made at bind time and are synced before each job.
+	 * table a proper streaming mapping of the RGA2 device. The table is
+	 * owned by this job buffer alone: it is mapped here (the mapping
+	 * itself publishes the entries) and unmapped and freed at put, so
+	 * its lifetime is the job's lifetime by construction.
 	 */
-	if (job->flags & RGA_JOB_USE_HANDLE) {
-		job_buf->page_table_dma =
-			dma_map_single(job->scheduler->dev, page_table,
-				       page_count * sizeof(*page_table),
-				       DMA_TO_DEVICE);
-		if (dma_mapping_error(job->scheduler->dev, job_buf->page_table_dma)) {
-			rga_job_err(job, "can not DMA-map page_table for RGA2\n");
-			ret = -EFAULT;
-			goto err_free_page_table;
-		}
-		job_buf->page_table_dev = job->scheduler->dev;
-		job_buf->page_table_mapped = true;
-	} else {
-		job_buf->page_table_dma = rga_drvdata->mmu_base->dma_addr +
-			(page_table - rga_drvdata->mmu_base->buf_virtual) *
-			sizeof(*page_table);
-		job_buf->page_table_dev = rga_drvdata->mmu_base->map_dev;
-		job_buf->page_table_mapped = false;
+	job_buf->page_table_dma =
+		dma_map_single(job->scheduler->dev, page_table,
+			       page_count * sizeof(*page_table),
+			       DMA_TO_DEVICE);
+	if (dma_mapping_error(job->scheduler->dev, job_buf->page_table_dma)) {
+		rga_job_err(job, "can not DMA-map page_table for RGA2\n");
+		ret = -EFAULT;
+		goto err_free_page_table;
 	}
+	job_buf->page_table_dev = job->scheduler->dev;
+	job_buf->page_table_mapped = true;
 
 	job_buf->page_table = page_table;
 	job_buf->order = order;
@@ -2662,8 +2628,7 @@ static int rga_mm_set_mmu_base(struct rga_job *job,
 
 err_free_page_table:
 	rga_mm_put_rga2_bounce(job, job_buf, DMA_NONE);
-	if (job->flags & RGA_JOB_USE_HANDLE)
-		free_pages((unsigned long)page_table, order);
+	free_pages((unsigned long)page_table, order);
 	return ret;
 }
 
@@ -3182,6 +3147,29 @@ static void rga_mm_put_buffer(struct rga_mm *mm,
 	mutex_unlock(&mm->lock);
 }
 
+/*
+ * Release the job buffer's RGA2 page table. Idempotent: every caller may run
+ * on an unwind path where the table was never allocated, and clearing
+ * page_table here is what keeps a second call from unmapping or freeing twice.
+ */
+static void rga_mm_put_page_table(struct rga_job_buffer *job_buf)
+{
+	if (job_buf->page_table == NULL)
+		return;
+
+	if (job_buf->page_table_mapped) {
+		dma_unmap_single(job_buf->page_table_dev,
+				 job_buf->page_table_dma,
+				 job_buf->page_count *
+				 sizeof(*job_buf->page_table),
+				 DMA_TO_DEVICE);
+		job_buf->page_table_mapped = false;
+	}
+
+	free_pages((unsigned long)job_buf->page_table, job_buf->order);
+	job_buf->page_table = NULL;
+}
+
 static void rga_mm_put_channel_handle_info(struct rga_mm *mm,
 					   struct rga_job *job,
 					   struct rga_job_buffer *job_buf,
@@ -3207,18 +3195,7 @@ static void rga_mm_put_channel_handle_info(struct rga_mm *mm,
 		job_buf->v_addr = NULL;
 	}
 
-	if (job_buf->page_table) {
-		if (job_buf->page_table_mapped) {
-			dma_unmap_single(job_buf->page_table_dev,
-					 job_buf->page_table_dma,
-					 job_buf->page_count *
-					 sizeof(*job_buf->page_table),
-					 DMA_TO_DEVICE);
-			job_buf->page_table_mapped = false;
-		}
-		free_pages((unsigned long)job_buf->page_table, job_buf->order);
-		job_buf->page_table = NULL;
-	}
+	rga_mm_put_page_table(job_buf);
 
 	rga_mm_release_job_iommu_mappings(job_buf);
 }
@@ -3578,7 +3555,7 @@ static void rga_mm_unmap_channel_job_buffer(struct rga_job *job,
 	rga_mm_unmap_buffer(job_buffer->addr);
 	kfree(job_buffer->addr);
 
-	job_buffer->page_table = NULL;
+	rga_mm_put_page_table(job_buffer);
 }
 
 static int rga_mm_map_channel_job_buffer(struct rga_job *job,
@@ -3734,6 +3711,8 @@ static void rga_mm_free_channel_fake_buffer(struct rga_job *job,
 					    enum dma_data_direction dir)
 {
 	struct rga_internal_buffer *buffer = job_buffer->addr;
+
+	rga_mm_put_page_table(job_buffer);
 
 	if (rga_mm_is_invalid_dma_buffer(buffer->dma_buffer))
 		return;

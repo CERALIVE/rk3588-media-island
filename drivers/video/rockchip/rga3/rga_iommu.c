@@ -56,10 +56,9 @@ int rga_user_memory_check(struct page **pages, u32 w, u32 h, u32 format, int fla
 static uint32_t rga_job_buffer_mmu_base(struct rga_job_buffer *job_buf)
 {
 	/*
-	 * The page table is a streaming DMA buffer of the RGA2 device (the
-	 * shared ring is mapped at bind time, per-job handle tables at fill
-	 * time); publish the CPU-filled entries to the device and program
-	 * the retained DMA address.
+	 * The page table is a per-job streaming DMA buffer of the RGA2
+	 * device, mapped at fill time; publish the CPU-filled entries to the
+	 * device and program the retained DMA address.
 	 */
 	dma_sync_single_for_device(job_buf->page_table_dev,
 				   job_buf->page_table_dma,
@@ -97,160 +96,6 @@ int rga_set_mmu_base(struct rga_job *job,
 			rga_job_buffer_mmu_base(&task_buffers->els_buffer);
 
 	return 0;
-}
-
-static int rga_mmu_buf_get_try(struct rga_mmu_base *t, uint32_t size)
-{
-	int ret = 0;
-
-	if ((t->back - t->front) > t->size) {
-		if (t->front + size > t->back - t->size) {
-			rga_log("front %d, back %d dsize %d size %d",
-				t->front, t->back, t->size, size);
-			ret = -ENOMEM;
-			goto out;
-		}
-	} else {
-		if ((t->front + size) > t->back) {
-			rga_log("front %d, back %d dsize %d size %d",
-				t->front, t->back, t->size, size);
-			ret = -ENOMEM;
-			goto out;
-		}
-
-		if (t->front + size > t->size) {
-			if (size > (t->back - t->size)) {
-				rga_log("front %d, back %d dsize %d size %d",
-					t->front, t->back, t->size, size);
-				ret = -ENOMEM;
-				goto out;
-			}
-			t->front = 0;
-		}
-	}
-out:
-	return ret;
-}
-
-unsigned int *rga_mmu_buf_get(struct rga_mmu_base *mmu_base, uint32_t size)
-{
-	int ret;
-	unsigned int *buf = NULL;
-
-	WARN_ON(!mutex_is_locked(&rga_drvdata->lock));
-
-	size = ALIGN(size, 16);
-
-	ret = rga_mmu_buf_get_try(mmu_base, size);
-	if (ret < 0) {
-		rga_err("Get MMU mem failed\n");
-		return NULL;
-	}
-
-	buf = mmu_base->buf_virtual + mmu_base->front;
-
-	mmu_base->front += size;
-
-	if (mmu_base->back + size > 2 * mmu_base->size)
-		mmu_base->back = size + mmu_base->size;
-	else
-		mmu_base->back += size;
-
-	return buf;
-}
-
-struct rga_mmu_base *rga_mmu_base_init(struct device *map_dev, size_t size)
-{
-	int order = 0;
-	struct rga_mmu_base *mmu_base;
-
-	mmu_base = kzalloc(sizeof(*mmu_base), GFP_KERNEL);
-	if (mmu_base == NULL) {
-		pr_err("Cannot alloc mmu_base!\n");
-		return ERR_PTR(-ENOMEM);
-	}
-
-	/*
-	 * malloc pre scale mid buf mmu table:
-	 * size * channel_num * address_size
-	 */
-	mmu_base->buf_virtual = (uint32_t *)rga_get_free_pages(GFP_KERNEL | GFP_DMA32,
-		&order, size * 3 * sizeof(*mmu_base->buf_virtual));
-	if (mmu_base->buf_virtual == NULL) {
-		pr_err("Can not alloc pages for mmu_page_table\n");
-		goto err_free_mmu_base;
-	}
-	mmu_base->buf_order = order;
-
-	mmu_base->pages = (struct page **)rga_get_free_pages(GFP_KERNEL | GFP_DMA32,
-		&order, size * sizeof(*mmu_base->pages));
-	if (mmu_base->pages == NULL) {
-		pr_err("Can not alloc pages for mmu_base->pages\n");
-		goto err_free_buf_virtual;
-	}
-	mmu_base->pages_order = order;
-
-	/*
-	 * The page-table ring is CPU-filled and device-read for the whole
-	 * driver lifetime, so own it as a streaming DMA mapping of the RGA2
-	 * device and sync the touched range on each job instead of touching
-	 * unmapped memory behind the DMA API's back.
-	 */
-	mmu_base->dma_addr = dma_map_single(map_dev, mmu_base->buf_virtual,
-					    size * 3 * sizeof(*mmu_base->buf_virtual),
-					    DMA_TO_DEVICE);
-	if (dma_mapping_error(map_dev, mmu_base->dma_addr)) {
-		pr_err("Can not map mmu_page_table for device\n");
-		goto err_free_pages;
-	}
-	mmu_base->map_dev = map_dev;
-
-	mmu_base->front = 0;
-	mmu_base->back = RGA2_PHY_PAGE_SIZE * 3;
-	mmu_base->size = RGA2_PHY_PAGE_SIZE * 3;
-
-	return mmu_base;
-
-err_free_pages:
-	free_pages((unsigned long)mmu_base->pages, mmu_base->pages_order);
-	mmu_base->pages_order = 0;
-
-err_free_buf_virtual:
-	free_pages((unsigned long)mmu_base->buf_virtual, mmu_base->buf_order);
-	mmu_base->buf_order = 0;
-
-err_free_mmu_base:
-	kfree(mmu_base);
-
-	return ERR_PTR(-ENOMEM);
-}
-
-void rga_mmu_base_free(struct rga_mmu_base **mmu_base)
-{
-	struct rga_mmu_base *base = *mmu_base;
-
-	if (base->map_dev != NULL) {
-		dma_unmap_single(base->map_dev, base->dma_addr,
-				 base->size * sizeof(*base->buf_virtual),
-				 DMA_TO_DEVICE);
-		base->map_dev = NULL;
-		base->dma_addr = 0;
-	}
-
-	if (base->buf_virtual != NULL) {
-		free_pages((unsigned long)base->buf_virtual, base->buf_order);
-		base->buf_virtual = NULL;
-		base->buf_order = 0;
-	}
-
-	if (base->pages != NULL) {
-		free_pages((unsigned long)base->pages, base->pages_order);
-		base->pages = NULL;
-		base->pages_order = 0;
-	}
-
-	kfree(base);
-	*mmu_base = NULL;
 }
 
 static int rga_iommu_intr_fault_handler(struct iommu_domain *iommu, struct device *iommu_dev,
@@ -494,20 +339,8 @@ int rga_iommu_bind(void)
 			break;
 
 		case RGA_MMU:
-			if (rga_drvdata->mmu_base != NULL)
-				continue;
-
-			rga_drvdata->mmu_base = rga_mmu_base_init(scheduler->dev,
-								  RGA2_PHY_PAGE_SIZE);
-			if (IS_ERR(rga_drvdata->mmu_base)) {
-				dev_err(scheduler->dev, "rga mmu base init failed!\n");
-				ret = PTR_ERR(rga_drvdata->mmu_base);
-				rga_drvdata->mmu_base = NULL;
-
-				goto err_unbind;
-			}
-
-			main_mmu_index = i;
+			if (main_mmu_index < 0)
+				main_mmu_index = i;
 
 			break;
 		default:
@@ -556,9 +389,6 @@ void rga_iommu_unbind(void)
 	for (i = 0; i < rga_drvdata->num_of_scheduler; i++)
 		if (rga_drvdata->scheduler[i]->iommu_info)
 			rga_iommu_clear_fault_handler(rga_drvdata->scheduler[i]->iommu_info);
-
-	if (rga_drvdata->mmu_base)
-		rga_mmu_base_free(&rga_drvdata->mmu_base);
 
 	rga_drvdata->map_scheduler_index = -1;
 }

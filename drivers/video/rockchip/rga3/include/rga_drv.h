@@ -316,9 +316,8 @@ struct rga_job_buffer {
 	int order;
 	int page_count;
 	/*
-	 * DMA address of page_table for the RGA2 device: an offset into the
-	 * persistently mapped ring for non-handle jobs, or a per-job
-	 * dma_map_single() mapping (unmapped at put) for handle jobs.
+	 * DMA address of page_table for the RGA2 device: a per-job
+	 * dma_map_single() mapping, unmapped and freed at put.
 	 */
 	dma_addr_t page_table_dma;
 	struct device *page_table_dev;
@@ -548,15 +547,11 @@ struct rga_session_manager {
 };
 
 struct rga_drvdata_t {
-	/* used by rga2's mmu lock */
-	struct mutex lock;
-
 	struct rga_scheduler_t *scheduler[RGA_MAX_SCHEDULER];
 	int num_of_scheduler;
 	int device_count[RGA_DEVICE_BUTT];
 	/* The scheduler_index used by default for memory mapping. */
 	int map_scheduler_index;
-	struct rga_mmu_base *mmu_base;
 
 	struct delayed_work power_off_work;
 

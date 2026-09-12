@@ -40,38 +40,10 @@
 #define RGA_IOMMU_IRQ_BUS_ERROR			0x02 /* bus read error */
 #define RGA_IOMMU_IRQ_MASK			(RGA_IOMMU_IRQ_PAGE_FAULT | RGA_IOMMU_IRQ_BUS_ERROR)
 
-/*
- * The maximum input is 8192*8192, the maximum output is 4096*4096
- * The size of physical pages requested is:
- * (( maximum_input_value *
- *         maximum_input_value * format_bpp ) / 4K_page_size) + 1
- */
-#define RGA2_PHY_PAGE_SIZE	 (((8192 * 8192 * 4) / 4096) + 1)
-
-struct rga_mmu_base {
-	unsigned int *buf_virtual;
-	struct page **pages;
-	u8 buf_order;
-	u8 pages_order;
-
-	int32_t front;
-	int32_t back;
-	int32_t size;
-	int32_t curr;
-
-	/* streaming DMA mapping of buf_virtual against the RGA2 device */
-	struct device *map_dev;
-	dma_addr_t dma_addr;
-};
-
 int rga_user_memory_check(struct page **pages, u32 w, u32 h, u32 format, int flag);
 int rga_set_mmu_base(struct rga_job *job,
 		     struct rga_job_task_buffers *task_buffers,
 		     struct rga2_req *req);
-unsigned int *rga_mmu_buf_get(struct rga_mmu_base *mmu_base, uint32_t size);
-
-struct rga_mmu_base *rga_mmu_base_init(struct device *map_dev, size_t size);
-void rga_mmu_base_free(struct rga_mmu_base **mmu_base);
 
 int rga_iommu_detach(struct rga_iommu_info *info);
 int rga_iommu_attach(struct rga_iommu_info *info);
