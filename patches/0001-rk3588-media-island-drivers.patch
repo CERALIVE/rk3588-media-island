@@ -36557,10 +36557,10 @@ index 0000000000000000000000000000000000000000..12602951a1361734111489f597990898
 +#endif
 diff --git a/drivers/video/rockchip/rga3/rga2_reg_info.c b/drivers/video/rockchip/rga3/rga2_reg_info.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..3e62e90dacf465e455e24ca4c6319ab54d070e05
+index 0000000000000000000000000000000000000000..372318edc71f0dfa1f12f3785c8899b1154784ed
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga2_reg_info.c
-@@ -0,0 +1,3554 @@
+@@ -0,0 +1,3565 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -39300,22 +39300,33 @@ index 0000000000000000000000000000000000000000..3e62e90dacf465e455e24ca4c6319ab5
 +		iommu_auto_gate = rga_read(RGA_IOMMU_AUTO_GATING, scheduler);
 +	}
 +
-+	if (scheduler->resets.count) {
-+		if (media_reset_cycle(scheduler->resets.count, scheduler->resets.controls,
-+				      scheduler->resets.controls))
-+			i = RGA_RESET_TIMEOUT;
-+	} else {
-+		rga_write(m_RGA2_SYS_CTRL_ACLK_SRESET_P | m_RGA2_SYS_CTRL_CCLK_SRESET_P |
-+			  m_RGA2_SYS_CTRL_RST_PROTECT_P, RGA2_SYS_CTRL, scheduler);
++	/*
++	 * RGA2 resets through RGA2_SYS_CTRL, never through the external reset
++	 * controls its device-tree node supplies.
++	 *
++	 * The register write asserts RST_PROTECT alongside the ACLK/CCLK soft
++	 * resets and the loop below waits for the block to report the reset
++	 * complete. reset_control_bulk_assert()/_deassert() can express neither:
++	 * there is no RST_PROTECT equivalent and no completion to wait on, so an
++	 * external cycle releases SRST_A_RGA2 while AXI transactions are still in
++	 * flight. Those transactions are never retired, so the shared PD_VDPU NIU
++	 * never reaches idle and the next genpd power-off latches a stale idle
++	 * request -- observed later as an uncorrectable SError, or as an
++	 * indefinite CPU stall on the first RGA2 MMIO access.
++	 *
++	 * This runs once per job on RK3588, not only on the error path, so the
++	 * external cycle is a per-job hazard rather than a recovery-only one.
++	 */
++	rga_write(m_RGA2_SYS_CTRL_ACLK_SRESET_P | m_RGA2_SYS_CTRL_CCLK_SRESET_P |
++		  m_RGA2_SYS_CTRL_RST_PROTECT_P, RGA2_SYS_CTRL, scheduler);
 +
-+		for (i = 0; i < RGA_RESET_TIMEOUT; i++) {
-+			reg = rga_read(RGA2_SYS_CTRL, scheduler) & 1;
++	for (i = 0; i < RGA_RESET_TIMEOUT; i++) {
++		reg = rga_read(RGA2_SYS_CTRL, scheduler) & 1;
 +
-+			if (reg == 0)
-+				break;
++		if (reg == 0)
++			break;
 +
-+			udelay(1);
-+		}
++		udelay(1);
 +	}
 +
 +	if (scheduler->data->mmu == RGA_IOMMU) {
