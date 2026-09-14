@@ -27,6 +27,32 @@ static struct counter counters[BRANCHES];
 static gboolean source_only;
 static gint64 origin;
 static _Atomic gint64 measurement_end;
+static _Atomic unsigned capture_sent;
+
+static GstPadProbeReturn observe_input(GstPad *pad, GstPadProbeInfo *info, gpointer data)
+{
+	(void)pad; (void)data;
+	if (GST_PAD_PROBE_INFO_TYPE(info) & GST_PAD_PROBE_TYPE_BUFFER)
+		atomic_fetch_add(&capture_sent, 1);
+	return GST_PAD_PROBE_OK;
+}
+
+static gchar *capture_graph(const char *codec, unsigned width, unsigned height,
+			   unsigned rate, gboolean control)
+{
+	gchar *tail = control ? g_strdup("identity name=input ! fakesink name=sink sync=false async=false") :
+		g_strdup_printf("%srgaconvert name=convert ! video/x-raw,format=NV12,width=%u,height=%u,colorimetry=bt709 ! "
+			"identity name=input ! mpp%senc name=encode rc-mode=cbr bitrate=20000000 gop=60 ! "
+			"%sparse ! video/x-%s,alignment=au ! fakesink name=sink sync=false async=false",
+			rate == 30 ? "videorate drop-only=true ! video/x-raw,framerate=30000/1001 ! " : "",
+			width, height, codec, codec, codec);
+	gchar *graph = g_strdup_printf(
+		"v4l2src name=source device=/dev/video0 io-mode=dmabuf ! "
+		"video/x-raw,format=NV16,width=3840,height=2160,framerate=60000/1001,colorimetry=bt709 ! "
+		"%s", tail);
+	g_free(tail);
+	return graph;
+}
 
 static GstPadProbeReturn observe(GstPad *pad, GstPadProbeInfo *info, gpointer data)
 {
@@ -133,9 +159,10 @@ int main(int argc, char **argv)
 		fprintf(stderr, "usage: bench-cell mode codec in out width height rate streams seconds core operation\n");
 		return 2;
 	}
-	source_only = !strcmp(argv[1], "source");
+	gboolean capture = !strcmp(argv[1], "hdmi") || !strcmp(argv[1], "hdmi-source");
+	source_only = !strcmp(argv[1], "source") || !strcmp(argv[1], "hdmi-source");
 	gboolean rga = !strcmp(argv[1], "rga");
-	gboolean encode = !strcmp(argv[1], "encode");
+	gboolean encode = !strcmp(argv[1], "encode") || !strcmp(argv[1], "hdmi");
 	if ((!source_only && !rga && !encode) ||
 		(strcmp(argv[2], "h264") && strcmp(argv[2], "h265")) ||
 		(strcmp(argv[3], "NV12") && strcmp(argv[3], "NV16") && strcmp(argv[3], "RGB")) ||
@@ -143,6 +170,8 @@ int main(int argc, char **argv)
 		return 2;
 	unsigned width = number(argv[5], 3840), height = number(argv[6], 2160);
 	unsigned rate = number(argv[7], 240), streams = number(argv[8], BRANCHES);
+	if (capture && (streams != 1 || (rate != 30 && rate != 60) ||
+		strcmp(argv[3], "NV16") || strcmp(argv[4], "NV12"))) return 2;
 	unsigned seconds = number(argv[9], 120), core = number(argv[10], 4);
 	const char *operation = argv[11];
 	if (!width || !height || (width % 2) || (height % 2) || !streams || !seconds ||
@@ -160,9 +189,10 @@ int main(int argc, char **argv)
 	if (!gst_video_info_set_format(&info, gst_video_format_from_string(argv[3]), width, height))
 		return 2;
 	GstBuffer *ring[RING];
-	for (unsigned i = 0; i < RING; i++)
+	for (unsigned i = 0; !capture && i < RING; i++)
 		ring[i] = frame(&info, i);
-	g_print("SOURCE ring=%u immutable=1 bytes=%zu\n", RING, RING * info.size);
+	if (capture) g_print("SOURCE live-hdmi=1 format=NV16 framerate=60000/1001\n");
+	else g_print("SOURCE ring=%u immutable=1 bytes=%zu\n", RING, RING * info.size);
 	GstElement *pipes[BRANCHES] = {0}, *sources[BRANCHES] = {0};
 	unsigned sent[BRANCHES] = {0}, baseline[BRANCHES] = {0}, at_stop[BRANCHES] = {0};
 	unsigned pressure[BRANCHES] = {0};
@@ -190,6 +220,10 @@ int main(int argc, char **argv)
 			!strcmp(argv[3], "RGB") ? "sRGB" : "bt601",
 			!source_only && (rga || !strcmp(argv[3], "NV16")) ? conversion : "",
 			encode ? encoding : "");
+		if (capture) {
+			g_free(graph);
+			graph = capture_graph(argv[2], width, height, rate, source_only);
+		}
 		g_print("GRAPH branch=%u %s\n", i, graph);
 		GError *error = NULL;
 		pipes[i] = gst_parse_launch(graph, &error);
@@ -197,6 +231,12 @@ int main(int argc, char **argv)
 		if (error || !pipes[i])
 			g_error("graph parse: %s", error ? error->message : "null");
 		sources[i] = gst_bin_get_by_name(GST_BIN(pipes[i]), "source");
+		if (capture) {
+			GstElement *input = gst_bin_get_by_name(GST_BIN(pipes[i]), "input");
+			GstPad *input_pad = gst_element_get_static_pad(input, "src");
+			gst_pad_add_probe(input_pad, GST_PAD_PROBE_TYPE_BUFFER, observe_input, NULL, NULL);
+			gst_object_unref(input_pad); gst_object_unref(input);
+		}
 		GstElement *sink = gst_bin_get_by_name(GST_BIN(pipes[i]), "sink");
 		GstPad *pad = gst_element_get_static_pad(sink, "sink");
 		counters[i].intervals = g_array_new(FALSE, FALSE, sizeof(double));
@@ -221,6 +261,7 @@ int main(int argc, char **argv)
 		gboolean pushed = FALSE;
 		for (unsigned i = 0; i < streams; i++) {
 			if (error_pending(pipes[i])) { ok = FALSE; break; }
+			if (capture) continue;
 			if (rate && now - origin < (gint64)sent[i] * 1000000 / rate) continue;
 			guint64 queued = 0;
 			g_object_get(sources[i], "current-level-buffers", &queued, NULL);
@@ -244,7 +285,8 @@ int main(int argc, char **argv)
 	getrusage(RUSAGE_SELF, &cpu_stop);
 	for (unsigned i = 0; i < streams; i++) {
 		at_stop[i] = atomic_load(&counters[i].count);
-		gst_app_src_end_of_stream(GST_APP_SRC(sources[i]));
+		if (capture) gst_element_send_event(pipes[i], gst_event_new_eos());
+		else gst_app_src_end_of_stream(GST_APP_SRC(sources[i]));
 	}
 	for (unsigned i = 0; i < streams; i++) {
 		GstBus *bus = gst_element_get_bus(pipes[i]);
@@ -253,6 +295,7 @@ int main(int argc, char **argv)
 		if (message) gst_message_unref(message);
 		gst_object_unref(bus);
 		unsigned output = atomic_load(&counters[i].count);
+		if (capture) sent[i] = atomic_load(&capture_sent);
 		if (output != sent[i] || !output || !start) ok = FALSE;
 		const char *names[] = {"convert", "encode"};
 		for (unsigned j = 0; j < G_N_ELEMENTS(names); j++) {
@@ -280,7 +323,7 @@ int main(int argc, char **argv)
 			sent[i], output, pressure[i], p50, p99, p99-p50);
 		g_array_unref(intervals);
 	}
-	for (unsigned i = 0; i < RING; i++) gst_buffer_unref(ring[i]);
+	for (unsigned i = 0; !capture && i < RING; i++) gst_buffer_unref(ring[i]);
 	double cpu = (cpu_stop.ru_utime.tv_sec - cpu_start.ru_utime.tv_sec) +
 		(cpu_stop.ru_stime.tv_sec - cpu_start.ru_stime.tv_sec) +
 		(cpu_stop.ru_utime.tv_usec - cpu_start.ru_utime.tv_usec +
