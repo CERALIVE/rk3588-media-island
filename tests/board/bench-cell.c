@@ -153,8 +153,84 @@ static const gchar *output_media_type(gboolean isolated_rga)
 	return isolated_rga ? "video/x-raw(memory:DMABuf)" : "video/x-raw";
 }
 
+static const char *latency_graph(void)
+{
+	return "v4l2src name=capture device=/dev/video0 io-mode=dmabuf num-buffers=180 ! "
+		"video/x-raw,format=NV16,width=3840,height=2160,framerate=60000/1001,colorimetry=bt709 ! "
+		"timeoverlay name=overlay time-mode=buffer-time halignment=left valignment=top "
+		"font-desc=\"Monospace 32\" auto-resize=false draw-shadow=false draw-outline=false "
+		"shaded-background=true ! "
+		"rgaconvert name=convert ! video/x-raw,format=NV12,width=3840,height=2160,colorimetry=bt709 ! "
+		"mpph264enc name=encoder rc-mode=cbr bitrate=20000000 gop=60 ! "
+		"h264parse name=parser ! video/x-h264,alignment=au,stream-format=byte-stream ! "
+		"filesink name=recording sync=false";
+}
+
+static GstPadProbeReturn latency_stamp(GstPad *pad, GstPadProbeInfo *info, gpointer data)
+{
+	(void)pad;
+	GstBuffer *buffer = GST_PAD_PROBE_INFO_BUFFER(info);
+	if (buffer)
+		g_print("%s,%" G_GINT64_FORMAT ",%" G_GUINT64_FORMAT "\n",
+			(const char *)data, g_get_monotonic_time(), GST_BUFFER_PTS(buffer));
+	return GST_PAD_PROBE_OK;
+}
+
+/* Both endpoints use this process's monotonic clock; host decode only checks pixels. */
+static int collect_latency(const char *graph, const char *recording)
+{
+	GError *error = NULL;
+	g_print("GRAPH %s\n", graph);
+	GstElement *pipeline = gst_parse_launch(graph, &error);
+	if (error || !pipeline) {
+		g_printerr("PARSE_ERROR %s\n", error ? error->message : "null pipeline");
+		g_clear_error(&error);
+		if (pipeline) gst_object_unref(pipeline);
+		return 1;
+	}
+	GstElement *sink = gst_bin_get_by_name(GST_BIN(pipeline), "recording");
+	g_object_set(sink, "location", recording, NULL);
+	gst_object_unref(sink);
+	const char *names[] = {"capture", "parser"};
+	const char *labels[] = {"CAPTURE", "AU"};
+	for (unsigned i = 0; i < G_N_ELEMENTS(names); i++) {
+		GstElement *element = gst_bin_get_by_name(GST_BIN(pipeline), names[i]);
+		GstPad *pad = gst_element_get_static_pad(element, "src");
+		gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_BUFFER, latency_stamp, (gpointer)labels[i], NULL);
+		gst_object_unref(pad);
+		gst_object_unref(element);
+	}
+	GstBus *bus = gst_element_get_bus(pipeline);
+	GstStateChangeReturn state = gst_element_set_state(pipeline, GST_STATE_PLAYING);
+	GstMessage *message = state == GST_STATE_CHANGE_FAILURE ? NULL :
+		gst_bus_timed_pop_filtered(bus, 30 * GST_SECOND, GST_MESSAGE_ERROR | GST_MESSAGE_EOS);
+	int rc = 1;
+	if (message && GST_MESSAGE_TYPE(message) == GST_MESSAGE_EOS) rc = 0;
+	else if (message && GST_MESSAGE_TYPE(message) == GST_MESSAGE_ERROR) {
+		gchar *debug = NULL;
+		gst_message_parse_error(message, &error, &debug);
+		g_printerr("PIPELINE_ERROR %s: %s\n", error->message, debug ? debug : "");
+		g_free(debug);
+		g_clear_error(&error);
+	} else g_printerr("PIPELINE_START_FAILURE_OR_TIMEOUT\n");
+	gst_element_set_state(pipeline, GST_STATE_NULL);
+	if (message) gst_message_unref(message);
+	gst_object_unref(bus);
+	gst_object_unref(pipeline);
+	g_print("RESULT rc=%d\n", rc);
+	return rc;
+}
+
 int main(int argc, char **argv)
 {
+	if (argc == 3 && !strcmp(argv[1], "latency")) {
+		if (g_strcmp0(getenv("CERALIVE_BOARD_TEST"), "1") ||
+			access("/tmp/ceralive-board-session", F_OK)) return 77;
+		alarm(40);
+		setvbuf(stdout, NULL, _IOLBF, 0);
+		gst_init(NULL, NULL);
+		return collect_latency(latency_graph(), argv[2]);
+	}
 	if (argc != 12) {
 		fprintf(stderr, "usage: bench-cell mode codec in out width height rate streams seconds core operation\n");
 		return 2;

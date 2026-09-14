@@ -3,9 +3,24 @@
 #include "bench-cell.c"
 #undef main
 
-int main(void)
+int main(int argc, char **argv)
 {
 	gst_init(NULL, NULL);
+	if (argc == 3 && !strcmp(argv[1], "--latency-fixture")) {
+		const char *graph = "videotestsrc name=capture num-buffers=180 pattern=black ! "
+			"video/x-raw,format=I420,width=640,height=360,framerate=60/1 ! "
+			"timeoverlay time-mode=buffer-time halignment=left valignment=top "
+			"font-desc=\"Monospace 32\" auto-resize=false draw-shadow=false draw-outline=false "
+			"shaded-background=true ! openh264enc ! "
+			"h264parse name=parser ! video/x-h264,alignment=au,stream-format=byte-stream ! "
+			"filesink name=recording sync=false";
+		return collect_latency(graph, argv[2]);
+	}
+	g_assert_nonnull(strstr(latency_graph(), "num-buffers=180"));
+	g_assert_nonnull(strstr(latency_graph(), "timeoverlay name=overlay time-mode=buffer-time"));
+	g_assert_nonnull(strstr(latency_graph(), "h264parse name=parser"));
+	g_assert_nonnull(strstr(latency_graph(), "bitrate=20000000 gop=60"));
+	g_assert_null(strstr(latency_graph(), "videorate"));
 	gchar *capture = capture_graph("h265", 1920, 1080, 30, FALSE);
 	g_assert_nonnull(strstr(capture, "io-mode=dmabuf"));
 	g_assert_nonnull(strstr(capture, "framerate=60000/1001,colorimetry=bt709"));

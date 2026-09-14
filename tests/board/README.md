@@ -21,8 +21,8 @@ The parser accepts only the stated alphabet and exact field count, never shell
 evaluation. It rejects executable P010/10-bit inputs. The exclusion is a status
 row, not a workload. Both boards use the same synthetic cells. `--run-rock`
 records HDMI rows as `NO-SOURCE`; `--run-opi` executes the six HDMI encode rows.
-Latency remains prerequisite-gated: this runner does not invent a replacement
-for the required timeoverlay plus host-decoder correlation.
+The latency cell collects a 180-frame timeoverlay recording when the element is
+available; host scoring decodes and verifies every timestamp before measuring it.
 
 Build `bench-cell.c` against the target's GStreamer development libraries:
 
@@ -42,7 +42,8 @@ bash tests/board/bench-matrix.sh --score /path/to/collected-results
 
 For cross-builds set `CROSS_COMPILE` and `PKG_CONFIG_LIBDIR` to the matching
 target SDK, rather than linking against host libraries. No package is installed
-by this runner. Host scoring requires Bun; the board requires Bash, timeout,
+by this runner. Host scoring requires Bun, plus FFmpeg/ffprobe and Tesseract for
+latency; the board requires Bash, timeout,
 flock, journalctl, the compiled probe and the installed GStreamer elements.
 
 Run the matrix detached under the external lock and keep that lock until it has
@@ -68,7 +69,7 @@ Two seconds of warmup precede the active window. EOS drain is excluded from
 rate and jitter, but included in sent/output conservation. CPU is process
 utime+stime over that active window, with 100% meaning one CPU core.
 
-Every executable cell first runs an unpaced source-only control for its actual
+Every throughput cell first runs an unpaced source-only control for its actual
 format, geometry and branch count. Host scoring requires at least 20% source
 headroom above both measured and requested rates. Otherwise it reports
 `SOURCE-LIMITED`, never a silicon limit. Paced cells require 99% of target on
@@ -132,8 +133,54 @@ capture-pad→AU median/p99 were 23.119/48.156 ms; after two seconds, the remain
 time before source-pad delivery, and is not sensor-to-host-display latency or a
 15-second steady run. Per-element counter coverage was not added to this probe;
 the matrix's earlier counters must not be attributed to it. The original matrix
-outputs remain historical, and integrating the collector into the reusable
-runner remains an automation gap. The root benchmark assessment owns acceptance.
+outputs remain historical. The root benchmark assessment owns acceptance.
+
+**Reusable latency collector [EXISTS], board rerun outstanding.** The former
+stub now branches on inspect's actual exit code. The latency arm alone enables
+registry updates for inspect and capture, so a newly installed Pango plugin can
+be discovered. Nonzero inspect writes `PREREQUISITE-FAIL` with the failed
+prerequisite and exit code; a missing/non-executable inspector is distinguished
+from an unavailable element. Full inspect output stays in `prerequisite.log`.
+
+On success, `bench-cell latency RECORDING` runs the same 180-buffer graph above,
+with capture-source-pad and parsed-AU monotonic probes, under the existing board
+admission and external lock. The matrix retains the recording, probe log,
+before/after snapshots and kernel journal. Capture errors are `FAIL`, journal
+capture/scanner/fatal errors stop the run, and successful collection is only
+`CAPTURED-PENDING-HOST-DECODE` — not a measured latency verdict. This bounded
+latency arm has no throughput/source-headroom claim or per-element counter census.
+
+After collection, the existing `--score` command runs `bench-latency.mjs` through
+the reporter. It requires complete core-counter snapshots and no attributed
+kernel/counter fault, software-decodes the recording, rejects missing/extra or
+B frames, and verifies every overlay against the exact capture/AU PTS sequence
+at millisecond display precision. Only then does it emit `MEASURED-LATENCY` with
+whole-run and ≥2-second-subset nearest-rank quantiles. An empty subset is `null`,
+never zero. Both latency endpoints are **board monotonic** timestamps; host
+decode verifies pixels and contributes no clock to the subtraction. The boundary
+is **capture-source-pad delivery → parsed AU, including overlay overhead**, not
+sensor-to-display. No sensor/upstream no-drop or zero-copy claim is implied.
+
+Each scoring attempt gets a fresh `host-decode-*` directory under the collected
+cell, retaining tool versions, decoder logs, all cropped frames, OCR transcript
+and successful `latency.json`; failed OCR never drops a sample or reuses stale
+frames. The known-good crop is 330×60 at (10,20) for the fixed Monospace 32 overlay.
+A font/rendering mismatch must fail correlation, not silently widen tolerance.
+Missing host tools and failed decoding/correlation are host-scoring failures with
+reasons, not claims that the board lacked timeoverlay. Original result files are
+never rewritten. Use a new output directory after installing the prerequisite;
+resume intentionally retains finished failures and checks run identity.
+
+`make -C tests/board benchmark-selftest` includes the failing-first dispatch
+regression and scorer mutations. For an additional **software-only** end-to-end
+check, with timeoverlay, openh264enc, h264parse, FFmpeg and Tesseract installed:
+
+```sh
+bun tests/board/test-bench-latency.mjs --software-decode
+```
+
+This exercises the real pad collector and host reporter on 180 synthetic frames;
+it does not qualify the HDMI/RGA/MPP path. No board was contacted for this fix.
 
 OPi HDMI keeps the camera untouched. Before each capture cell, the receiver
 adopts the queried cable timing through `v4l2-ctl --set-dv-bt-timings query`.

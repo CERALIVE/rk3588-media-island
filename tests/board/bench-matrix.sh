@@ -119,6 +119,7 @@ while IFS='|' read -r id mode codec input output width height rate streams secon
 	if [[ -f $out/$id/result && $(cat "$out/$id/result") != CANCELLED ]]; then
 		case $(cat "$out/$id/result") in
 		'source_rc=0 cell_rc=0'|NO-SOURCE|EXCLUDED) ;;
+		CAPTURED-PENDING-HOST-DECODE) [[ $mode == latency ]] || failed=1 ;;
 		*) failed=1 ;;
 		esac
 		printf 'RESUME %s\n' "$id"; continue
@@ -127,11 +128,44 @@ while IFS='|' read -r id mode codec input output width height rate streams secon
 	printf 'START %s uptime=%s\n' "$id" "$(cut -d' ' -f1 /proc/uptime)"
 	if [[ $1 == --run-rock && ( $mode == hdmi || $mode == latency ) ]]; then mode=NO-SOURCE; fi
 	if [[ $mode == latency ]]; then
-		gst-inspect-1.0 timeoverlay > "$out/$id/prerequisite.log" 2>&1
-		printf 'timeoverlay_rc=%s; requires timeoverlay plus host decode, no substitute\n' "$?" >> "$out/$id/prerequisite.log"
-		printf 'PREREQUISITE-FAIL\n' > "$out/$id/result"
-		printf 'DONE %s PREREQUISITE-FAIL\n' "$id"
-		failed=1
+		# A newly installed Pango plugin must be discoverable even with a stale registry.
+		GST_REGISTRY_UPDATE=yes gst-inspect-1.0 timeoverlay > "$out/$id/prerequisite.log" 2>&1
+		inspect_rc=$?
+		printf 'timeoverlay_rc=%s; requires timeoverlay plus host decode, no substitute\n' "$inspect_rc" >> "$out/$id/prerequisite.log"
+		if (( inspect_rc != 0 )); then
+			reason=timeoverlay-unavailable
+			if (( inspect_rc == 126 || inspect_rc == 127 )); then reason=gst-inspect-unavailable; fi
+			printf 'PREREQUISITE-FAIL reason=%s inspect_rc=%s\n' "$reason" "$inspect_rc" > "$out/$id/result.tmp"
+			failed=1
+		else
+			cursor=$(journalctl -k -b -n 1 --show-cursor --no-pager | sed -n 's/^-- cursor: //p')
+			cursor_rc=$?
+			[[ $cursor_rc == 0 && -n $cursor ]] || exit 1
+			v4l2-ctl -d /dev/video0 --query-dv-timings --set-dv-bt-timings query > "$out/$id/timings.log" 2>&1 || exit 1
+			snapshot > "$out/$id/before" || exit 1
+			GST_REGISTRY_UPDATE=yes timeout --kill-after=5 40 "$probe" latency "$out/$id/capture.h264" > "$out/$id/cell.log" 2>&1 &
+			pid=$!
+			wait "$pid"; cell_rc=$?
+			pid=
+			snapshot > "$out/$id/after" || exit 1
+			journalctl -k -b --after-cursor "$cursor" --no-pager -o short-monotonic > "$out/$id/journal"
+			journal_capture_rc=$?
+			grep -E 'BUG:|Oops:|Kernel panic|Call trace:|WARNING:|SError|Failed to map attachment|swiotlb buffer is full' "$out/$id/journal" > "$out/$id/fatal"
+			journal_rc=$?
+			if (( journal_capture_rc != 0 || journal_rc != 1 )); then
+				printf 'FATAL-JOURNAL capture_rc=%s scanner_rc=%s\n' "$journal_capture_rc" "$journal_rc" > "$out/$id/result.tmp"
+				mv -- "$out/$id/result.tmp" "$out/$id/result" || exit 1
+				exit 1
+			fi
+			if (( cell_rc == 0 )); then
+				printf 'CAPTURED-PENDING-HOST-DECODE\n' > "$out/$id/result.tmp"
+			else
+				printf 'FAIL reason=latency-capture cell_rc=%s\n' "$cell_rc" > "$out/$id/result.tmp"
+				failed=1
+			fi
+		fi
+		mv -- "$out/$id/result.tmp" "$out/$id/result" || exit 1
+		printf 'DONE %s %s\n' "$id" "$(cat "$out/$id/result")"
 		continue
 	fi
 	if [[ $mode == NO-SOURCE || $mode == EXCLUDED ]]; then

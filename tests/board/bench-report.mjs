@@ -2,6 +2,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
+import { measureLatency } from './bench-latency.mjs';
 
 function metrics(text) {
   return [...text.matchAll(/^METRIC (.+)$/gm)].map(match => Object.fromEntries(
@@ -133,8 +134,27 @@ function report(directory) {
       continue;
     }
     if (mode === 'latency') {
-      const verdict = result === 'NO-SOURCE' && identity.includes('board=--run-rock') ? 'NO-SOURCE' : 'PREREQUISITE-FAIL';
-      results.push({ id, verdict, baseline: null, delta: null });
+      const row = { id, baseline: null, delta: null };
+      if (result === 'NO-SOURCE' && identity.includes('board=--run-rock')) {
+        results.push({ ...row, verdict: 'NO-SOURCE' });
+      } else if (/^PREREQUISITE-FAIL(?: |$)/.test(result)) {
+        results.push({ ...row, verdict: 'PREREQUISITE-FAIL', reason: result });
+      } else if (result !== 'CAPTURED-PENDING-HOST-DECODE') {
+        results.push({ ...row, verdict: 'FAIL', reason: result });
+      } else {
+        try {
+          const journal = readFileSync(join(path, 'journal'), 'utf8');
+          const before = readFileSync(join(path, 'before'), 'utf8');
+          const after = readFileSync(join(path, 'after'), 'utf8');
+          const { deltas, complete } = telemetry(before, after);
+          assert.ok(complete, 'latency telemetry incomplete');
+          assert.equal(faultVerdict(deltas, windowJournal(journal, before, after)), null, 'latency kernel/counter fault');
+          const latency = measureLatency(path);
+          results.push({ ...row, verdict: 'MEASURED-LATENCY', latency });
+        } catch (error) {
+          results.push({ ...row, verdict: 'FAIL', reason: error.message });
+        }
+      }
       continue;
     }
     if (mode === 'NO-SOURCE' || mode === 'EXCLUDED') {
@@ -179,7 +199,7 @@ function report(directory) {
       files: readdirSync(path) });
   }
   console.log(JSON.stringify(results, null, 2));
-  if (results.some(row => !['RATE-HELD', 'MEASURED-THROUGHPUT', 'NO-SOURCE', 'EXCLUDED'].includes(row.verdict))) process.exitCode = 1;
+  if (results.some(row => !['RATE-HELD', 'MEASURED-THROUGHPUT', 'MEASURED-LATENCY', 'NO-SOURCE', 'EXCLUDED'].includes(row.verdict))) process.exitCode = 1;
 }
 
 if (process.argv[2] === '--self-test') selfTest();

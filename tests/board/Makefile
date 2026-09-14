@@ -49,6 +49,7 @@ benchmark-selftest:
 	./build-host/test-bench-cell
 	bash bench-matrix.sh --self-test
 	bun bench-report.mjs --self-test
+	bun test-bench-latency.mjs
 
 all: $(addprefix $(OUT)/,$(PROBES))
 
