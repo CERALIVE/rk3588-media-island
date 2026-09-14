@@ -110,6 +110,31 @@ correlation. The Rock HDMI latency row is `NO-SOURCE`, not zero latency and not
 a synthetic substitute. A missing timeoverlay element is an additional
 prerequisite to record before a later capture campaign.
 
+**Debian 13 prerequisite and runner boundary (2026-09-14 follow-up).** Pango's
+`libgstpango.so`, including `timeoverlay`, is supplied by **`gstreamer1.0-x`**, not
+by installing `gstreamer1.0-plugins-base` alone. The OPi successfully installed
+arm64 `1.26.2-1+deb13u2`, with no package upgrades/removals, and inspect then
+registered the element. Package installation belongs to the explicitly authorized
+caller under the board lock, never to this runner. An image retaining this
+benchmark needs to account for that dependency; no image manifest was changed.
+
+At `c467e44`, the matrix latency arm **unconditionally emits PREREQUISITE-FAIL**
+after inspect; it is not an implemented collector, even when inspect succeeds.
+Do not infer a hardware failure or measurement from that terminal marker. The
+follow-up used a separate, retained single-cell instrumented pipeline, not a
+rerun of the other cells: 180 live 4K59.94 NV16 buffers → timeoverlay (buffer PTS)
+→ rgaconvert NV12 → H.264 CBR 20 Mbit/s, GOP 60 → parsed AUs → recording.
+The capture source pad and parsed-AU pad recorded same-board monotonic times
+and PTS. Host software decode yielded 180 I/P frames; every burned-in timestamp
+matched its input/output PTS to the displayed millisecond. The complete run's
+capture-pad→AU median/p99 were 23.119/48.156 ms; after two seconds, the remaining
+64-frame subset measured 22.951/26.076 ms. This includes overlay overhead, excludes
+time before source-pad delivery, and is not sensor-to-host-display latency or a
+15-second steady run. Per-element counter coverage was not added to this probe;
+the matrix's earlier counters must not be attributed to it. The original matrix
+outputs remain historical, and integrating the collector into the reusable
+runner remains an automation gap. The root benchmark assessment owns acceptance.
+
 OPi HDMI keeps the camera untouched. Before each capture cell, the receiver
 adopts the queried cable timing through `v4l2-ctl --set-dv-bt-timings query`.
 Capture is DMA-BUF NV16, 3840×2160 at 60000/1001, Rec.709; `rgaconvert` produces
