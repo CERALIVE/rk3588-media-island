@@ -13,14 +13,16 @@ accepts the earlier Phase-0 layout for retained historical runs.
 
 ## What each tool answers
 
-### Reproducible Rock benchmark cells [PARTIAL]
+### Reproducible two-board benchmark cells [PARTIAL]
 
 `bench-matrix.sh` is the entry point; `bench-matrix.yaml` is a deliberately
 restricted YAML scalar list. Its header gives the pipe-separated field order.
 The parser accepts only the stated alphabet and exact field count, never shell
 evaluation. It rejects executable P010/10-bit inputs. The exclusion is a status
-row, not a workload. This dispatch implements the Rock synthetic cells only;
-the HDMI rows are `NO-SOURCE`, and the OPi campaign remains outstanding.
+row, not a workload. Both boards use the same synthetic cells. `--run-rock`
+records HDMI rows as `NO-SOURCE`; `--run-opi` executes the six HDMI encode rows.
+Latency remains prerequisite-gated: this runner does not invent a replacement
+for the required timeoverlay plus host-decoder correlation.
 
 Build `bench-cell.c` against the target's GStreamer development libraries:
 
@@ -31,6 +33,9 @@ bash tests/board/bench-matrix.sh --list
 # Locally on Rock, with the caller holding its external two-half board lock:
 CERALIVE_BOARD_TEST=1 bash tests/board/bench-matrix.sh \
   --run-rock /path/to/bench-cell /tmp/new-benchmark-results
+# On the OPi under its external lock, with live 4K59.94 HDMI on video0:
+CERALIVE_BOARD_TEST=1 bash tests/board/bench-matrix.sh \
+  --run-opi /path/to/bench-cell /tmp/new-benchmark-results
 # On the development host after collecting results:
 bash tests/board/bench-matrix.sh --score /path/to/collected-results
 ```
@@ -86,8 +91,8 @@ frames arrive. Reset counts are retained separately: RGA2's normal job setup
 replaces automatic reset with a counted reason-zero software reset, so a reset
 is not intrinsically a fault. Its exact one-reset-per-completed-task relation
 and journal must be examined rather than silently treating every reset as an error.
-The raw journal query starts before the source control and has whole-second
-wall-clock bounds. Offline fault attribution additionally uses the retained
+The journal cursor is captured before the source control and read from the same
+boot; cell progress uses uptime, not wall-clock time. Offline fault attribution uses the retained
 monotonic before/after snapshots, so a preceding cell's last fractional second
 cannot contaminate the next row. The after bound allows the 10 ms resolution
 of `/proc/uptime`; unknown timestamp formats gate scoring. Both the unfiltered
@@ -104,6 +109,19 @@ Capture-to-AU latency requires `timeoverlay` plus host decode and timestamp
 correlation. The Rock HDMI latency row is `NO-SOURCE`, not zero latency and not
 a synthetic substitute. A missing timeoverlay element is an additional
 prerequisite to record before a later capture campaign.
+
+OPi HDMI keeps the camera untouched. Before each capture cell, the receiver
+adopts the queried cable timing through `v4l2-ctl --set-dv-bt-timings query`.
+Capture is DMA-BUF NV16, 3840×2160 at 60000/1001, Rec.709; `rgaconvert` produces
+NV12 at the requested output geometry without CPU fallback. The 1080p cells
+scale that same live 4K feed. The 4K30 cells use drop-only `videorate` at
+30000/1001 before conversion; this is intentional decimation, not a change to
+the camera. Encoder-input callbacks count frames after conversion/decimation,
+and output callbacks count parsed AUs through EOS drain. The source-only
+control measures the live 4K59.94 capture without conversion or encode.
+The unchanged 20% source-headroom rule deliberately labels near-59.94 outputs
+`SOURCE-LIMITED`: they establish delivery at the cable rate, never a hardware
+ceiling. Synthetic controls and their immutable ring are unchanged.
 
 | tool | question it answers | Phase-0 row |
 |---|---|---|

@@ -88,6 +88,8 @@ function selfTest() {
   const log = fps => `METRIC branch=0 seconds=10 fps=${fps} sent=601 output=601\nRESULT ok=1 cpu_pct=10\n`;
   assert.equal(score(log(200), log(60), 'source_rc=0 cell_rc=0', 1, 60), 'RATE-HELD');
   assert.equal(score(log(60), log(59.9), 'source_rc=0 cell_rc=0', 1, 60), 'SOURCE-LIMITED');
+  assert.equal(score(log(59.94), log(59.94), 'source_rc=0 cell_rc=0', 1, 60), 'SOURCE-LIMITED');
+  assert.equal(score(log(59.94), log(29.97), 'source_rc=0 cell_rc=0', 1, 30), 'RATE-HELD');
   assert.equal(score(log(200), log(14.9), 'source_rc=0 cell_rc=0', 1, 60), 'RATE-MISS');
   assert.equal(score(log(200), log(60).replace('output=601', 'output=600'), 'source_rc=0 cell_rc=0', 1, 60), 'FAIL');
   assert.equal(score(log(200), log(60), 'source_rc=0 cell_rc=124', 1, 60), 'FAIL');
@@ -126,6 +128,15 @@ function report(directory) {
     let result;
     try { result = readFileSync(join(path, 'result'), 'utf8').trim(); }
     catch { results.push({ id, verdict: 'NOT-RUN', baseline: null, delta: null }); continue; }
+    if (mode === 'hdmi' && result === 'NO-SOURCE' && identity.includes('board=--run-rock')) {
+      results.push({ id, verdict: 'NO-SOURCE', baseline: null, delta: null });
+      continue;
+    }
+    if (mode === 'latency') {
+      const verdict = result === 'NO-SOURCE' && identity.includes('board=--run-rock') ? 'NO-SOURCE' : 'PREREQUISITE-FAIL';
+      results.push({ id, verdict, baseline: null, delta: null });
+      continue;
+    }
     if (mode === 'NO-SOURCE' || mode === 'EXCLUDED') {
       results.push({ id, verdict: result === mode ? mode : 'FAIL', baseline: null, delta: null });
       continue;

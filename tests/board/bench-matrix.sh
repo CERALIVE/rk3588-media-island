@@ -16,11 +16,11 @@ parse_cells() {
 		[[ $id =~ ^[a-z0-9][a-z0-9-]+$ && -z ${extra:-} ]] || return 2
 		[[ ! ${seen[$id]+present} ]] || return 2
 		seen[$id]=1
-		if [[ $mode == NO-SOURCE || $mode == EXCLUDED ]]; then
+		if [[ $mode == NO-SOURCE || $mode == EXCLUDED || $mode == latency ]]; then
 			[[ $row == "$id|$mode" ]] || return 2
 		else
 			[[ $row == "$id|$mode|$codec|$input|$output|$width|$height|$rate|$streams|$seconds|$core|$operation" ]] || return 2
-			[[ $mode == encode || $mode == rga ]] || return 2
+			[[ $mode == encode || $mode == rga || $mode == hdmi ]] || return 2
 			[[ $codec == h264 || $codec == h265 ]] || return 2
 			[[ $input == NV12 || $input == NV16 || $input == RGB ]] || return 2
 			[[ $output == NV12 || $output == RGB ]] || return 2
@@ -88,8 +88,8 @@ self_test() {
 if [[ ${1:-} == --self-test && $# == 1 ]]; then self_test; exit $?; fi
 if [[ ${1:-} == --list && $# == 1 ]]; then parse_cells "$HERE/bench-matrix.yaml"; exit $?; fi
 if [[ ${1:-} == --score && $# == 2 ]]; then exec bun "$HERE/bench-report.mjs" "$2"; fi
-if [[ $# != 3 || $1 != --run-rock ]]; then
-	printf 'usage: bench-matrix.sh --self-test | --list | --run-rock PROBE OUTPUT\n' >&2
+if [[ $# != 3 || ( $1 != --run-rock && $1 != --run-opi ) ]]; then
+	printf 'usage: bench-matrix.sh --self-test | --list | --run-rock|--run-opi PROBE OUTPUT\n' >&2
 	exit 2
 fi
 [[ ${CERALIVE_BOARD_TEST:-} == 1 && -f /tmp/ceralive-board-session ]] || exit 77
@@ -102,7 +102,7 @@ mkdir -p -- "$out" || exit 1
 exec 8>"$out/run.lock"
 flock -n 8 || exit 75
 identity=$(sha256sum "$probe" "$HERE/bench-matrix.yaml" "$HERE/bench-matrix.sh" /proc/sys/kernel/random/boot_id /usr/lib/aarch64-linux-gnu/gstreamer-1.0/libgstrockchipmpp.so /usr/lib/aarch64-linux-gnu/librga.so.2 /usr/lib/aarch64-linux-gnu/librockchip_mpp.so.0 "$(modinfo -n rk_vcodec)" "$(modinfo -n rga_multicore)") || exit 1
-identity+=" selector=${BENCH_CELL_PREFIX:-all}"
+identity+=" selector=${BENCH_CELL_PREFIX:-all} board=$1"
 if [[ -f $out/identity ]]; then
 	[[ $(cat "$out/identity") == "$identity" ]] || { printf 'STALE-IDENTITY\n' >&2; exit 1; }
 else
@@ -124,12 +124,27 @@ while IFS='|' read -r id mode codec input output width height rate streams secon
 		printf 'RESUME %s\n' "$id"; continue
 	fi
 	prepare_cell "$out/$id" || exit 1
-	printf 'START %s %s\n' "$id" "$(date -u +%FT%TZ)"
+	printf 'START %s uptime=%s\n' "$id" "$(cut -d' ' -f1 /proc/uptime)"
+	if [[ $1 == --run-rock && ( $mode == hdmi || $mode == latency ) ]]; then mode=NO-SOURCE; fi
+	if [[ $mode == latency ]]; then
+		gst-inspect-1.0 timeoverlay > "$out/$id/prerequisite.log" 2>&1
+		printf 'timeoverlay_rc=%s; requires timeoverlay plus host decode, no substitute\n' "$?" >> "$out/$id/prerequisite.log"
+		printf 'PREREQUISITE-FAIL\n' > "$out/$id/result"
+		printf 'DONE %s PREREQUISITE-FAIL\n' "$id"
+		failed=1
+		continue
+	fi
 	if [[ $mode == NO-SOURCE || $mode == EXCLUDED ]]; then
 		printf '%s\n' "$mode" > "$out/$id/result.tmp"
 	else
-		since=$(date -u +%FT%TZ)
-		timeout --kill-after=5 15 "$probe" source "$codec" "$input" "$output" "$width" "$height" 0 "$streams" 3 "$core" "$operation" > "$out/$id/source.log" 2>&1 &
+		cursor=$(journalctl -k -b -n 1 --show-cursor --no-pager | sed -n 's/^-- cursor: //p')
+		[[ -n $cursor ]] || exit 1
+		source_mode=source; source_rate=0
+		if [[ $mode == hdmi ]]; then
+			source_mode=hdmi-source; source_rate=$rate
+			v4l2-ctl -d /dev/video0 --query-dv-timings --set-dv-bt-timings query > "$out/$id/timings.log" 2>&1 || exit 1
+		fi
+		timeout --kill-after=5 15 "$probe" "$source_mode" "$codec" "$input" "$output" "$width" "$height" "$source_rate" "$streams" 3 "$core" "$operation" > "$out/$id/source.log" 2>&1 &
 		pid=$!
 		wait "$pid"
 		source_rc=$?
@@ -144,7 +159,7 @@ while IFS='|' read -r id mode codec input output width height rate streams secon
 		wait "$pid"; cell_rc=$?
 		pid=
 		snapshot > "$out/$id/after" || exit 1
-		journalctl -k --since "$since" --no-pager -o short-monotonic > "$out/$id/journal" || exit 1
+		journalctl -k -b --after-cursor "$cursor" --no-pager -o short-monotonic > "$out/$id/journal" || exit 1
 		grep -E 'BUG:|Oops:|Kernel panic|Call trace:|WARNING:|SError' "$out/$id/journal" > "$out/$id/fatal"
 		journal_rc=$?
 		if (( journal_rc != 1 )); then
