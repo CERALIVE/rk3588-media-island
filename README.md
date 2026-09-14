@@ -221,6 +221,13 @@ policy; the service and encoder CCU are software-only exceptions. RGA cancellati
 releases power by job ownership, and failed JPEG IRQ registration unwinds common
 PM setup. UML regressions exercise those paths without touching physical boards.
 
+The [RGA memory-addressability design](docs/RGA-MEMORY-ADDRESSABILITY.md)
+treats high-memory mapping degradation as a driver defect, not a DRAM-size
+restriction. It ranks the routing, DMA-constraint and staging fixes, includes
+an intentionally RED host import-order reproducer, and separates the unproven
+H7/conservation causal links from the established mapping defect. It is a fix
+plan, not an implemented or board-qualified repair.
+
 ## Versioning
 
 CalVer, `YYYY.MINOR.PATCH`, matching the rest of the CeraLive stack. The tag is

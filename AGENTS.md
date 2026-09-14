@@ -97,6 +97,7 @@ rk3588-media-island/
 | Linux 7.2 modernization and proof boundaries | [`docs/MODERNIZATION.md`](docs/MODERNIZATION.md) |
 | Direct ioctl boundary KUnit, source staging, and coverage limits | [`docs/IOCTL-BOUNDARY-TESTS.md`](docs/IOCTL-BOUNDARY-TESTS.md) |
 | Runtime-PM autosuspend policy and get/put ownership audit | [`docs/RUNTIME-PM-AUDIT.md`](docs/RUNTIME-PM-AUDIT.md) — all eleven nodes, software-only exceptions, and KUnit regressions; no thermal verdict |
+| RGA high-memory mapping defect, routing design and pre-fix host reproducer | [`docs/RGA-MEMORY-ADDRESSABILITY.md`](docs/RGA-MEMORY-ADDRESSABILITY.md) — memory placement is not a board exemption; H7 causality remains unproven; no driver fix yet |
 | Add a compat shim | `drivers/video/rockchip/mpp/compat/` — and add its row to `docs/COMPAT.md`, or the lint refuses the build |
 | Change a device-tree node's owner | `integration/` — and update the `docs/OWNERSHIP.md` row in the same change |
 

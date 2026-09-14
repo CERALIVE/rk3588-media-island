@@ -1,0 +1,153 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Host fixture: exporter/DMA boundary only; no physical memory or device IO. */
+#include <errno.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+typedef uint64_t phys_addr_t;
+enum { RGA_MMU = 1, RGA_IOMMU = 2 };
+enum { RGA_MEM_UNDER_4G = 1, RGA_MEM_PHYSICAL_CONTIGUOUS = 4 };
+struct device { bool iommu; };
+struct rga_hw_data { int mmu; };
+struct rga_iommu_info { struct device *default_dev; };
+struct rga_scheduler_t {
+	int core;
+	struct device *dev;
+	struct rga_hw_data *data;
+	struct rga_iommu_info *iommu_info;
+};
+struct rga_job { struct rga_scheduler_t *scheduler; };
+struct scatterlist { phys_addr_t phys; unsigned int length; };
+struct sg_table { struct scatterlist *sgl; unsigned int orig_nents; };
+struct rga_dma_buffer {
+	struct sg_table *sgt;
+	unsigned long size;
+	size_t offset;
+	uint64_t dma_addr, iova;
+};
+struct rga_memory_parm { int size, width, height, format; };
+struct rga_external_buffer {
+	struct rga_memory_parm memory_parm;
+	uintptr_t memory;
+	int type;
+};
+struct rga_internal_buffer {
+	struct rga_dma_buffer *dma_buffer;
+	uint32_t mm_flag;
+	phys_addr_t phys_addr;
+	size_t size;
+	struct rga_scheduler_t *scheduler;
+	bool rga2_dma_incompatible;
+};
+static struct {
+	struct rga_scheduler_t *scheduler[2];
+	int map_scheduler_index;
+} driver;
+#define rga_drvdata (&driver)
+#define GFP_KERNEL 0
+#define kzalloc(size, flags) calloc(1, (size))
+#define kfree(ptr) free(ptr)
+#define rga_err(...) ((void)0)
+#define rga_dump_memory_parm(...) ((void)0)
+#define rga_image_size_cal(...) (-EINVAL)
+#define sg_phys(sg) ((sg)->phys)
+#define for_each_sg(list, sg, count, i) \
+	for ((i) = 0, (sg) = (list); (unsigned int)(i) < (count); (i)++, (sg)++)
+
+static struct scatterlist entry;
+static struct sg_table table = { .sgl = &entry, .orig_nents = 1 };
+static unsigned int failed_maps;
+static unsigned int rga2_maps;
+static unsigned int iommu_maps;
+
+static int rga_mm_map_external_dma_buffer(struct rga_external_buffer *external,
+		struct rga_dma_buffer *buffer, struct rga_scheduler_t *scheduler,
+		struct device *dev)
+{
+	(void)external;
+	(void)scheduler;
+	if (dev->iommu) {
+		iommu_maps++;
+	} else {
+		rga2_maps++;
+		/* Independent boundary model: large high entries cannot bounce. */
+		if (entry.phys >= UINT64_C(0x100000000) && entry.length > 256 * 1024) {
+			failed_maps++;
+			return -EIO;
+		}
+	}
+	buffer->sgt = &table;
+	buffer->size = entry.length;
+	/* Deliberately low even for high backing memory; it is NOT sg_phys. */
+	buffer->dma_addr = UINT64_C(0x20000000);
+	return 0;
+}
+
+static void rga_dma_unmap_buf(struct rga_dma_buffer *buffer)
+{
+	(void)buffer;
+}
+
+/* PRODUCTION_FUNCTIONS */
+
+static int run_case(const char *name, phys_addr_t physical, struct rga_job *job)
+{
+	/* Given: one valid 1 MiB DMA-BUF and the selected execution core. */
+	struct rga_external_buffer external = { .memory_parm.size = 1024 * 1024 };
+	struct rga_internal_buffer buffer = { 0 };
+	int ret;
+
+	entry.phys = physical;
+	entry.length = 1024 * 1024;
+	failed_maps = rga2_maps = iommu_maps = 0;
+	/* When: execute the maintained import function, not a copied algorithm. */
+	ret = rga_mm_map_dma_buffer(&external, &buffer, job);
+	printf("%s ret=%d failed_maps=%u rga2_maps=%u iommu_maps=%u under4g=%u\n",
+	       name, ret, failed_maps, rga2_maps, iommu_maps,
+	       !!(buffer.mm_flag & RGA_MEM_UNDER_4G));
+	free(buffer.dma_buffer);
+	/* Then: success must not require an avoidable failed device mapping. */
+	return ret != 0 || failed_maps != 0;
+}
+
+int main(void)
+{
+	struct device rga2_dev = { .iommu = false }, rga3_dev = { .iommu = true };
+	struct rga_hw_data rga2_data = { .mmu = RGA_MMU };
+	struct rga_hw_data rga3_data = { .mmu = RGA_IOMMU };
+	struct rga_iommu_info iommu = { .default_dev = &rga3_dev };
+	struct rga_scheduler_t rga2 = { .core = 4, .dev = &rga2_dev, .data = &rga2_data };
+	struct rga_scheduler_t rga3 = {
+		.core = 1, .dev = &rga3_dev, .data = &rga3_data, .iommu_info = &iommu,
+	};
+	struct rga_job low_job = { .scheduler = &rga2 };
+	struct rga_job iommu_job = { .scheduler = &rga3 };
+	struct rga_dma_buffer control_buffer = { 0 };
+	struct rga_external_buffer control_external = { 0 };
+	int low, high_iommu, high;
+
+	driver.scheduler[0] = &rga3;
+	driver.scheduler[1] = &rga2;
+	/* Positive control for the fake boundary, separate from production policy. */
+	entry.phys = UINT64_C(0x100000000);
+	entry.length = 1024 * 1024;
+	if (rga_mm_map_external_dma_buffer(&control_external, &control_buffer,
+					 &rga2, &rga2_dev) != -EIO)
+		return 2;
+	entry.length = 4096;
+	if (rga_mm_map_external_dma_buffer(&control_external, &control_buffer,
+					 &rga2, &rga2_dev) != 0)
+		return 2;
+	low = run_case("LOW_RGA2_CONTROL", UINT64_C(0x40000000), &low_job);
+	high_iommu = run_case("HIGH_RGA3_CONTROL", UINT64_C(0x100000000), &iommu_job);
+	if (low || high_iommu) {
+		puts("INVALID: a production-path control failed");
+		return 2;
+	}
+	high = run_case("HIGH_RGA2", UINT64_C(0x100000000), &low_job);
+	puts(high ? "RED: high-memory import attempted a doomed RGA2 map" :
+	     "GREEN: high-memory import avoided mapping failure");
+	return high ? 1 : 0;
+}
