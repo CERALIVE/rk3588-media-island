@@ -105,7 +105,15 @@ jobs:
       - name: Install what the board-harness self-tests execute
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends device-tree-compiler ffmpeg
+          sudo apt-get install -y --no-install-recommends device-tree-compiler ffmpeg \
+            libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-base
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+
+      - name: Benchmark probe and adversarial scorer fixtures
+        run: make -C tests/board benchmark-selftest
 
       - name: Every board harness proves itself against its own fixtures
         run: |

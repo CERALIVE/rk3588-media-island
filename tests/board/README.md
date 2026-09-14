@@ -13,6 +13,98 @@ accepts the earlier Phase-0 layout for retained historical runs.
 
 ## What each tool answers
 
+### Reproducible Rock benchmark cells [PARTIAL]
+
+`bench-matrix.sh` is the entry point; `bench-matrix.yaml` is a deliberately
+restricted YAML scalar list. Its header gives the pipe-separated field order.
+The parser accepts only the stated alphabet and exact field count, never shell
+evaluation. It rejects executable P010/10-bit inputs. The exclusion is a status
+row, not a workload. This dispatch implements the Rock synthetic cells only;
+the HDMI rows are `NO-SOURCE`, and the OPi campaign remains outstanding.
+
+Build `bench-cell.c` against the target's GStreamer development libraries:
+
+```sh
+make -C tests/board CROSS_COMPILE= benchmark
+make -C tests/board benchmark-selftest
+bash tests/board/bench-matrix.sh --list
+# Locally on Rock, with the caller holding its external two-half board lock:
+CERALIVE_BOARD_TEST=1 bash tests/board/bench-matrix.sh \
+  --run-rock /path/to/bench-cell /tmp/new-benchmark-results
+# On the development host after collecting results:
+bash tests/board/bench-matrix.sh --score /path/to/collected-results
+```
+
+For cross-builds set `CROSS_COMPILE` and `PKG_CONFIG_LIBDIR` to the matching
+target SDK, rather than linking against host libraries. No package is installed
+by this runner. Host scoring requires Bun; the board requires Bash, timeout,
+flock, journalctl, the compiled probe and the installed GStreamer elements.
+
+Run the matrix detached under the external lock and keep that lock until it has
+ended. Each cell publishes its result by rename after recording both source and
+workload exit status, frame counts, interval samples, CPU time, thermal/core
+samples and journal. A caught signal records `CANCELLED`; abrupt death can leave
+no terminal result. Either reruns on resume, with the old attempt directory
+renamed and retained rather than appending new samples to it. Finished cells
+are retained, including failures. Binary, scripts, manifest, boot identity,
+module, plugin, MPP and librga hashes must match to resume. A concurrent runner is refused.
+Fatal journal reports stop the matrix; command success alone is not a verdict.
+`BENCH_CELL_PREFIX` restricts a new run to affected cells, such as `rga-` after
+an RGA-only harness repair; it is included in the run identity. It does not
+restrict CI tests. Score every retained run separately before selecting rows
+for an assessment: never merge incompatible identity files into one run.
+
+Eight preinitialized DMA-BUF frames carry a spatial luma pattern with eight
+phase offsets and neutral chroma for YUV. Copies share the immutable pixel
+memory; only buffer headers and timestamps change. The RGB control uses the
+same deterministic byte initialization, not a natural-scene complexity claim.
+Each branch's appsrc queue is capped at eight; pressure is counted, not dropped.
+Two seconds of warmup precede the active window. EOS drain is excluded from
+rate and jitter, but included in sent/output conservation. CPU is process
+utime+stime over that active window, with 100% meaning one CPU core.
+
+Every executable cell first runs an unpaced source-only control for its actual
+format, geometry and branch count. Host scoring requires at least 20% source
+headroom above both measured and requested rates. Otherwise it reports
+`SOURCE-LIMITED`, never a silicon limit. Paced cells require 99% of target on
+every branch for `RATE-HELD`. Unpaced results are **observed throughput of this
+pattern and harness**, not an absolute hardware ceiling. Per-AU logging is part
+of that harness. The scorer independently computes nearest-rank p99−p50 from
+monotonic AU-arrival timestamps; PTS differences are not arrival jitter.
+
+Core busy_ns and task deltas cover the separately timestamped telemetry window
+(startup and drain included), not the shorter warmup-excluded AU window. Do not
+equate IRQ counts with frames or utilization, and do not label unchanged RGA
+task counters as measured RGA throughput. Null baseline values mean no valid
+historical observation. They are not zeros and cannot yield percentage deltas.
+The comparison helper rejects a zero denominator and any worsening over 3%
+without an explanation paragraph; lower-is-better metrics reverse delta sign.
+The scorer retains throughput separately from the overall verdict: missing
+thermal/interval/core data gates the result, and increased core error counters
+or kernel DMA-mapping errors reject a clean measurement even when all requested
+frames arrive. Reset counts are retained separately: RGA2's normal job setup
+replaces automatic reset with a counted reason-zero software reset, so a reset
+is not intrinsically a fault. Its exact one-reset-per-completed-task relation
+and journal must be examined rather than silently treating every reset as an error.
+The raw journal query starts before the source control and has whole-second
+wall-clock bounds. Offline fault attribution additionally uses the retained
+monotonic before/after snapshots, so a preceding cell's last fractional second
+cannot contaminate the next row. The after bound allows the 10 ms resolution
+of `/proc/uptime`; unknown timestamp formats gate scoring. Both the unfiltered
+capture and attributed window are retained. JSON output contains raw journals
+and belongs in a private evidence directory, never a tracked result file.
+
+Isolated RGA output explicitly negotiates `memory:DMABuf`, because a bare
+fakesink otherwise permits system-memory allocation and strict rgaconvert
+correctly refuses it. Encoder-bound output uses plain raw caps with actual
+DMA-BUF memory: the installed MPP encoder does not advertise that caps feature.
+The host probe test pins both sides of this allocation distinction.
+
+Capture-to-AU latency requires `timeoverlay` plus host decode and timestamp
+correlation. The Rock HDMI latency row is `NO-SOURCE`, not zero latency and not
+a synthetic substitute. A missing timeoverlay element is an additional
+prerequisite to record before a later capture campaign.
+
 | tool | question it answers | Phase-0 row |
 |---|---|---|
 | `probe-mpp-uapi.c` | which MPP clients does the running kernel actually expose, and what does each answer? | 3(a) decode truth |

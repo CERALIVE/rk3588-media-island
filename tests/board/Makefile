@@ -17,12 +17,15 @@
 #   make CROSS_COMPILE=aarch64-linux-gnu- clean all
 
 CROSS_COMPILE ?= aarch64-linux-gnu-
+.DEFAULT_GOAL := all
 CC            := $(CROSS_COMPILE)gcc
 CXX           := $(CROSS_COMPILE)g++
 CFLAGS        := -std=c11 -Wall -Wextra -Werror -O2 -I.
 CXXFLAGS      := -std=c++17 -Wall -Wextra -Werror -O2
 OUT           ?= build
 LIBRGA_PREFIX ?=
+PKG_CONFIG ?= pkg-config
+GST_PACKAGES := gstreamer-app-1.0 gstreamer-video-1.0 gstreamer-allocators-1.0
 
 PROBES := probe-mpp-uapi probe-rga-uapi librga-compat-probe
 
@@ -31,6 +34,21 @@ PROBES := probe-mpp-uapi probe-rga-uapi librga-compat-probe
 LDLIBS_librga-compat-probe := -ldl
 
 .PHONY: all async-fence-probe clean selftest hostbuild
+
+.PHONY: benchmark benchmark-selftest
+benchmark: $(OUT)/bench-cell
+
+$(OUT)/bench-cell: bench-cell.c | $(OUT)
+	$(CC) $(CFLAGS) -o $@ $< $$($(PKG_CONFIG) --cflags --libs $(GST_PACKAGES))
+
+$(OUT)/test-bench-cell: test-bench-cell.c bench-cell.c | $(OUT)
+	$(CC) $(CFLAGS) -o $@ $< $$($(PKG_CONFIG) --cflags --libs $(GST_PACKAGES))
+
+benchmark-selftest:
+	$(MAKE) CROSS_COMPILE= OUT=build-host build-host/test-bench-cell build-host/bench-cell
+	./build-host/test-bench-cell
+	bash bench-matrix.sh --self-test
+	bun bench-report.mjs --self-test
 
 all: $(addprefix $(OUT)/,$(PROBES))
 
