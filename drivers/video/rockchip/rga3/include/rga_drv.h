@@ -42,6 +42,7 @@
 #include <linux/version.h>
 #include <linux/vmalloc.h>
 #include <linux/wait.h>
+#include <linux/xarray.h>
 #include <linux/pm_runtime.h>
 #include <linux/sched/mm.h>
 #include <linux/sizes.h>
@@ -102,7 +103,7 @@
 			"." STR(DRIVER_REVISION_VERSION) STR(DRIVER_PATCH_VERSION))
 
 /* time limit */
-#define RGA_JOB_TIMEOUT_DELAY		HZ
+#define RGA_JOB_TIMEOUT_DELAY		1000 /* milliseconds */
 #define RGA_RESET_TIMEOUT			1000
 
 #define RGA_MAX_SCHEDULER	RGA_HW_SIZE
@@ -294,6 +295,10 @@ struct rga_session {
 };
 
 struct rga_job_buffer {
+	bool ready;
+	bool writable;
+	struct sg_table *rga2_user_sgt[3];
+	int rga2_user_sgt_count;
 	union {
 		struct {
 			struct rga_external_buffer *ex_y_addr;
@@ -315,11 +320,7 @@ struct rga_job_buffer {
 	uint32_t *page_table;
 	int order;
 	int page_count;
-	/*
-	 * DMA address of page_table for the RGA2 device: an offset into the
-	 * persistently mapped ring for non-handle jobs, or a per-job
-	 * dma_map_single() mapping (unmapped at put) for handle jobs.
-	 */
+	/* Every table and its executing-device mapping belong to this job. */
 	dma_addr_t page_table_dma;
 	struct device *page_table_dev;
 	bool page_table_mapped;
@@ -337,7 +338,7 @@ struct rga_job_buffer {
 	struct rga_rga2_stage *rga2_stage[3];
 	int rga2_stage_count;
 
-	/* Per-job mappings when an imported handle executes on another RGA3 core. */
+	/* Execution mappings are distinct from the retained classification mapping. */
 	struct {
 		struct rga_internal_buffer *origin;
 		struct rga_dma_buffer *mapping;
@@ -385,6 +386,8 @@ struct rga_job {
 	size_t task_start;
 	size_t task_count;
 	size_t finished_count;
+	struct xarray rga2_user_pages;
+	size_t rga2_user_bytes;
 
 	/* for rga2 virtual_address */
 	struct mm_struct *mm;
@@ -416,7 +419,7 @@ struct rga_backend_ops {
 	int (*set_reg)(struct rga_job *job, struct rga_scheduler_t *scheduler);
 	int (*init_reg)(struct rga_job *job);
 	/* Called with irq_lock held; must not sleep. */
-	void (*soft_reset)(struct rga_scheduler_t *scheduler);
+	int (*soft_reset)(struct rga_scheduler_t *scheduler);
 	int (*read_back_reg)(struct rga_job *job, struct rga_scheduler_t *scheduler);
 	int (*read_status)(struct rga_job *job, struct rga_scheduler_t *scheduler);
 	int (*irq)(struct rga_scheduler_t *scheduler);
@@ -427,6 +430,9 @@ struct rga_timer {
 	u32 busy_time;
 	u32 busy_time_record;
 };
+
+#define RGA_SCHED_QUEUE_LIMIT 32
+#define RGA_QUEUE_TIMEOUT_MS 1000
 
 struct rga_scheduler_t {
 	struct device *dev;
@@ -449,6 +455,9 @@ struct rga_scheduler_t {
 	struct mutex job_mutex;
 	/* Once set at remove, no queued work may start on this scheduler. */
 	bool shutdown;
+	/* Failed reset is fail-stop until reboot: DMA ownership cannot be revoked. */
+	bool dma_faulted;
+	int reset_result;
 	spinlock_t irq_lock;
 	wait_queue_head_t job_done_wq;
 
@@ -556,7 +565,6 @@ struct rga_drvdata_t {
 	int device_count[RGA_DEVICE_BUTT];
 	/* The scheduler_index used by default for memory mapping. */
 	int map_scheduler_index;
-	struct rga_mmu_base *mmu_base;
 
 	struct delayed_work power_off_work;
 

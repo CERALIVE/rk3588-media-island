@@ -1733,14 +1733,6 @@ static int rga_drv_probe(struct platform_device *pdev)
 	pm_runtime_put_sync_suspend(dev);
 #endif /* #ifndef RGA_DISABLE_PM */
 
-	/*
-	 * RGA cores read images through page tables or an IOMMU, so a
-	 * contiguous import may span arbitrarily long sg segments; without
-	 * this the DMA API's default 64 KiB segment limit is exceeded by any
-	 * contiguous buffer larger than 64 KiB (e.g. CMA dma-buf imports).
-	 */
-	dma_set_max_seg_size(dev, DMA_BIT_MASK(32));
-
 	if (scheduler->data->mmu == RGA_IOMMU) {
 		scheduler->iommu_info = rga_iommu_probe(dev);
 		if (IS_ERR(scheduler->iommu_info)) {
@@ -1759,6 +1751,18 @@ static int rga_drv_probe(struct platform_device *pdev)
 			 * offset of the original address.
 			 */
 			dma_set_min_align_mask(dev, PAGE_SIZE - 1);
+	}
+	if (scheduler->data->mmu == RGA_MMU) {
+		size_t limit = min_t(size_t, dma_max_mapping_size(dev), UINT_MAX);
+
+		limit = round_down(limit, PAGE_SIZE);
+		if (limit < PAGE_SIZE) {
+			ret = -EOPNOTSUPP;
+			goto err_disable_pm;
+		}
+		dma_set_max_seg_size(dev, limit);
+	} else {
+		dma_set_max_seg_size(dev, UINT_MAX);
 	}
 
 	data->scheduler[data->num_of_scheduler] = scheduler;
@@ -1808,10 +1812,12 @@ static void rga_drv_remove(struct platform_device *pdev)
 		rga_request_scheduler_shutdown(scheduler);
 
 #ifndef RGA_DISABLE_PM
-	pm_runtime_suspend(&pdev->dev);
-	device_init_wakeup(&pdev->dev, false);
-	pm_runtime_disable(&pdev->dev);
-	pm_runtime_dont_use_autosuspend(&pdev->dev);
+	if (!scheduler || !scheduler->dma_faulted) {
+		pm_runtime_suspend(&pdev->dev);
+		device_init_wakeup(&pdev->dev, false);
+		pm_runtime_disable(&pdev->dev);
+		pm_runtime_dont_use_autosuspend(&pdev->dev);
+	}
 #endif /* #ifndef RGA_DISABLE_PM */
 
 	up_write(&rga_drvdata->rwsem);
@@ -1836,6 +1842,7 @@ static struct platform_driver rga3_driver = {
 	.shutdown = rga_drv_shutdown,
 	.driver = {
 		 .name = "rga3",
+		 .suppress_bind_attrs = true,
 		 .of_match_table = of_match_ptr(rga3_dt_ids),
 		 },
 };
@@ -1846,6 +1853,7 @@ static struct platform_driver rga2_driver = {
 	.shutdown = rga_drv_shutdown,
 	.driver = {
 		 .name = "rga2",
+		 .suppress_bind_attrs = true,
 		 .of_match_table = of_match_ptr(rga2_dt_ids),
 		 },
 };

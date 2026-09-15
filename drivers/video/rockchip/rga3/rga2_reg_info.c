@@ -2725,7 +2725,7 @@ static void rga_cmd_to_rga2_cmd(struct rga_scheduler_t *scheduler,
 	}
 }
 
-static void rga2_soft_reset(struct rga_scheduler_t *scheduler)
+static int rga2_soft_reset(struct rga_scheduler_t *scheduler)
 {
 	u32 i = 0;
 	u32 reg;
@@ -2777,16 +2777,23 @@ static void rga2_soft_reset(struct rga_scheduler_t *scheduler)
 		rga_write(RGA_IOMMU_CMD_ENABLE_PAGING, RGA_IOMMU_COMMAND, scheduler);
 	}
 
-	if (i == RGA_RESET_TIMEOUT)
+	if (i == RGA_RESET_TIMEOUT) {
 		rga_fault(scheduler, "%s[%#x] soft reset timeout.\n",
 			rga_get_core_name(scheduler->core), scheduler->core);
+		return -ETIMEDOUT;
+	}
+	return 0;
 }
 
-static void rga2_soft_reset_print(struct rga_scheduler_t *scheduler)
+static int rga2_soft_reset_print(struct rga_scheduler_t *scheduler)
 {
-	rga2_soft_reset(scheduler);
+	int ret = rga2_soft_reset(scheduler);
+
+	if (ret)
+		return ret;
 	rga_log("%s[%#x] soft reset complete.\n",
 		rga_get_core_name(scheduler->core), scheduler->core);
+	return 0;
 }
 
 static int rga2_check_param(struct rga_job *job,
@@ -3271,7 +3278,10 @@ static int rga2_set_reg(struct rga_job *job, struct rga_scheduler_t *scheduler)
 		rga_write(0, RGA2_INT, scheduler);
 		rga_write(0, RGA2_CMD_REG_BASE + RGA2_MODE_CTRL_OFFSET, scheduler);
 		/* replace auto_rst */
-		rga_telemetry_reset(scheduler, 0, rga2_soft_reset);
+		if (rga_telemetry_reset(scheduler, 0, rga2_soft_reset)) {
+			spin_unlock_irqrestore(&scheduler->irq_lock, flags);
+			return scheduler->reset_result;
+		}
 	} else {
 		sys_ctrl |= m_RGA2_SYS_CTRL_AUTO_RST;
 	}

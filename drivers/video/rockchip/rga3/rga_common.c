@@ -905,7 +905,7 @@ static int rga_validate_get_descriptor_size(struct rga_job *job, u64 descriptor,
 }
 
 static int rga_validate_image(struct rga_job *job,
-			      const struct rga_img_info_t *img, int win_num)
+			      const struct rga_img_info_t *img, int win_num, bool handle)
 {
 	struct rga_plane_request plane = {
 		.active_width = img->act_w,
@@ -926,7 +926,6 @@ static int rga_validate_image(struct rga_job *job,
 	u64 buffer_size;
 	u64 bit_stride;
 	int required[RGA_REQUEST_MAX_PLANES] = {};
-	bool handle = job->flags & RGA_JOB_USE_HANDLE;
 	bool separate = handle && img->uv_addr;
 	int pixel_stride;
 	int image_size;
@@ -1002,6 +1001,9 @@ static int rga_validate_image(struct rga_job *job,
 
 static int rga_validate_task(struct rga_job *job, const struct rga_req *task)
 {
+	bool handle = (task->handle_flag & 1) &&
+		      !(job->flags & RGA_JOB_DEBUG_FAKE_BUFFER);
+
 	switch (task->render_mode) {
 	case BITBLT_MODE:
 	case COLOR_PALETTE_MODE: {
@@ -1010,19 +1012,19 @@ static int rga_validate_task(struct rga_job *job, const struct rga_req *task)
 		if (rga_request_rotation_swaps_axes(task->rotate_mode,
 						    task->sina, task->cosa))
 			swap(dst.act_w, dst.act_h);
-		if (rga_validate_image(job, &task->src, 0) ||
-		    rga_validate_image(job, &dst, 2))
+		if (rga_validate_image(job, &task->src, 0, handle) ||
+		    rga_validate_image(job, &dst, 2, handle))
 			return -EINVAL;
 		if (task->bsfilter_flag &&
-		    rga_validate_image(job, &task->pat, 1))
+		    rga_validate_image(job, &task->pat, 1, handle))
 			return -EINVAL;
 		return 0;
 	}
 	case COLOR_FILL_MODE:
-		return rga_validate_image(job, &task->dst, 2);
+		return rga_validate_image(job, &task->dst, 2, handle);
 	case UPDATE_PALETTE_TABLE_MODE:
 	case UPDATE_PATTEN_BUF_MODE:
-		return rga_validate_image(job, &task->pat, 1);
+		return rga_validate_image(job, &task->pat, 1, handle);
 	default:
 		return -EINVAL;
 	}

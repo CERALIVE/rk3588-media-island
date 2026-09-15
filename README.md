@@ -221,6 +221,33 @@ policy; the service and encoder CCU are software-only exceptions. RGA cancellati
 releases power by job ownership, and failed JPEG IRQ registration unwinds common
 PM setup. UML regressions exercise those paths without touching physical boards.
 
+The [RGA memory repair](docs/RGA-MEMORY-ADDRESSABILITY.md) replaces the borrowed
+page-table ring with job-owned tables and prepares legacy buffers before
+memory-aware core selection. Explicit RGA2 work retains bounded DMA32 staging;
+USERPTR aliases share original-page staging. `bash scripts/check-rga-memory.sh`
+exercises the software regressions, including more live PTEs than the old ring
+could hold. This is source repair, not a release or board qualification; the
+H7/conservation causal links remain unproven. Local compilation databases and
+clangd flags are ignored build artifacts, not repository build inputs.
+
+The review follow-up makes reset failure fail-stop: retain the running job's
+memory and power until reboot, with unload/unbind blocked. Reachable RGA2 buffers
+now receive execution-device mappings and DMA-address PTEs rather than borrowing
+RGA3 ownership. Queue admission is bounded, expired queued work cannot start,
+and synchronous timeout cancels queued requests rather than reporting success.
+The strengthened host control and new KUnit lifetime/ownership/deadline cases
+are documented in the same memory-repair note; staging limits remain unchanged.
+
+The [round-2 regression receipt](docs/verification/rga-round2-regression-locks.md)
+records isolated reset-order, timeout-unit and low-USERPTR ownership mutations,
+each followed by a restored full KUnit pass. It adds test coverage only, including
+real SG construction and nonidentity DMA PTEs; it changes no production driver.
+
+The [host verification of `465598e26`](docs/verification/rga-host-465598e26.md)
+records 47 executed RGA-related KUnit cases, the Coccinelle findings and triage,
+and the parent comparison proving the MPP hardening checker failure pre-existing.
+It does not waive that failing gate or claim board qualification.
+
 ## Versioning
 
 CalVer, `YYYY.MINOR.PATCH`, matching the rest of the CeraLive stack. The tag is

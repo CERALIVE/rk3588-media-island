@@ -18,6 +18,14 @@ a pin bump would then leave CI proving the series against a kernel nobody ships
 
 ## 1. `ci.yml` — the pull-request gate
 
+The self-tests job runs `bash scripts/check-rga-memory.sh`: maintained table
+construction/cleanup with 262,144 live PTE entries, high-memory import ordering,
+legacy preparation and handle-plane routing, plus the actual original-PFN
+USERPTR staging implementation against bounded host DMA/allocation fixtures.
+The recorded pre-fix RED and the precise software/hardware proof boundary are in
+[`RGA-MEMORY-ADDRESSABILITY.md`](RGA-MEMORY-ADDRESSABILITY.md). This gate needs
+only Python and a host C compiler; it neither opens `/dev/rga` nor contacts boards.
+
 The optional RGA fault suite is selected in `tests/kunit/.kunitconfig`; CI
 requires both `rockchip-rga-fault-injection` and `rockchip-rga-fault-disabled`
 to report a pass. `stage_ioctl.py` also stages the real RGA controls, selected

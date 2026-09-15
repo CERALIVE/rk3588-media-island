@@ -552,6 +552,11 @@ int rga_job_assign(struct rga_job *job)
 
 		if (optional_cores & scheduler->core) {
 			spin_lock_irqsave(&scheduler->irq_lock, flags);
+			if (scheduler->shutdown || scheduler->dma_faulted ||
+			    scheduler->job_count >= RGA_SCHED_QUEUE_LIMIT) {
+				spin_unlock_irqrestore(&scheduler->irq_lock, flags);
+				continue;
+			}
 
 			if (scheduler->running_job == NULL) {
 				core = scheduler->core;
@@ -572,7 +577,8 @@ int rga_job_assign(struct rga_job *job)
 		}
 	}
 
-	/* TODO: need consider full load */
+	if (core == RGA_NONE_CORE)
+		return -EAGAIN;
 	if (DEBUGGER_EN(MSG))
 		rga_job_log(job, "matched cores = %#x, assign core: %s(%#x)\n",
 			optional_cores,

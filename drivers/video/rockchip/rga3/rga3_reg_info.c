@@ -1763,7 +1763,7 @@ static void rga_cmd_to_rga3_cmd(struct rga_req *req_rga, struct rga3_req *req)
 	}
 }
 
-static void rga3_soft_reset(struct rga_scheduler_t *scheduler)
+static int rga3_soft_reset(struct rga_scheduler_t *scheduler)
 {
 	u32 i = 0;
 	u32 iommu_dte_addr = 0;
@@ -1804,6 +1804,7 @@ static void rga3_soft_reset(struct rga_scheduler_t *scheduler)
 	else
 		rga_fault(scheduler, "%s[%#x] soft reset complete.\n",
 			rga_get_core_name(scheduler->core), scheduler->core);
+	return i == RGA_RESET_TIMEOUT ? -ETIMEDOUT : 0;
 }
 
 static int rga3_scale_check(struct rga_job *job, const struct rga3_req *req)

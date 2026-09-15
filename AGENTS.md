@@ -97,10 +97,24 @@ rk3588-media-island/
 | Linux 7.2 modernization and proof boundaries | [`docs/MODERNIZATION.md`](docs/MODERNIZATION.md) |
 | Direct ioctl boundary KUnit, source staging, and coverage limits | [`docs/IOCTL-BOUNDARY-TESTS.md`](docs/IOCTL-BOUNDARY-TESTS.md) |
 | Runtime-PM autosuspend policy and get/put ownership audit | [`docs/RUNTIME-PM-AUDIT.md`](docs/RUNTIME-PM-AUDIT.md) — all eleven nodes, software-only exceptions, and KUnit regressions; no thermal verdict |
+| RGA table ownership, high-memory routing and software regressions | [`docs/RGA-MEMORY-ADDRESSABILITY.md`](docs/RGA-MEMORY-ADDRESSABILITY.md) — job-owned tables, early legacy preparation and bounded staging; source-only, no release or board qualification; H7 causality remains unproven |
 | Add a compat shim | `drivers/video/rockchip/mpp/compat/` — and add its row to `docs/COMPAT.md`, or the lint refuses the build |
 | Change a device-tree node's owner | `integration/` — and update the `docs/OWNERSHIP.md` row in the same change |
 
 ## KEY FACTS
+
+**RGA reset failure is fail-stop, not successful cancellation.** Backend reset
+status gates cleanup; an unsuccessful reset retains the running job's mappings,
+tables, command buffer and power reference until reboot. The failed core admits
+no new work; module pinning and suppressed bind/unbind attributes preserve its
+device lifetime. Low DMA-BUF/USERPTR execution on RGA2 requires an RGA2-owned
+mapping and DMA-address PTEs, even below 4 GiB. Per-core queues cap at 32 jobs,
+expire before start at 1,000 ms, and synchronous timeout cancels queued work.
+Details and software proof limits: [`docs/RGA-MEMORY-ADDRESSABILITY.md`](docs/RGA-MEMORY-ADDRESSABILITY.md).
+The timing and low-USERPTR KUnit fixtures are mutation-checked: prior-epoch
+claims, literal 1,000 ms and captured wait jiffies, and nonidentity execution
+DMA PTEs. See [`docs/verification/rga-round2-regression-locks.md`](docs/verification/rga-round2-regression-locks.md)
+for individual RED/restored-GREEN receipts; production source was unchanged.
 
 **MPP core debugfs follows the device lifetime.** `mpp_dev_remove()` drains
 per-core counter readers before devres frees their client context. Telemetry
@@ -257,7 +271,7 @@ shell, valid regex, and it matches a backslash and a `t` rather than a tab. That
 defect shipped once here. Reintroducing it leaves shellcheck green and turns the
 harness self-test red; the transcript is [`docs/CI.md`](docs/CI.md) §3.
 
-**The source-dependent gates are live.** Series integrity reconstructs 86 source
+**The source-dependent gates are live.** Series integrity reconstructs 87 source
 files and eight applied integration payloads, shim/UAPI checks inspect the imported
 surface, sparse checks every selected object, and cross-compile asserts exactly
 `rk_vcodec.ko` plus `rga_multicore.ko` and rejects either module if its compiled OF aliases

@@ -79,6 +79,7 @@ void rga_mm_dump_info(struct rga_mm *session);
 void rga_mm_rga2_stage_show(struct seq_file *m);
 u64 rga_mm_rga2_stage_counter(enum rga2_stage_counter counter);
 
+int rga_mm_prepare_job_info(struct rga_job *job);
 int rga_mm_map_job_info(struct rga_job *job);
 void rga_mm_unmap_job_info(struct rga_job *job);
 

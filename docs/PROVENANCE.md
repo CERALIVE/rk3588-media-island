@@ -170,23 +170,24 @@ to name the donor directly.
 | `drivers/video/rockchip/rga3/include/rga_common.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/include/rga_debugger.h` | donor | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/include/rga_dma_buf.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
-| `drivers/video/rockchip/rga3/include/rga_drv.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/include/rga_drv.h` | realized series | same | ADAPTED | Job-owned tables, prepared channels and original-PFN USERPTR staging ownership. | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/include/rga_fence.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/include/rga_hw_config.h` | donor | same | VERBATIM |  | `GPL-2.0` |
-| `drivers/video/rockchip/rga3/include/rga_iommu.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/include/rga_iommu.h` | realized series | same | ADAPTED | Remove the borrowed table-ring type and allocation API. | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/include/rga_job.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
-| `drivers/video/rockchip/rga3/include/rga_mm.h` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/include/rga_mm.h` | realized series | same | ADAPTED | Declare retained-buffer preparation before policy. | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/include/rga_user_stage.h` | CeraLive | — | FIRST-PARTY | Bounded job-owned DMA32 pages keyed by original PFN; writable-span copy-back and failure/cancellation teardown. | `GPL-2.0-only` |
 | `drivers/video/rockchip/rga3/rga2_reg_info.c` | realized series | same | REBASED | Make the file-local immutable ROP table explicit for sparse. | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga3_reg_info.c` | vendor backlog | same | ADAPTED | Preserve the 7.2/yisding port and enable frame-end auto-reset so one frame cannot leave stale FIFO state for the next. | `GPL-2.0` |
-| `drivers/video/rockchip/rga3/rga_common.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga_common.c` | realized series | same | ADAPTED | Validate descriptor kind per task so mixed handle/legacy batches use the matching size lookup. | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_debugger.c` | realized series | same | ADAPTED | iosys_map debug dumps; pde_data only; opt-in reset-write result injection after recovery (A8). | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_dma_buf.c` | realized series | same | REBASED | Bounded iosys_map CPU reads. | `GPL-2.0` |
-| `drivers/video/rockchip/rga3/rga_drv.c` | realized series | same | ADAPTED | Replace `strncpy`, annotate ioctl user pointers, make file-local operations static; checked pool sizing and kvzalloc ownership; preserve configuration errno at both ioctl wrappers; configure and use 2000 ms autosuspend with synchronous probe/teardown (A6). | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga_drv.c` | realized series | same | ADAPTED | Replace `strncpy`, annotate ioctl user pointers, make file-local operations static; checked pool sizing and kvzalloc ownership; preserve configuration errno at both ioctl wrappers; configure and use 2000 ms autosuspend with synchronous probe/teardown (A6); publish and check the RGA2 DMA backend segment ceiling. | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_fence.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_hw_config.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
-| `drivers/video/rockchip/rga3/rga_iommu.c` | realized series | same | ADAPTED | Opt-in installed-handler eligibility and direct fault-callback injection without invalid DMA (A8). | `GPL-2.0` |
-| `drivers/video/rockchip/rga3/rga_job.c` | realized series | same | ADAPTED | Preserve the trusted in-kernel pointer for sparse; overflow-safe array sizing and kvzalloc ownership; reject unknown user sync/core/render selectors before task-list publication; release a cancelled running job's PM ref regardless of reset status (A7). | `GPL-2.0` |
-| `drivers/video/rockchip/rga3/rga_mm.c` | realized series | same | REBASED | Preserve the trusted dma-buf object pointer for sparse; iosys_map staging ownership. | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga_iommu.c` | realized series | same | ADAPTED | Opt-in installed-handler eligibility and direct fault-callback injection without invalid DMA (A8); remove ring allocation/bind/teardown in favor of job-owned page tables. | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga_job.c` | realized series | same | ADAPTED | Preserve the trusted in-kernel pointer for sparse; overflow-safe array sizing and kvzalloc ownership; reject unknown user sync/core/render selectors before task-list publication; release a cancelled running job's PM ref regardless of reset status (A7); classify all handle planes and prepare legacy buffers before policy, propagate lookup errors and centralize failure teardown. | `GPL-2.0` |
+| `drivers/video/rockchip/rga3/rga_mm.c` | realized series | same | REBASED | Preserve the trusted dma-buf object pointer for sparse; iosys_map staging ownership; job-owned tables, early backing classification, retained legacy preparation, original-page USERPTR staging and segment limits. | `GPL-2.0` |
 | `drivers/video/rockchip/rga3/rga_policy.c` | realized series | same | VERBATIM |  | `GPL-2.0` |
 | `include/uapi/linux/rk-mpp.h` | realized series | same | VERBATIM |  | `((GPL-2.0+ WITH Linux-syscall-note) OR MIT)` |
 
