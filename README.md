@@ -238,6 +238,11 @@ and synchronous timeout cancels queued requests rather than reporting success.
 The strengthened host control and new KUnit lifetime/ownership/deadline cases
 are documented in the same memory-repair note; staging limits remain unchanged.
 
+The [round-2 regression receipt](docs/verification/rga-round2-regression-locks.md)
+records isolated reset-order, timeout-unit and low-USERPTR ownership mutations,
+each followed by a restored full KUnit pass. It adds test coverage only, including
+real SG construction and nonidentity DMA PTEs; it changes no production driver.
+
 The [host verification of `465598e26`](docs/verification/rga-host-465598e26.md)
 records 47 executed RGA-related KUnit cases, the Coccinelle findings and triage,
 and the parent comparison proving the MPP hardening checker failure pre-existing.

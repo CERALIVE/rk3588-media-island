@@ -111,6 +111,10 @@ device lifetime. Low DMA-BUF/USERPTR execution on RGA2 requires an RGA2-owned
 mapping and DMA-address PTEs, even below 4 GiB. Per-core queues cap at 32 jobs,
 expire before start at 1,000 ms, and synchronous timeout cancels queued work.
 Details and software proof limits: [`docs/RGA-MEMORY-ADDRESSABILITY.md`](docs/RGA-MEMORY-ADDRESSABILITY.md).
+The timing and low-USERPTR KUnit fixtures are mutation-checked: prior-epoch
+claims, literal 1,000 ms and captured wait jiffies, and nonidentity execution
+DMA PTEs. See [`docs/verification/rga-round2-regression-locks.md`](docs/verification/rga-round2-regression-locks.md)
+for individual RED/restored-GREEN receipts; production source was unchanged.
 
 **MPP core debugfs follows the device lifetime.** `mpp_dev_remove()` drains
 per-core counter readers before devres frees their client context. Telemetry

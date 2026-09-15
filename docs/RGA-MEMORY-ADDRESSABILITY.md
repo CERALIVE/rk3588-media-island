@@ -145,6 +145,16 @@ The [review-fix verification receipt](verification/rga-review-24a8b5b60.md)
 records the final module/sparse/parity results, 57 executed RGA KUnit passes,
 the RED observations and artifact hashes.
 
+The subsequent [round-2 regression locks](verification/rga-round2-regression-locks.md)
+change only tests and their staging. The reset-order case seeds an already-claimed
+previous epoch; the timeout fixture captures the actual wait argument and asserts
+the literal 1,000 ms contract independently of the driver constant. Low USERPTR
+cases construct real page-bounded SGs, map them for RGA2 through a fake DMA API,
+check nonidentity DMA PTEs and both sync directions, and exercise unmap/free and
+map-failure unwind. Five isolated mutations fail and each restoration passes.
+Final KUnit: 123 passes, one unchanged MPP skip, zero failures; 60 RGA-related
+passes. This software evidence does not extend the hardware proof boundary.
+
 ## Decision
 
 Treat memory-layout-dependent RGA failure as a **driver defect**, not a board
