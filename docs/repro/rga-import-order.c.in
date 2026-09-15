@@ -7,6 +7,7 @@
 #include <stdlib.h>
 
 typedef uint64_t phys_addr_t;
+#define SZ_4G UINT64_C(0x100000000)
 enum { RGA_MMU = 1, RGA_IOMMU = 2 };
 enum { RGA_MEM_UNDER_4G = 1, RGA_MEM_PHYSICAL_CONTIGUOUS = 4 };
 struct device { bool iommu; };
@@ -61,6 +62,7 @@ static struct sg_table table = { .sgl = &entry, .orig_nents = 1 };
 static unsigned int failed_maps;
 static unsigned int rga2_maps;
 static unsigned int iommu_maps;
+static int iommu_error;
 
 static int rga_mm_map_external_dma_buffer(struct rga_external_buffer *external,
 		struct rga_dma_buffer *buffer, struct rga_scheduler_t *scheduler,
@@ -70,6 +72,8 @@ static int rga_mm_map_external_dma_buffer(struct rga_external_buffer *external,
 	(void)scheduler;
 	if (dev->iommu) {
 		iommu_maps++;
+		if (iommu_error)
+			return iommu_error;
 	} else {
 		rga2_maps++;
 		/* Independent boundary model: large high entries cannot bounce. */
@@ -130,6 +134,16 @@ int main(void)
 
 	driver.scheduler[0] = &rga3;
 	driver.scheduler[1] = &rga2;
+	entry.phys = UINT64_C(0xfffff000);
+	entry.length = 4096;
+	if (!rga_mm_check_range_sgt(&table))
+		return 1;
+	entry.length++;
+	if (rga_mm_check_range_sgt(&table))
+		return 1;
+	entry.phys = UINT64_MAX - 16;
+	if (rga_mm_check_range_sgt(&table))
+		return 1;
 	/* Positive control for the fake boundary, separate from production policy. */
 	entry.phys = UINT64_C(0x100000000);
 	entry.length = 1024 * 1024;
@@ -147,6 +161,14 @@ int main(void)
 		return 2;
 	}
 	high = run_case("HIGH_RGA2", UINT64_C(0x100000000), &low_job);
+	{
+		struct rga_internal_buffer buffer = { 0 };
+		struct rga_external_buffer external = { .memory_parm.size = 1024 * 1024 };
+		iommu_error = -ENOMEM;
+		rga2_maps = 0;
+		high |= rga_mm_map_dma_buffer(&external, &buffer, &low_job) != -ENOMEM;
+		high |= rga2_maps != 0 || buffer.dma_buffer != NULL;
+	}
 	puts(high ? "RED: high-memory import attempted a doomed RGA2 map" :
 	     "GREEN: high-memory import avoided mapping failure");
 	return high ? 1 : 0;

@@ -1,0 +1,166 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+#include <errno.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#define RGA_MEM_UNDER_4G 1
+#define RGA2_BUFFER_DIRECT 1
+#define RGA2_BUFFER_STAGEABLE 2
+#define RGA2_BUFFER_UNSUPPORTED 0
+#define RGA_JOB_RGA2_STAGEABLE_DMA_BUF 2
+#define RGA_JOB_UNSUPPORT_RGA_MMU 4
+#define RGA_JOB_DEBUG_FAKE_BUFFER 8
+#define PAGE_SIZE 4096
+#define GFP_KERNEL 0
+#define kzalloc(n, flags) calloc(1, (n))
+#define kvcalloc(n, size, flags) calloc((n), (size))
+#define kfree(p) free(p)
+#define kvfree(p) free(p)
+#define min_t(t, a, b) ((t)(a) < (t)(b) ? (t)(a) : (t)(b))
+#define round_down(n, a) ((n) & ~((size_t)(a) - 1))
+#define RGA3_SCHEDULER_CORE0 1
+#define RGA3_SCHEDULER_CORE1 2
+#define RGA_NONE_CORE 0
+#define RGA_CORE_MASK 7
+#define U32_MAX UINT32_MAX
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
+#define likely(x) (x)
+#define rga_job_err(...) ((void)0)
+#define rga_job_log(...) ((void)0)
+#define rga_err(...) ((void)0)
+#define DEBUGGER_EN(...) 0
+#define mutex_lock(...) ((void)0)
+#define mutex_unlock(...) ((void)0)
+#define spin_lock_irqsave(lock, flags) ((flags) = 0)
+#define spin_unlock_irqrestore(lock, flags) ((void)(flags))
+enum { RGA_DMA_BUFFER, RGA_DMA_BUFFER_PTR, RGA_VIRTUAL_ADDRESS, RGA_PHYSICAL_ADDRESS };
+struct rga_session { int unused; };
+struct rga_mm { int unused; };
+struct device { size_t backend; unsigned int advertised; };
+static size_t dma_max_mapping_size(struct device *dev) { return dev->backend; }
+static unsigned int dma_get_max_seg_size(struct device *dev) { return dev->advertised; }
+struct rga_dma_buffer { void *dma_buf; };
+struct rga_virt_addr { void *pages; };
+struct rga_internal_buffer {
+    int mm_flag, type;
+    struct rga_session *session;
+    struct rga_dma_buffer *dma_buffer;
+    struct rga_virt_addr *virt_addr;
+};
+struct rga_img_info_t { uint64_t yrgb_addr, uv_addr, v_addr; };
+struct rga_req { struct rga_img_info_t src, dst, pat; int core, handle_flag; };
+struct rga_scheduler_t { int core, job_count; void *running_job; };
+struct rga_external_buffer { int type, high; };
+struct rga_job_buffer { struct rga_external_buffer *ex_addr; struct rga_internal_buffer *addr; bool writable; };
+struct rga_job_task_buffers { struct rga_job_buffer src_buffer, dst_buffer, src1_buffer, els_buffer; };
+struct rga_job { int flags, task_count; struct rga_req *task_list;
+    struct rga_job_task_buffers *task_buffers;
+    struct rga_session *session; struct rga_scheduler_t *scheduler; };
+static struct { struct rga_mm *mm; int num_of_scheduler, map_scheduler_index;
+    struct rga_scheduler_t *scheduler[3]; } driver;
+#define rga_drvdata (&driver)
+static struct rga_internal_buffer buffers[3];
+static struct rga_internal_buffer *rga_mm_lookup_handle(struct rga_mm *mm, uint64_t handle)
+{ return handle && handle <= 3 ? &buffers[handle - 1] : NULL; }
+static bool rga_mm_handle_authorized(struct rga_internal_buffer *buffer, struct rga_session *session)
+{ return session != NULL; }
+static int rga_task_assign(struct rga_job *job, struct rga_req *req)
+{ return req->core ? req->core : RGA_CORE_MASK; }
+static int prepared_kind, prepare_calls, fail_prepare_at, power_refs;
+static int rga_power_enable(struct rga_scheduler_t *s) { power_refs++; return 0; }
+static void rga_power_disable(struct rga_scheduler_t *s) { power_refs--; }
+static int rga_mm_get_external_buffer(struct rga_job *job, struct rga_job_task_buffers *b, struct rga_req *req)
+{
+    b->src_buffer.ex_addr = calloc(1, sizeof(*b->src_buffer.ex_addr));
+    b->src_buffer.ex_addr->type = prepared_kind;
+    b->src_buffer.ex_addr->high = 1;
+    return 0;
+}
+static int rga_mm_map_buffer(struct rga_external_buffer *ex, struct rga_internal_buffer *buf,
+                             struct rga_job *job, int writable)
+{
+    if (++prepare_calls == fail_prepare_at) return -ENOMEM;
+    buf->type = ex->type;
+    buf->mm_flag = ex->high ? 0 : RGA_MEM_UNDER_4G;
+    return 0;
+}
+static void rga_mm_unmap_job_info(struct rga_job *job)
+{
+    for (int i = 0; i < job->task_count; i++) {
+        free(job->task_buffers[i].src_buffer.addr);
+        free(job->task_buffers[i].src_buffer.ex_addr);
+        memset(&job->task_buffers[i], 0, sizeof(job->task_buffers[i]));
+    }
+}
+
+/* PRODUCTION_FUNCTIONS */
+
+int main(void)
+{
+    struct rga_mm mm = { 0 };
+    struct rga_session session = { 0 };
+    struct rga_dma_buffer dma = { .dma_buf = &mm };
+    struct rga_virt_addr virt = { .pages = &mm };
+    struct rga_scheduler_t cores[3] = {
+        { .core = 4 }, { .core = 1, .job_count = 3, .running_job = &mm },
+        { .core = 2, .job_count = 1, .running_job = &mm },
+    };
+    int failed = 0;
+    struct device limits = { .backend = 256 * 1024 + 15, .advertised = 1024 * 1024 };
+    failed |= rga_dma_max_segment_size(&limits) != 256 * 1024;
+    limits.advertised = 65536;
+    failed |= rga_dma_max_segment_size(&limits) != 65536;
+    limits.backend = PAGE_SIZE - 1;
+    failed |= rga_dma_max_segment_size(&limits) != 0;
+    driver.mm = &mm; driver.num_of_scheduler = 3;
+    for (int i = 0; i < 3; i++) driver.scheduler[i] = &cores[i];
+    driver.map_scheduler_index = 1;
+    for (int kind = RGA_DMA_BUFFER_PTR; kind <= RGA_VIRTUAL_ADDRESS; kind++) {
+        struct rga_req req[2] = { 0 };
+        struct rga_job job = { .task_list = req, .task_count = 2, .session = &session };
+        prepared_kind = kind;
+        prepare_calls = 0;
+        failed |= rga_mm_prepare_job_info(&job) != 0;
+        failed |= prepare_calls != 2 || power_refs != 0 || !job.task_buffers[1].src_buffer.addr;
+        failed |= rga_job_assign(&job) != 2;
+        rga_mm_unmap_job_info(&job);
+        free(job.task_buffers);
+        job.task_buffers = NULL;
+        prepare_calls = 0; fail_prepare_at = 2;
+        failed |= rga_mm_prepare_job_info(&job) != -ENOMEM || power_refs != 0;
+        failed |= job.task_buffers != NULL;
+        free(job.task_buffers);
+        fail_prepare_at = 0;
+    }
+    for (int kind = RGA_DMA_BUFFER; kind <= RGA_VIRTUAL_ADDRESS; kind++) {
+        for (int plane = 0; plane < 3; plane++) {
+            struct rga_req req = { .src = { 1, 2, 3 } };
+            struct rga_job job = { .task_list = &req, .task_count = 1, .session = &session };
+            memset(buffers, 0, sizeof(buffers));
+            for (int i = 0; i < 3; i++) buffers[i].mm_flag = RGA_MEM_UNDER_4G;
+            buffers[plane] = (struct rga_internal_buffer) {
+                .type = kind, .dma_buffer = &dma, .virt_addr = &virt,
+            };
+            int ret = rga_job_judgment_support_core(&job, &req);
+            int core = rga_job_assign(&job);
+            printf("kind=%d high_plane=%d ret=%d busy_rga3_selected=%d\n", kind, plane, ret, core);
+            failed |= ret < 0 || core != 2;
+            req.core = 4;
+            failed |= rga_job_assign(&job) != 4;
+        }
+    }
+    {
+        struct rga_req req = { .src.yrgb_addr = UINT64_C(0x100000001) };
+        struct rga_job job = { .task_list = &req, .task_count = 1, .session = &session };
+        failed |= rga_job_judgment_support_core(&job, &req) != -EINVAL;
+        req.src.yrgb_addr = 4;
+        failed |= rga_job_judgment_support_core(&job, &req) != -EINVAL;
+        req.src.yrgb_addr = 1;
+        job.session = NULL;
+        failed |= rga_job_judgment_support_core(&job, &req) != -EPERM;
+    }
+    puts(failed ? "RED: high-memory plane ignored by routing" : "GREEN: every plane prefers capable busy RGA3, explicit RGA2 retained");
+    return failed ? 1 : 0;
+}

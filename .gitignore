@@ -18,3 +18,5 @@ test-results/
 # Python bytecode from the CI tooling and the UAPI parity suite.
 __pycache__/
 *.pyc
+compile_commands.json
+.clangd

@@ -102,6 +102,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: RGA memory lifetime and routing regressions
+        run: bash scripts/check-rga-memory.sh
       - name: Install what the board-harness self-tests execute
         run: |
           sudo apt-get update -qq

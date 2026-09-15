@@ -42,6 +42,7 @@
 #include <linux/version.h>
 #include <linux/vmalloc.h>
 #include <linux/wait.h>
+#include <linux/xarray.h>
 #include <linux/pm_runtime.h>
 #include <linux/sched/mm.h>
 #include <linux/sizes.h>
@@ -294,6 +295,10 @@ struct rga_session {
 };
 
 struct rga_job_buffer {
+	bool ready;
+	bool writable;
+	struct sg_table *rga2_user_sgt[3];
+	int rga2_user_sgt_count;
 	union {
 		struct {
 			struct rga_external_buffer *ex_y_addr;
@@ -315,11 +320,7 @@ struct rga_job_buffer {
 	uint32_t *page_table;
 	int order;
 	int page_count;
-	/*
-	 * DMA address of page_table for the RGA2 device: an offset into the
-	 * persistently mapped ring for non-handle jobs, or a per-job
-	 * dma_map_single() mapping (unmapped at put) for handle jobs.
-	 */
+	/* Every table and its executing-device mapping belong to this job. */
 	dma_addr_t page_table_dma;
 	struct device *page_table_dev;
 	bool page_table_mapped;
@@ -385,6 +386,8 @@ struct rga_job {
 	size_t task_start;
 	size_t task_count;
 	size_t finished_count;
+	struct xarray rga2_user_pages;
+	size_t rga2_user_bytes;
 
 	/* for rga2 virtual_address */
 	struct mm_struct *mm;
@@ -556,7 +559,6 @@ struct rga_drvdata_t {
 	int device_count[RGA_DEVICE_BUTT];
 	/* The scheduler_index used by default for memory mapping. */
 	int map_scheduler_index;
-	struct rga_mmu_base *mmu_base;
 
 	struct delayed_work power_off_work;
 

@@ -1,8 +1,103 @@
 # RGA memory addressability: defect model and fix plan
 
-Status: **[PARTIAL] — design and pre-fix reproduction, not a driver fix or board
-qualification.** Recorded 2026-09-14. No kernel, module, device tree, userspace
-library, image pin or board state is changed by this work.
+Status: **[PARTIAL] — source repair and software regressions; not released or
+board-qualified.** Updated 2026-09-14. The combined table-ownership and routing
+repair is described below. The historical design and pre-fix observations remain
+as the acceptance record. No device tree, userspace library, image pin or board
+state is changed by this work.
+
+## Combined source repair
+
+The non-handle RGA2 table ring is removed. Every translated channel, including
+fake-buffer jobs, allocates a private DMA32 table using four-byte PTEs, maps it
+for the executing RGA2 device, and owns it until terminal cleanup. One helper
+unmaps/frees the table on completion, cancellation and partial construction
+failure. No consumer cursor or reservation window remains.
+
+Legacy fd and USERPTR buffers are retained before core selection. Their physical
+backing classification feeds the same RGA3 preference as imported handles; all
+handle planes are checked and lookup errors propagate. The existing capability
+intersection still governs formats, geometry, operations and explicit core
+masks. Busy compatible RGA3 cores remain eligible for the least-queued choice;
+idle RGA2 does not override that preference. Single-core selection also passes
+through policy rather than bypassing it.
+
+DMA-BUF classification uses a capable IOMMU attachment, never an exploratory
+RGA2 exporter map. The attachment's actual core owns the retained IOVA. RGA2
+retains the existing low-backing-physical path on this RK3588 topology, or uses
+the job-shared DMA32 stage for high buffers. An absent capable classification
+device returns `-ENODEV`; exporter errors are not retried as speculative RGA2
+maps. This deliberately does not introduce an exporter-private page-access API.
+
+High-memory USERPTR work forced onto RGA2 uses job-owned DMA32 pages indexed by
+original PFN, including original pages behind head/tail shadows. Overlapping
+virtual ranges therefore share staged bytes across channels and sequential
+tasks. Writable-byte masks limit copy-back to the submitted writable spans;
+failed/cancelled jobs do not copy the stage back. Source page references outlive
+the stage. The existing 64 MiB/job, 128 MiB/session and 256 MiB/global admission
+limits cover both DMA-BUF and USERPTR staging; they were not increased.
+
+Owned SG construction respects the minimum of the advertised segment limit and
+the DMA backend maximum, rounded down to a page. RGA2 publishes the backend
+limit and rejects a sub-page ceiling. The 32/32 RGA2 masks, RGA3 masks and
+page-offset alignment declaration are unchanged. This does not split an
+exporter's existing SG list, enlarge swiotlb, or change the PTE address width.
+
+Run the host software gate from this checkout:
+
+```sh
+bash scripts/check-rga-memory.sh
+```
+
+The gate is registered in the existing CI self-tests job. It compiles maintained
+functions or includes the maintained staging implementation directly, with
+bounded host fixtures at the kernel allocation/DMA boundary. It covers:
+
+- 262,144 simultaneously live entries as four large tables and as 256 tasks;
+  pairwise table-address disjointness, four-byte allocation sizing, reverse
+  teardown and an additional construction failure while those tables are live;
+- allocation, each multi-plane fill, and table-map failure unwind;
+- high-memory RGA2 import with zero failed RGA2 mapping attempts;
+- high planes in every handle position, legacy fd/USERPTR preparation,
+  preparation failure, busy-RGA3 routing and explicit RGA2 selection;
+- USERPTR aliases, untouched destination bytes, cancellation, allocation/map/
+  xarray failures and bounded resource errors.
+
+Before repair, the maintained table builder produced **one overlapping pair**
+for four large tables and **64 overlapping pairs** for the 256-task case.
+Both held 262,144 entries live, exceeding the former 196,611-entry capacity.
+The import reproducer returned success only after **one failed RGA2 map**.
+The routing test additionally exposed ignored UV/V handles and high USERPTRs
+selecting idle RGA2. Those are software RED observations, not new board results.
+
+These tests do not implement Linux DMA, exercise the real cache hierarchy,
+validate pixels, or qualify hardware concurrency. Module/KUnit/static-analysis
+evidence must be reported separately. H7 causality and frame conservation remain
+unproven. The external-CRU reset defect was already repaired independently in
+`v2026.9.3`; neither this ring nor a generic cross-core race is reintroduced as
+its cause. No `MMU_CTRL0` write is part of this repair.
+
+Release, consumer-lane merge, image-pin merge, image build and both-board
+qualification remain separate, later gates. A pushed source branch reaches no
+device and does not authorize any of those gates.
+
+### Software verification receipt
+
+The host memory regressions passed after repair. The RGA arm64 module linked
+with `KCFLAGS=-Werror` against a prepared Linux 7.2 derivative of the pinned
+baseline; sparse completed with `CF=-Wsparse-error`. Source LSP diagnostics,
+the ioctl-staging self-test, shim and modernization checks, module/telemetry
+source contracts, ShellCheck, Ruff and the board-harness/tooling **host fixture**
+self-tests passed. Generated-series verification reconstructs 87 source files
+and preserves all eight integration payloads; the census increased by one for
+the new private USERPTR staging header.
+
+**The complete repository gate is not claimed green.** The unchanged MPP
+hardening check reports `partial clock enable unwinds` as its one failure
+(22/23 checks pass); neither its MPP source nor its test was changed. KUnit
+kernel execution and coccinelle were not run: no prepared UML build or `spatch`
+binary was available. The host ioctl-staging check is not a substitute for
+executing KUnit. No hardware command or silicon qualification was performed.
 
 ## Decision
 

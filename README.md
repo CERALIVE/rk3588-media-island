@@ -221,12 +221,14 @@ policy; the service and encoder CCU are software-only exceptions. RGA cancellati
 releases power by job ownership, and failed JPEG IRQ registration unwinds common
 PM setup. UML regressions exercise those paths without touching physical boards.
 
-The [RGA memory-addressability design](docs/RGA-MEMORY-ADDRESSABILITY.md)
-treats high-memory mapping degradation as a driver defect, not a DRAM-size
-restriction. It ranks the routing, DMA-constraint and staging fixes, includes
-an intentionally RED host import-order reproducer, and separates the unproven
-H7/conservation causal links from the established mapping defect. It is a fix
-plan, not an implemented or board-qualified repair.
+The [RGA memory repair](docs/RGA-MEMORY-ADDRESSABILITY.md) replaces the borrowed
+page-table ring with job-owned tables and prepares legacy buffers before
+memory-aware core selection. Explicit RGA2 work retains bounded DMA32 staging;
+USERPTR aliases share original-page staging. `bash scripts/check-rga-memory.sh`
+exercises the software regressions, including more live PTEs than the old ring
+could hold. This is source repair, not a release or board qualification; the
+H7/conservation causal links remain unproven. Local compilation databases and
+clangd flags are ignored build artifacts, not repository build inputs.
 
 ## Versioning
 

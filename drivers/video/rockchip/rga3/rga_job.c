@@ -148,6 +148,12 @@ static int rga_job_cleanup(struct rga_job *job)
 static int rga_job_judgment_support_core(struct rga_job *job, struct rga_req *req)
 {
 	int ret = 0;
+	int i;
+	uint64_t handles[] = {
+		req->src.yrgb_addr, req->src.uv_addr, req->src.v_addr,
+		req->dst.yrgb_addr, req->dst.uv_addr, req->dst.v_addr,
+		req->pat.yrgb_addr, req->pat.uv_addr, req->pat.v_addr,
+	};
 	struct rga_mm *mm;
 
 	mm = rga_drvdata->mm;
@@ -158,52 +164,23 @@ static int rga_job_judgment_support_core(struct rga_job *job, struct rga_req *re
 
 	mutex_lock(&mm->lock);
 
-	/*
-	 * A buffer only disqualifies the RGA2 MMU cores when it can neither
-	 * be addressed below 4G directly nor be remapped below 4G by a
-	 * per-job DMA mapping of the 32-bit RGA2 device.
-	 */
-	if (likely(req->src.yrgb_addr > 0)) {
-		ret = rga_mm_lookup_rga2_support(mm, req->src.yrgb_addr,
-						 job->session);
+	for (i = 0; i < ARRAY_SIZE(handles); i++) {
+		if (!handles[i])
+			continue;
+		if (handles[i] > U32_MAX) {
+			ret = -EINVAL;
+			goto out_finish;
+		}
+		ret = rga_mm_lookup_rga2_support(mm, handles[i], job->session);
 		if (ret < 0)
 			goto out_finish;
 
-		if (ret == RGA2_BUFFER_STAGEABLE) {
+		if (ret == RGA2_BUFFER_STAGEABLE)
 			job->flags |= RGA_JOB_RGA2_STAGEABLE_DMA_BUF;
-		} else if (!ret) {
+		else if (ret == RGA2_BUFFER_UNSUPPORTED)
 			job->flags |= RGA_JOB_UNSUPPORT_RGA_MMU;
-			goto out_finish;
-		}
 	}
-
-	if (likely(req->dst.yrgb_addr > 0)) {
-		ret = rga_mm_lookup_rga2_support(mm, req->dst.yrgb_addr,
-						 job->session);
-		if (ret < 0)
-			goto out_finish;
-
-		if (ret == RGA2_BUFFER_STAGEABLE) {
-			job->flags |= RGA_JOB_RGA2_STAGEABLE_DMA_BUF;
-		} else if (!ret) {
-			job->flags |= RGA_JOB_UNSUPPORT_RGA_MMU;
-			goto out_finish;
-		}
-	}
-
-	if (req->pat.yrgb_addr > 0) {
-		ret = rga_mm_lookup_rga2_support(mm, req->pat.yrgb_addr,
-						 job->session);
-		if (ret < 0)
-			goto out_finish;
-
-		if (ret == RGA2_BUFFER_STAGEABLE) {
-			job->flags |= RGA_JOB_RGA2_STAGEABLE_DMA_BUF;
-		} else if (!ret) {
-			job->flags |= RGA_JOB_UNSUPPORT_RGA_MMU;
-			goto out_finish;
-		}
-	}
+	ret = 0;
 
 out_finish:
 	mutex_unlock(&mm->lock);
@@ -226,6 +203,7 @@ static struct rga_job *rga_job_alloc(struct rga_req *task_list, size_t task_coun
 
 	INIT_LIST_HEAD(&job->head);
 	INIT_LIST_HEAD(&job->rga2_stage_list);
+	xa_init(&job->rga2_user_pages);
 	kref_init(&job->refcount);
 	rga_session_get(session);
 	job->session = session;
@@ -260,9 +238,6 @@ static struct rga_job *rga_job_alloc(struct rga_req *task_list, size_t task_coun
 	for (i = 0; i < task_count; i++) {
 		if (job->task_list[i].handle_flag & 1) {
 			job->flags |= RGA_JOB_USE_HANDLE;
-			rga_job_judgment_support_core(job, &job->task_list[i]);
-			if (job->flags & RGA_JOB_UNSUPPORT_RGA_MMU)
-				break;
 		}
 	}
 
@@ -564,15 +539,10 @@ static struct rga_scheduler_t *rga_job_schedule(struct rga_job *job)
 		rga_job_scheduler_timeout_clean(scheduler);
 	}
 
-	if (rga_drvdata->num_of_scheduler > 1) {
-		job->core = rga_job_assign(job);
-		if (job->core <= 0) {
-			rga_job_err(job, "job assign failed");
-			return ERR_PTR(job->core < 0 ? job->core : -EINVAL);
-		}
-	} else {
-		job->core = rga_drvdata->scheduler[0]->core;
-		job->scheduler = rga_drvdata->scheduler[0];
+	job->core = rga_job_assign(job);
+	if (job->core <= 0) {
+		rga_job_err(job, "job assign failed");
+		return ERR_PTR(job->core < 0 ? job->core : -EOPNOTSUPP);
 	}
 
 	scheduler = job->scheduler;
@@ -613,6 +583,21 @@ int rga_job_commit(struct rga_req *task_list, size_t task_count,
 	 */
 	job->mm = request->current_mm;
 
+	if (!(job->flags & RGA_JOB_DEBUG_FAKE_BUFFER)) {
+		size_t i;
+
+		for (i = 0; i < job->task_count; i++) {
+			if (!(job->task_list[i].handle_flag & 1))
+				continue;
+			ret = rga_job_judgment_support_core(job, &job->task_list[i]);
+			if (ret < 0)
+				goto err_free_job;
+		}
+	}
+	ret = rga_mm_prepare_job_info(job);
+	if (ret)
+		goto err_free_job;
+
 	scheduler = rga_job_schedule(job);
 	if (IS_ERR(scheduler)) {
 		ret = PTR_ERR(scheduler);
@@ -649,14 +634,6 @@ int rga_job_commit(struct rga_req *task_list, size_t task_count,
 		}
 	}
 
-	job->task_buffers =
-		kvzalloc(array_size(job->task_count, sizeof(*job->task_buffers)), GFP_KERNEL);
-	if (!job->task_buffers) {
-		rga_job_err(job, "Failed to allocate memory for channel buffers.\n");
-		ret = -ENOMEM;
-		goto err_power_disable;
-	}
-
 	ret = rga_mm_map_job_info(job);
 	if (ret < 0) {
 		rga_job_err(job, "%s: failed to map job info\n", __func__);
@@ -689,12 +666,15 @@ int rga_job_commit(struct rga_req *task_list, size_t task_count,
 	return 0;
 
 err_unmap_job_info:
-	rga_mm_unmap_job_info(job);
-
 err_power_disable:
+	rga_mm_unmap_job_info(job);
 	rga_power_disable(scheduler);
+	goto free_job;
 
 err_free_job:
+	if (job->task_buffers)
+		rga_mm_unmap_job_info(job);
+free_job:
 	rga_job_free(job);
 
 	return ret;

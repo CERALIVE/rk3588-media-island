@@ -1,0 +1,179 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+#include <errno.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define PAGE_SHIFT 12
+#define PAGE_SIZE 4096
+#define GFP_KERNEL 0
+#define GFP_DMA32 0
+#define RGA_JOB_USE_HANDLE 1
+#define RGA_MEM_FORCE_FLUSH_CACHE 8
+#define RGA_GET_PAGE_COUNT(n) (((n) + PAGE_SIZE - 1) / PAGE_SIZE)
+#define ALIGN(n, a) (((n) + (a) - 1) & ~((a) - 1))
+#define IS_ERR_OR_NULL(p) (!(p) || (uintptr_t)(p) > UINTPTR_MAX - 4096)
+#define PTR_ERR(p) ((int)(intptr_t)(p))
+#define rga_job_err(...) ((void)0)
+#define rga_job_log(...) ((void)0)
+#define rga_err(...) ((void)0)
+#define rga_log(...) ((void)0)
+#define WARN_ON(...) ((void)0)
+#define DEBUGGER_EN(...) 0
+#define mutex_lock(...) ((void)0)
+#define mutex_unlock(...) ((void)0)
+#define kfree(p) free(p)
+enum dma_data_direction { DMA_NONE, DMA_TO_DEVICE, DMA_FROM_DEVICE };
+struct device { int id; };
+struct rga_scheduler_t { struct device *dev; };
+struct rga_job { int flags; struct rga_scheduler_t *scheduler; };
+struct rga_img_info_t { int vir_w, vir_h, format; uint64_t yrgb_addr, uv_addr, v_addr; };
+struct rga_virt_addr { int offset; };
+struct rga_internal_buffer { struct rga_virt_addr *virt_addr; unsigned int mm_flag; };
+struct rga_job_buffer {
+    bool ready;
+    union { struct { struct rga_internal_buffer *y_addr, *uv_addr, *v_addr; };
+            struct rga_internal_buffer *addr; };
+    uint32_t *page_table;
+    int order, page_count;
+    uintptr_t page_table_dma;
+    struct device *page_table_dev;
+    bool page_table_mapped;
+};
+struct rga_mmu_base {
+    uint32_t front, back, size, *buf_virtual;
+    uintptr_t dma_addr;
+    struct device *map_dev;
+};
+static struct { struct rga_mmu_base *mmu_base; } driver;
+#define rga_drvdata (&driver)
+struct sg_table { int unused; };
+static struct sg_table table;
+static int allocations, mappings, alloc_fail, map_fail, fill_fail;
+static size_t last_alloc_size;
+
+static void *rga_get_free_pages(int flags, int *order, size_t size)
+{
+    void *p;
+    if (alloc_fail) return NULL;
+    *order = 0;
+    last_alloc_size = size;
+    p = calloc(1, size);
+    if (p) allocations++;
+    return p;
+}
+static void free_pages(unsigned long ptr, int order)
+{
+    if (ptr) { allocations--; free((void *)ptr); }
+}
+static uintptr_t dma_map_single(struct device *dev, void *ptr, size_t size, int dir)
+{
+    if (map_fail) return UINTPTR_MAX;
+    mappings++;
+    return (uintptr_t)ptr;
+}
+static bool dma_mapping_error(struct device *dev, uintptr_t addr) { return addr == UINTPTR_MAX; }
+static void dma_unmap_single(struct device *dev, uintptr_t addr, size_t size, int dir)
+{
+    mappings--;
+}
+static int rga_image_size_cal(int w, int h, int format, int *y, int *uv, int *v)
+{
+    *y = w * h;
+    *uv = format ? w * h / 2 : 0;
+    *v = format ? w * h / 2 : 0;
+    return *y + *uv + *v;
+}
+static struct sg_table *rga_mm_get_rga2_sgt(struct rga_job *job,
+        struct rga_job_buffer *buf, struct rga_internal_buffer *origin,
+        int dir, int32_t *use_dma) { return &table; }
+static int rga_mm_sgt_to_page_table(struct sg_table *sgt, uint32_t *p, int count, int dma)
+{
+    if (fill_fail && --fill_fail == 0) return -EINVAL;
+    for (int i = 0; i < count; i++) p[i] = 0x12340000;
+    return 0;
+}
+static void rga_convert_addr(struct rga_img_info_t *img, bool third) {}
+static void rga_mm_put_rga2_bounce(struct rga_job *job, struct rga_job_buffer *buf, int dir) {}
+static void rga_mm_release_job_iommu_mappings(struct rga_job_buffer *buf) {}
+#define rga_mm_sync_dma_sg_for_cpu(...) 0
+#define rga_mm_dump_buffer(...) ((void)0)
+static void rga_mm_unmap_buffer(struct rga_internal_buffer *buf) {}
+
+/* PRODUCTION_FUNCTIONS */
+
+static int live_tables(struct rga_job *job, int tasks, int entries)
+{
+    struct rga_job_buffer *buffers = calloc(tasks, sizeof(*buffers));
+    int overlap = 0, ret = 0;
+    for (int i = 0; i < tasks; i++) {
+        struct rga_img_info_t img = { .vir_w = entries, .vir_h = PAGE_SIZE };
+        buffers[i].addr = calloc(1, sizeof(*buffers[i].addr));
+        ret = rga_mm_set_mmu_base(job, &img, &buffers[i], DMA_TO_DEVICE);
+        if (ret) abort();
+        if (allocations) overlap |= last_alloc_size != entries * sizeof(uint32_t);
+        for (int j = 0; j < i; j++) {
+            uintptr_t a = buffers[i].page_table_dma, b = buffers[j].page_table_dma;
+            if (a < b + entries * sizeof(uint32_t) && b < a + entries * sizeof(uint32_t))
+                overlap++;
+        }
+    }
+    printf("live_entries=%d tasks=%d overlapping_tables=%d\n", tasks * entries, tasks, overlap);
+    {
+        struct rga_internal_buffer origin = { 0 };
+        struct rga_job_buffer failed = { .addr = &origin };
+        struct rga_img_info_t img = { .vir_w = 16, .vir_h = PAGE_SIZE };
+        int before_alloc = allocations, before_map = mappings;
+        map_fail = 1;
+        ret = rga_mm_set_mmu_base(job, &img, &failed, DMA_TO_DEVICE);
+        map_fail = 0;
+        overlap |= ret >= 0 || failed.page_table != NULL ||
+                   allocations != before_alloc || mappings != before_map;
+    }
+    /* No completion occurred until EVERY table was live; reverse cancellation order. */
+    for (int i = tasks - 1; i >= 0; i--)
+        rga_mm_unmap_channel_job_buffer(job, &buffers[i], DMA_NONE);
+    free(buffers);
+    return overlap || allocations || mappings;
+}
+
+static int construction_failures(struct rga_job *job)
+{
+    struct rga_internal_buffer planes[3] = { 0 };
+    int failed = 0;
+    for (int fault = 0; fault < 5; fault++) {
+        struct rga_job_buffer buf = { .y_addr = &planes[0],
+            .uv_addr = &planes[1], .v_addr = &planes[2] };
+        struct rga_img_info_t img = { .vir_w = 4096, .vir_h = 4, .format = 1 };
+        alloc_fail = fault == 0; map_fail = fault == 4;
+        fill_fail = fault > 0 && fault < 4 ? fault : 0;
+        int ret = rga_mm_set_mmu_base(job, &img, &buf, DMA_TO_DEVICE);
+        failed |= ret >= 0 || allocations || mappings || buf.page_table != NULL;
+    }
+    alloc_fail = map_fail = fill_fail = 0;
+    printf("partial_construction_cleanup=%s\n", failed ? "FAIL" : "PASS");
+    return failed;
+}
+
+int main(void)
+{
+    struct device dev = { 1 };
+    struct rga_scheduler_t scheduler = { .dev = &dev };
+    struct rga_job job = { .scheduler = &scheduler };
+    struct rga_mmu_base ring = { .size = 196611, .back = 196611, .map_dev = &dev };
+    int failed;
+    ring.buf_virtual = calloc(ring.size, sizeof(uint32_t));
+    ring.dma_addr = (uintptr_t)ring.buf_virtual;
+    driver.mmu_base = &ring;
+    /* Four outstanding large jobs, then a single 256-task batch. */
+    failed = live_tables(&job, 4, 65536);
+    failed |= live_tables(&job, 256, 1024);
+    failed |= construction_failures(&job);
+    job.flags = RGA_JOB_USE_HANDLE;
+    failed |= live_tables(&job, 4, 65536);
+    free(ring.buf_virtual);
+    puts(failed ? "RED: live table alias or ownership violation" : "GREEN: disjoint owned tables and balanced unwind");
+    return failed ? 1 : 0;
+}
