@@ -141,6 +141,10 @@ and low-buffer execution mapping with deliberately nonidentity DMA addresses,
 PTE construction, both cache-sync directions and mapping failure. These are
 software boundary fixtures, not cache-coherency or silicon qualification.
 
+The [review-fix verification receipt](verification/rga-review-24a8b5b60.md)
+records the final module/sparse/parity results, 57 executed RGA KUnit passes,
+the RED observations and artifact hashes.
+
 ## Decision
 
 Treat memory-layout-dependent RGA failure as a **driver defect**, not a board
