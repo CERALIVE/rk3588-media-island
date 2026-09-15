@@ -230,6 +230,11 @@ could hold. This is source repair, not a release or board qualification; the
 H7/conservation causal links remain unproven. Local compilation databases and
 clangd flags are ignored build artifacts, not repository build inputs.
 
+The [host verification of `465598e26`](docs/verification/rga-host-465598e26.md)
+records 47 executed RGA-related KUnit cases, the Coccinelle findings and triage,
+and the parent comparison proving the MPP hardening checker failure pre-existing.
+It does not waive that failing gate or claim board qualification.
+
 ## Versioning
 
 CalVer, `YYYY.MINOR.PATCH`, matching the rest of the CeraLive stack. The tag is
