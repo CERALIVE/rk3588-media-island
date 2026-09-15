@@ -81,7 +81,9 @@ def evaluate_0014(sources: Sources) -> tuple[Result, ...]:
 
 def evaluate_0015(sources: Sources) -> tuple[Result, ...]:
     init = between(sources.rkvenc, "static int rkvenc_init(", "static int rkvenc_exit(")
+    clk_enable = optional_between(sources.rkvenc, "static int rkvenc_clk_on_unlocked(", "static int rkvenc_clk_on(")
     clk_on = between(sources.rkvenc, "static int rkvenc_clk_on(", "static int rkvenc_clk_off(")
+    compact_enable = " ".join(clk_enable.split())
     dev_probe = between(sources.common, "int mpp_dev_probe(", "int mpp_dev_remove(")
     power_on = between(sources.common, "int mpp_power_on(", "int mpp_power_off(")
     finish = between(sources.common, "int mpp_task_finish(", "int mpp_task_finalize(")
@@ -93,7 +95,18 @@ def evaluate_0015(sources: Sources) -> tuple[Result, ...]:
         Result("reset acquisition errors propagate", init.count("IS_ERR(") >= 3 and "PTR_ERR(" in init),
         Result("required IOMMU acquisition errors propagate", "ret = PTR_ERR(mpp->iommu_info)" in dev_probe and "goto failed" in dev_probe),
         Result("runtime PM and clock failures propagate", "pm_runtime_resume_and_get" in power_on and "return ret" in power_on),
-        Result("partial clock enable unwinds", ordered(clk_on, "goto err_core", "clk_disable_unprepare(enc->hclk_info.clk)")),
+        Result("partial clock enable unwinds", all((
+            ordered(clk_enable, "goto err_core", "clk_disable_unprepare(enc->hclk_info.clk)"),
+            "ret = mpp_clk_safe_enable(enc->aclk_info.clk); if (ret) return ret; "
+            "ret = mpp_clk_safe_enable(enc->hclk_info.clk); if (ret) goto err_hclk; "
+            "ret = mpp_clk_safe_enable(enc->core_clk_info.clk); if (ret) goto err_core;"
+            in compact_enable,
+            "enc->core_clk_enabled = true; return 0; "
+            "err_core: clk_disable_unprepare(enc->hclk_info.clk); "
+            "err_hclk: clk_disable_unprepare(enc->aclk_info.clk); return ret;"
+            in compact_enable,
+            ordered(clk_on, "ret = rkvenc_clk_on_unlocked(mpp);", "return ret;"),
+        ))),
         Result("finish and recovery reset errors propagate", "ret = mpp->dev_ops->finish" in finish and "reset_ret = mpp_dev_reset" in finish),
         Result("hardware reset error propagates", all((
             "reset_ret = mpp->hw_ops->reset(mpp);" in reset_once,
@@ -169,8 +182,35 @@ def report(intent: str, results: tuple[Result, ...]) -> int:
     return 0 if passed == len(results) else 1
 
 
+def clock_unwind_self_test(sources: Sources) -> tuple[Result, ...]:
+    clock_path = between(sources.rkvenc, "static int rkvenc_clk_on_unlocked(", "static int rkvenc_clk_off(")
+    results = [Result("clock checker accepts production unwind", evaluate_0015(sources)[4].passed)]
+    mutations = (
+        ("missing HCLK disable", "clk_disable_unprepare(enc->hclk_info.clk);", ""),
+        ("missing ACLK disable", "clk_disable_unprepare(enc->aclk_info.clk);", ""),
+        ("core failure skips HCLK cleanup", "goto err_core;", "goto err_hclk;"),
+        ("HCLK failure skips ACLK cleanup", "goto err_hclk;", "return ret;"),
+        ("cleanup returns success", "return ret;\n}", "return 0;\n}"),
+        ("wrapper bypasses helper", "ret = rkvenc_clk_on_unlocked(mpp);", "ret = 0;"),
+        ("wrapper masks error", "#endif\n\treturn ret;", "#endif\n\treturn 0;"),
+    )
+    for name, original, replacement in mutations:
+        # Each mutant changes only the live clock path, never clk_off's decoy disables.
+        if original not in clock_path:
+            results.append(Result(f"clock mutation anchor exists: {name}", False))
+            continue
+        mutant_path = clock_path.replace(original, replacement, 1)
+        mutation = replace(sources, rkvenc=sources.rkvenc.replace(clock_path, mutant_path, 1))
+        results.append(Result(f"clock checker rejects {name}", not evaluate_0015(mutation)[4].passed))
+    results.append(Result("clock checker accepts restored unwind", evaluate_0015(sources)[4].passed))
+    return tuple(results)
+
+
 def self_test() -> int:
     sources = load_sources()
+    clock_results = clock_unwind_self_test(sources)
+    if report("clock-self-test", clock_results):
+        return 1
     baseline = evaluate_0014(sources)
     if len(baseline) != 8:
         return 1
@@ -198,7 +238,8 @@ def self_test() -> int:
         if evaluate_0015(mutation)[-1].passed:
             print(f"FAIL: reset checker accepts mutation of {original}")
             return 1
-    print("mpp-hardening self-test: pass:8 fail:0 total:8")
+    total = 8 + len(clock_results)
+    print(f"mpp-hardening self-test: pass:{total} fail:0 total:{total}")
     return 0
 
 

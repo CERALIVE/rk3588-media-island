@@ -248,6 +248,13 @@ Three workflows: `ci.yml` (the PR gate), `release.yml` (`workflow_dispatch`, wit
 issue-only). Per-job detail, the mutation transcripts, and the honest list of
 remaining deferred inputs live in [`docs/CI.md`](docs/CI.md).
 
+**MPP partial-clock unwind is checked at the unlocked helper, not its wrapper.**
+`scripts/check-mpp-hardening.py` inspects `rkvenc_clk_on_unlocked()` and the
+wrapper's call/return chain. Its self-test accepts production source and rejects
+seven clock-path mutations; the normal gate retains all 23 assertions. This is a
+source-shape regression check, not hardware clock validation. See
+[`docs/CI.md`](docs/CI.md#3a-mpp-partial-clock-unwind-checker).
+
 | Job | Asserts |
 |-----|---------|
 | `shellcheck` | Every tracked shell script lints clean at `-S style` (only `SC1091` excluded) |
