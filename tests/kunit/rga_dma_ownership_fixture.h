@@ -8,6 +8,7 @@
 #include "../rga3/include/rga_dma_buf.h"
 #include "../rga3/include/rga_common.h"
 #include "rga_memory_types.inc"
+#include "rga_memory_sg.inc"
 
 struct dma_owner_fixture {
 	struct rga_scheduler_t scheduler;
@@ -20,7 +21,22 @@ struct dma_owner_fixture {
 	struct sg_table sgt;
 	struct scatterlist sg;
 	struct page *page;
+	struct page *user_pages[2];
+	struct rga_virt_addr userptr;
+	struct sg_table *owned_sgt;
+	struct device *map_dev;
+	struct device *unmap_dev;
+	enum dma_data_direction map_dir;
+	enum dma_data_direction unmap_dir;
+	int sg_allocs;
+	int sg_frees;
+	int sg_maps;
+	int sg_unmaps;
+	bool sg_mapped;
+	bool freed_while_mapped;
 	struct device *sync_dev;
+	struct scatterlist *sync_sg;
+	int sync_count;
 	enum dma_data_direction sync_dir;
 	int maps;
 	int unmaps;
@@ -54,12 +70,67 @@ static void owner_sync(struct device *dev, struct scatterlist *sg,
 {
 	dma_owner->sync_dev = dev;
 	dma_owner->sync_dir = dir;
+	dma_owner->sync_sg = sg;
+	dma_owner->sync_count = count;
+}
+
+static struct sg_table *owner_alloc_sgt(struct page **pages, int count,
+				       size_t offset, size_t size,
+				       unsigned int max_segment, gfp_t gfp)
+{
+	struct sg_table *sgt;
+
+	sgt = rga_alloc_sgt_segment(pages, count, offset, size, max_segment, gfp);
+	if (!IS_ERR(sgt)) {
+		dma_owner->sg_allocs++;
+		dma_owner->owned_sgt = sgt;
+	}
+	return sgt;
+}
+
+static int owner_map_sgt_pages(struct sg_table *sgt, struct rga_dma_buffer *mapping,
+			       enum dma_data_direction dir, struct device *dev)
+{
+	struct scatterlist *sg;
+	unsigned int i;
+
+	dma_owner->sg_maps++;
+	dma_owner->map_dev = dev;
+	dma_owner->map_dir = dir;
+	if (dma_owner->map_error)
+		return dma_owner->map_error;
+	for_each_sg(sgt->sgl, sg, sgt->orig_nents, i) {
+		sg_dma_address(sg) = 0x30000000 + i * 2 * PAGE_SIZE;
+		sg_dma_len(sg) = sg->length;
+	}
+	mapping->map_dev = dev;
+	mapping->dir = dir;
+	mapping->sgt = sgt;
+	mapping->dma_addr = sg_dma_address(sgt->sgl);
+	dma_owner->sg_mapped = true;
+	return 0;
+}
+
+static void owner_unmap_sgt(struct rga_dma_buffer *mapping)
+{
+	dma_owner->sg_unmaps++;
+	dma_owner->unmap_dev = mapping->map_dev;
+	dma_owner->unmap_dir = mapping->dir;
+	dma_owner->sg_mapped = false;
+}
+
+static void owner_free_sgt(struct sg_table **sgt)
+{
+	dma_owner->sg_frees++;
+	dma_owner->freed_while_mapped |= dma_owner->sg_mapped;
+	rga_free_sgt(sgt);
+	dma_owner->owned_sgt = NULL;
 }
 
 #define rga_dma_map_buf_pages owner_map
 #define rga_dma_map_buf owner_map
 #define rga_dma_unmap_buf owner_unmap
-#define rga_dma_unmap_sgt owner_unmap
+#define rga_dma_unmap_sgt owner_unmap_sgt
 #define dma_sync_sg_for_device owner_sync
 #define dma_sync_sg_for_cpu owner_sync
 #define dma_sync_single_for_device(dev, addr, size, dir) ((void)(addr), owner_sync(dev, NULL, 0, dir))
@@ -69,10 +140,11 @@ static void owner_sync(struct device *dev, struct scatterlist *sg,
 #define rga_mm_lookup_sgt(buffer) ((buffer)->dma_buffer->sgt)
 #define rga_mm_alloc_job_virt_sgt(origin, offset) ERR_PTR(-EOPNOTSUPP)
 #define rga_mm_alloc_job_phys_sgt(origin) ERR_PTR(-EOPNOTSUPP)
-#define rga_alloc_sgt_segment(...) ERR_PTR(-EOPNOTSUPP)
+#define rga_alloc_sgt_segment owner_alloc_sgt
+#define rga_dma_max_segment_size(dev) PAGE_SIZE
 #define rga_dma_map_sgt(...) (-EOPNOTSUPP)
-#define rga_dma_map_sgt_pages(...) (-EOPNOTSUPP)
-#define rga_free_sgt(sgt) do { } while (0)
+#define rga_dma_map_sgt_pages owner_map_sgt_pages
+#define rga_free_sgt owner_free_sgt
 #define rga_shadow_active(virt) false
 #define rga_shadow_copy_to_shadow(virt) do { } while (0)
 #define rga_shadow_copy_from_shadow(virt) do { } while (0)
@@ -101,7 +173,7 @@ static int dma_owner_init(struct kunit *test)
 	f->foreign.dev = kunit_device_register(test, "rga3-dma-owner");
 	if (IS_ERR(f->foreign.dev))
 		return PTR_ERR(f->foreign.dev);
-	f->page = alloc_page(GFP_KERNEL);
+	f->page = alloc_pages(GFP_KERNEL | GFP_DMA32, 1);
 	if (!f->page)
 		return -ENOMEM;
 	f->scheduler.data = &dma_owner_rga2;
@@ -121,6 +193,13 @@ static int dma_owner_init(struct kunit *test)
 	sg_dma_len(&f->sg) = PAGE_SIZE;
 	f->sgt.sgl = &f->sg;
 	f->sgt.nents = f->sgt.orig_nents = 1;
+	f->user_pages[0] = f->page;
+	f->user_pages[1] = f->page + 1;
+	f->userptr.pages = f->user_pages;
+	f->userptr.page_count = 2;
+	f->userptr.offset = 128;
+	f->userptr.size = PAGE_SIZE + 128;
+	f->userptr.addr = 0x400080;
 	return 0;
 }
 
@@ -129,6 +208,8 @@ static void dma_owner_exit(struct kunit *test)
 	struct dma_owner_fixture *f = test->priv;
 
 	rga_mm_release_job_iommu_mappings(&f->channel);
-	__free_page(f->page);
+	if (f->owned_sgt)
+		owner_free_sgt(&f->owned_sgt);
+	__free_pages(f->page, 1);
 }
 #endif

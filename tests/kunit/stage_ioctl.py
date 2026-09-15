@@ -152,6 +152,9 @@ def stage(tree: Path) -> None:
     if len(stage_types) != 1:
         raise DefinitionError("rga_rga2_stage", len(stage_types))
     (tests / "rga_memory_types.inc").write_text(stage_types[0] + "\n")
+    emit(tests / "rga_memory_sg.inc", ((memory, (
+        "rga_alloc_sgt_segment", "rga_free_sgt",
+    )),))
     emit(tests / "rga_memory_source.inc", ((memory, (
         "rga_mm_is_need_mmu", "rga_mm_emit_page_table_run",
         "rga_mm_sgt_to_page_table", "rga_mm_buffer_uses_dma_address",
