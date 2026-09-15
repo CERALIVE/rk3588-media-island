@@ -24,6 +24,7 @@
 #define RGA3_SCHEDULER_CORE1 2
 #define RGA_NONE_CORE 0
 #define RGA_CORE_MASK 7
+#define RGA_SCHED_QUEUE_LIMIT 32
 #define U32_MAX UINT32_MAX
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 #define likely(x) (x)
@@ -51,7 +52,7 @@ struct rga_internal_buffer {
 };
 struct rga_img_info_t { uint64_t yrgb_addr, uv_addr, v_addr; };
 struct rga_req { struct rga_img_info_t src, dst, pat; int core, handle_flag; };
-struct rga_scheduler_t { int core, job_count; void *running_job; };
+struct rga_scheduler_t { int core, job_count; void *running_job; bool shutdown, dma_faulted; };
 struct rga_external_buffer { int type, high; };
 struct rga_job_buffer { struct rga_external_buffer *ex_addr; struct rga_internal_buffer *addr; bool writable; };
 struct rga_job_task_buffers { struct rga_job_buffer src_buffer, dst_buffer, src1_buffer, els_buffer; };
@@ -161,6 +162,17 @@ int main(void)
         job.session = NULL;
         failed |= rga_job_judgment_support_core(&job, &req) != -EPERM;
     }
-    puts(failed ? "RED: high-memory plane ignored by routing" : "GREEN: every plane prefers capable busy RGA3, explicit RGA2 retained");
+    {
+        struct rga_req req = { 0 };
+        struct rga_job job = { .task_list = &req, .task_count = 1,
+            .flags = RGA_JOB_RGA2_STAGEABLE_DMA_BUF };
+        cores[1].job_count = cores[2].job_count = RGA_SCHED_QUEUE_LIMIT;
+        failed |= rga_job_assign(&job) != -EAGAIN;
+        req.core = 4;
+        failed |= rga_job_assign(&job) != 4;
+        cores[0].dma_faulted = true;
+        failed |= rga_job_assign(&job) != -EAGAIN;
+    }
+    puts(failed ? "RED: memory routing/admission defect" : "GREEN: RGA3 preference, bounded admission and explicit RGA2 retained");
     return failed ? 1 : 0;
 }

@@ -103,6 +103,15 @@ rk3588-media-island/
 
 ## KEY FACTS
 
+**RGA reset failure is fail-stop, not successful cancellation.** Backend reset
+status gates cleanup; an unsuccessful reset retains the running job's mappings,
+tables, command buffer and power reference until reboot. The failed core admits
+no new work; module pinning and suppressed bind/unbind attributes preserve its
+device lifetime. Low DMA-BUF/USERPTR execution on RGA2 requires an RGA2-owned
+mapping and DMA-address PTEs, even below 4 GiB. Per-core queues cap at 32 jobs,
+expire before start at 1,000 ms, and synchronous timeout cancels queued work.
+Details and software proof limits: [`docs/RGA-MEMORY-ADDRESSABILITY.md`](docs/RGA-MEMORY-ADDRESSABILITY.md).
+
 **MPP core debugfs follows the device lifetime.** `mpp_dev_remove()` drains
 per-core counter readers before devres frees their client context. Telemetry
 probe-error unwind removes clients before their parent debugfs tree; the

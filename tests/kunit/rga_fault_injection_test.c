@@ -188,7 +188,50 @@ static void rga_fault_reset_write_result_test(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, f->aborts, 2);
 }
 
+static void rga_reset_poll_failure_test(struct kunit *test)
+{
+	struct rga_fault_fixture *f = test->priv;
+	const struct rga_hw_data data = { .mmu = RGA_MMU };
+
+	f->scheduler.data = &data;
+	f->reset_stuck = true;
+	KUNIT_EXPECT_EQ(test, rga2_soft_reset(&f->scheduler), -ETIMEDOUT);
+	f->reset_stuck = false;
+	KUNIT_EXPECT_EQ(test, rga2_soft_reset(&f->scheduler), 0);
+}
+
+static void rga_timeout_failed_reset_retains_mapping_test(struct kunit *test)
+{
+	struct rga_fault_fixture *f = test->priv;
+
+	atomic_set(&hang_task.armed, 1);
+	KUNIT_ASSERT_EQ(test, rga_job_run(&f->job, &f->scheduler), 0);
+	f->job.timestamp.hw_execute = ktime_sub_ms(ktime_get(), RGA_JOB_TIMEOUT_DELAY + 1);
+	f->reset_stuck = true;
+	rga_job_scheduler_timeout_clean(&f->scheduler);
+	f->reset_stuck = false;
+	rga_job_scheduler_timeout_clean(&f->scheduler);
+	KUNIT_EXPECT_EQ(test, f->resets, 1);
+	KUNIT_EXPECT_EQ(test, f->unmaps, 0);
+	KUNIT_EXPECT_EQ(test, f->signals, 0);
+	KUNIT_EXPECT_EQ(test, f->power_refs, 1);
+	KUNIT_EXPECT_PTR_EQ(test, f->scheduler.running_job, &f->job);
+	KUNIT_EXPECT_TRUE(test, f->scheduler.dma_faulted);
+}
+
+static void rga_start_reset_preserves_error_recovery_test(struct kunit *test)
+{
+	struct rga_fault_fixture *f = test->priv;
+
+	f->reset_at_start = true;
+	KUNIT_ASSERT_EQ(test, rga_job_run(&f->job, &f->scheduler), 0);
+	KUNIT_EXPECT_EQ(test, f->resets, 2);
+}
+
 static struct kunit_case rga_fault_cases[] = {
+	KUNIT_CASE(rga_start_reset_preserves_error_recovery_test),
+	KUNIT_CASE(rga_reset_poll_failure_test),
+	KUNIT_CASE(rga_timeout_failed_reset_retains_mapping_test),
 	KUNIT_CASE(rga_fault_controls_one_shot_test),
 	KUNIT_CASE(rga_fault_invalid_values_stay_unconsumed_test),
 	KUNIT_CASE(rga_fault_concurrent_consume_test),

@@ -7,6 +7,7 @@
 #define rga_power_disable pm_test_power_disable
 #define rga_job_next pm_test_job_next
 #define rga_request_scheduler_abort pm_test_scheduler_abort
+#define rga_telemetry_reset pm_test_telemetry_reset
 #include "../rga3/include/rga_drv.h"
 #include "../rga3/include/rga_job.h"
 #include "../rga3/rga_test.h"
@@ -22,6 +23,8 @@ struct pm_rga_fixture {
 	int register_error;
 	int clock_refs;
 	int retired;
+	int reset_error;
+	int unmapped;
 };
 
 static struct pm_rga_fixture *pm_fixture;
@@ -57,10 +60,20 @@ static void pm_test_clocks_disable(int count, struct clk_bulk_data *clocks)
 
 static int pm_test_set_reg(struct rga_job *job, struct rga_scheduler_t *scheduler)
 {
+	if (!pm_fixture->register_error)
+		job->timestamp.hw_execute = ktime_get();
 	return pm_fixture->register_error;
 }
 
-static const struct rga_backend_ops pm_test_ops = { .set_reg = pm_test_set_reg };
+static int pm_test_reset(struct rga_scheduler_t *scheduler)
+{
+	return pm_fixture->reset_error;
+}
+
+static const struct rga_backend_ops pm_test_ops = {
+	.set_reg = pm_test_set_reg,
+	.soft_reset = pm_test_reset,
+};
 
 static void pm_test_retire(struct rga_job *job)
 {
@@ -73,22 +86,45 @@ static void pm_test_job_release(struct kref *ref)
 	/* The fixture owns the storage, independently of execution references. */
 }
 
+static void pm_test_unmap(struct rga_job *job)
+{
+	pm_fixture->unmapped++;
+	if (job->task_buffers)
+		job->task_buffers[0].src_buffer.page_table = NULL;
+}
+
+static void pm_test_release_abort(struct rga_request *request, int error, bool retire);
+
 #define clk_bulk_prepare_enable pm_test_clocks_enable
 #define clk_bulk_disable_unprepare pm_test_clocks_disable
 #define rga_err(...) do { } while (0)
 #define rga_job_err(...) do { } while (0)
 #define rga_req_err(...) do { } while (0)
+#undef rga_job_fault
+#define rga_job_fault(...) do { } while (0)
 #define trace_rga_job_started(...) do { } while (0)
 #define rga_telemetry_record_busy(...) do { } while (0)
-#define rga_telemetry_reset(...) do { } while (0)
-#define rga_mm_unmap_job_info(job) do { } while (0)
+#define rga_dump_job(...) do { } while (0)
+#define trace_rga_reset(...) do { } while (0)
+#define __module_get(module) do { } while (0)
+#define rga_mm_unmap_job_info(job) pm_test_unmap(job)
 #define rga_request_release_signal(scheduler, job) pm_test_retire(job)
 #define rga_job_cleanup(job) pm_test_retire(job)
 #define rga_job_get(job) kref_get(&(job)->refcount)
 #define rga_job_put(job) kref_put(&(job)->refcount, pm_test_job_release)
+#undef wait_event_timeout
+#define wait_event_timeout(queue, condition, timeout) ((condition) ? 1 : 0)
+#define rga_request_release_abort pm_test_release_abort
 
 #include "runtime_pm_rga_power.inc"
 #include "runtime_pm_rga_jobs.inc"
+
+static void __maybe_unused pm_test_release_abort(struct rga_request *request, int error, bool retire)
+{
+	rga_request_scheduler_job_abort(request);
+	request->is_done = true;
+	request->ret = error;
+}
 
 static int pm_rga_init(struct kunit *test)
 {
@@ -150,6 +186,7 @@ static struct rga_job *pm_rga_job(struct kunit *test, u32 request_id)
 	job->scheduler = &f->scheduler;
 	job->request_id = request_id;
 	job->task_count = 1;
+	job->timestamp.insert = ktime_get();
 	INIT_LIST_HEAD(&job->head);
 	kref_init(&job->refcount);
 	list_add_tail(&job->head, &f->scheduler.todo_list);

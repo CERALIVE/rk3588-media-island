@@ -1812,10 +1812,12 @@ static void rga_drv_remove(struct platform_device *pdev)
 		rga_request_scheduler_shutdown(scheduler);
 
 #ifndef RGA_DISABLE_PM
-	pm_runtime_suspend(&pdev->dev);
-	device_init_wakeup(&pdev->dev, false);
-	pm_runtime_disable(&pdev->dev);
-	pm_runtime_dont_use_autosuspend(&pdev->dev);
+	if (!scheduler || !scheduler->dma_faulted) {
+		pm_runtime_suspend(&pdev->dev);
+		device_init_wakeup(&pdev->dev, false);
+		pm_runtime_disable(&pdev->dev);
+		pm_runtime_dont_use_autosuspend(&pdev->dev);
+	}
 #endif /* #ifndef RGA_DISABLE_PM */
 
 	up_write(&rga_drvdata->rwsem);
@@ -1840,6 +1842,7 @@ static struct platform_driver rga3_driver = {
 	.shutdown = rga_drv_shutdown,
 	.driver = {
 		 .name = "rga3",
+		 .suppress_bind_attrs = true,
 		 .of_match_table = of_match_ptr(rga3_dt_ids),
 		 },
 };
@@ -1850,6 +1853,7 @@ static struct platform_driver rga2_driver = {
 	.shutdown = rga_drv_shutdown,
 	.driver = {
 		 .name = "rga2",
+		 .suppress_bind_attrs = true,
 		 .of_match_table = of_match_ptr(rga2_dt_ids),
 		 },
 };

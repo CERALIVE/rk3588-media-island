@@ -121,21 +121,34 @@ static void rga_dump_job(struct rga_scheduler_t *scheduler, struct rga_job *job)
 	media_dump_capture(&scheduler->dump, &record);
 }
 
-void rga_telemetry_reset(struct rga_scheduler_t *scheduler, int reason,
-			 void (*reset)(struct rga_scheduler_t *scheduler))
+static int rga_reset_failed(struct rga_scheduler_t *scheduler, int error)
 {
-	if (!reset)
-		return;
-	if (!media_recovery_claim(&scheduler->recovery,
+	if (!scheduler->dma_faulted)
+		__module_get(THIS_MODULE);
+	scheduler->dma_faulted = true;
+	scheduler->reset_result = error;
+	return error;
+}
+
+int rga_telemetry_reset(struct rga_scheduler_t *scheduler, int reason,
+			 int (*reset)(struct rga_scheduler_t *scheduler))
+{
+	if (scheduler->dma_faulted)
+		return scheduler->reset_result;
+	/* The per-job initialization reset must not consume error recovery's claim. */
+	if (reason && !media_recovery_claim(&scheduler->recovery,
 				  atomic64_read(&scheduler->recovery.recovery_epoch)))
-		return;
+		return scheduler->reset_result;
 
 	atomic64_inc(&scheduler->telemetry.resets);
 	trace_rga_reset(scheduler->core, reason);
 	if (scheduler->running_job)
 		rga_dump_job(scheduler, scheduler->running_job);
 	media_dump_event(&scheduler->dump, MEDIA_RESET, 0, reason);
-	reset(scheduler);
+	scheduler->reset_result = reset ? reset(scheduler) : -EOPNOTSUPP;
+	if (scheduler->reset_result)
+		return rga_reset_failed(scheduler, scheduler->reset_result);
+	return scheduler->reset_result;
 }
 
 static int rga_job_cleanup(struct rga_job *job)
@@ -256,6 +269,7 @@ static int rga_job_run(struct rga_job *job, struct rga_scheduler_t *scheduler)
 		return ret;
 	}
 
+	media_recovery_started(&scheduler->recovery);
 	iommu_fault = rga_iommu_test_prepare(scheduler);
 	if (iommu_fault || rga_test_irq_timeout() || rga_test_hang_task()) {
 		/* Keep timeout/cancel ownership, but never start DMA for this shot. */
@@ -267,21 +281,22 @@ static int rga_job_run(struct rga_job *job, struct rga_scheduler_t *scheduler)
 	}
 	if (ret < 0) {
 		rga_job_err(job, "set reg failed");
-		rga_power_disable(scheduler);
+		if (!scheduler->dma_faulted)
+			rga_power_disable(scheduler);
 		return ret;
 	}
 
 	set_bit(RGA_JOB_STATE_RUNNING, &job->state);
 	job->telemetry_start = ktime_get();
 	trace_rga_job_started(scheduler->core, job->request_id);
-	media_recovery_started(&scheduler->recovery);
 	media_dump_event(&scheduler->dump, MEDIA_STARTED, job->request_id, 0);
 
 	if (iommu_fault) {
 		/* The callback owns irq_lock; job_mutex keeps this job published. */
 		rga_iommu_test_fault(scheduler);
 		rga_telemetry_record_busy(scheduler, job, false);
-		rga_power_disable(scheduler);
+		if (!scheduler->dma_faulted)
+			rga_power_disable(scheduler);
 		return job->ret;
 	}
 
@@ -298,7 +313,7 @@ next_job:
 	mutex_lock(&scheduler->job_mutex);
 	spin_lock_irqsave(&scheduler->irq_lock, flags);
 
-	if (scheduler->shutdown || scheduler->running_job ||
+	if (scheduler->shutdown || scheduler->dma_faulted || scheduler->running_job ||
 	    list_empty(&scheduler->todo_list)) {
 		spin_unlock_irqrestore(&scheduler->irq_lock, flags);
 		mutex_unlock(&scheduler->job_mutex);
@@ -311,6 +326,15 @@ next_job:
 
 	scheduler->job_count--;
 	atomic_dec(&rga_drvdata->telemetry_queue_depth);
+	if (ktime_ms_delta(ktime_get(), job->timestamp.insert) >= RGA_QUEUE_TIMEOUT_MS) {
+		job->ret = -ETIMEDOUT;
+		set_bit(RGA_JOB_STATE_INTR_ERR, &job->state);
+		spin_unlock_irqrestore(&scheduler->irq_lock, flags);
+		rga_mm_unmap_job_info(job);
+		mutex_unlock(&scheduler->job_mutex);
+		rga_request_release_signal(scheduler, job);
+		goto next_job;
+	}
 
 	scheduler->running_job = job;
 	set_bit(RGA_JOB_STATE_PREPARE, &job->state);
@@ -319,6 +343,12 @@ next_job:
 	spin_unlock_irqrestore(&scheduler->irq_lock, flags);
 
 	ret = rga_job_run(job, scheduler);
+	if (scheduler->dma_faulted) {
+		job->ret = scheduler->reset_result;
+		rga_job_put(job);
+		mutex_unlock(&scheduler->job_mutex);
+		return;
+	}
 	/* If some error before hw run */
 	if (ret < 0) {
 		rga_job_err(job, "some error on rga_job_run before hw start, %s(%d)\n",
@@ -354,6 +384,11 @@ struct rga_job *rga_job_done(struct rga_scheduler_t *scheduler)
 	spin_lock_irqsave(&scheduler->irq_lock, flags);
 
 	job = scheduler->running_job;
+	if (scheduler->dma_faulted) {
+		spin_unlock_irqrestore(&scheduler->irq_lock, flags);
+		mutex_unlock(&scheduler->job_mutex);
+		return NULL;
+	}
 	if (job == NULL) {
 		rga_err("%s(%#x) running job has been cleanup.\n",
 			rga_get_core_name(scheduler->core), scheduler->core);
@@ -461,10 +496,14 @@ static void rga_job_scheduler_timeout_clean(struct rga_scheduler_t *scheduler)
 		trace_rga_job_timeout(scheduler->core, job->request_id);
 		rga_dump_job(scheduler, job);
 
-		scheduler->running_job = NULL;
 		scheduler->status = RGA_SCHEDULER_ABORT;
-		rga_telemetry_reset(scheduler, -ETIMEDOUT,
-				    scheduler->ops->soft_reset);
+		if (rga_telemetry_reset(scheduler, -ETIMEDOUT,
+					scheduler->ops->soft_reset)) {
+			spin_unlock_irqrestore(&scheduler->irq_lock, flags);
+			mutex_unlock(&scheduler->job_mutex);
+			return;
+		}
+		scheduler->running_job = NULL;
 
 		spin_unlock_irqrestore(&scheduler->irq_lock, flags);
 
@@ -488,10 +527,15 @@ static int rga_job_insert_todo_list(struct rga_job *job)
 
 	mutex_lock(&scheduler->job_mutex);
 	spin_lock_irqsave(&scheduler->irq_lock, flags);
-	if (scheduler->shutdown) {
+	if (scheduler->shutdown || scheduler->dma_faulted) {
 		spin_unlock_irqrestore(&scheduler->irq_lock, flags);
 		mutex_unlock(&scheduler->job_mutex);
 		return -ESHUTDOWN;
+	}
+	if (scheduler->job_count >= RGA_SCHED_QUEUE_LIMIT) {
+		spin_unlock_irqrestore(&scheduler->irq_lock, flags);
+		mutex_unlock(&scheduler->job_mutex);
+		return -EAGAIN;
 	}
 
 	/* priority policy set by userspace */
@@ -914,7 +958,6 @@ void rga_request_scheduler_shutdown(struct rga_scheduler_t *scheduler)
 {
 	struct rga_job *job, *job_q;
 	unsigned long flags;
-	int power_ret;
 	int removed = 0;
 	bool had_running = false;
 	LIST_HEAD(list_to_free);
@@ -926,12 +969,15 @@ void rga_request_scheduler_shutdown(struct rga_scheduler_t *scheduler)
 
 	job = scheduler->running_job;
 	if (job) {
-		had_running = true;
 		rga_telemetry_record_busy(scheduler, job, false);
-		scheduler->running_job = NULL;
 		job->ret = -ESHUTDOWN;
 		set_bit(RGA_JOB_STATE_INTR_ERR, &job->state);
-		list_add_tail(&job->head, &list_to_free);
+		if (!rga_telemetry_reset(scheduler, -ESHUTDOWN,
+					 scheduler->ops->soft_reset)) {
+			had_running = true;
+			scheduler->running_job = NULL;
+			list_add_tail(&job->head, &list_to_free);
+		}
 	}
 
 	list_for_each_entry_safe(job, job_q, &scheduler->todo_list, head) {
@@ -947,27 +993,14 @@ void rga_request_scheduler_shutdown(struct rga_scheduler_t *scheduler)
 	spin_unlock_irqrestore(&scheduler->irq_lock, flags);
 	mutex_unlock(&scheduler->job_mutex);
 
-	power_ret = rga_power_enable(scheduler);
-	if (power_ret) {
-		rga_err("failed to power core[%d] for shutdown: %d\n",
-			scheduler->core, power_ret);
-	} else if (had_running) {
-		spin_lock_irqsave(&scheduler->irq_lock, flags);
-		rga_telemetry_reset(scheduler, -ESHUTDOWN,
-				    scheduler->ops->soft_reset);
-		spin_unlock_irqrestore(&scheduler->irq_lock, flags);
-	}
-
 	/* No IRQ or restart path owns these jobs after shutdown was published. */
 	list_for_each_entry_safe(job, job_q, &list_to_free, head) {
 		rga_mm_unmap_job_info(job);
 		rga_request_release_signal(scheduler, job);
 	}
 
-	/* Balance the running job and temporary reset power references. */
+	/* A failed reset retains the running job's power reference. */
 	if (had_running)
-		rga_power_disable(scheduler);
-	if (!power_ret)
 		rga_power_disable(scheduler);
 }
 
@@ -988,13 +1021,20 @@ void rga_request_scheduler_abort(struct rga_scheduler_t *scheduler)
 	job = scheduler->running_job;
 	if (job) {
 		rga_telemetry_record_busy(scheduler, job, false);
-		scheduler->running_job = NULL;
 		scheduler->status = RGA_SCHEDULER_ABORT;
 		job->ret = -ECANCELED;
 		set_bit(RGA_JOB_STATE_INTR_ERR, &job->state);
-		if (!power_ret)
-			rga_telemetry_reset(scheduler, -ECANCELED,
-					    scheduler->ops->soft_reset);
+		if (power_ret || rga_telemetry_reset(scheduler, -ECANCELED,
+						 scheduler->ops->soft_reset)) {
+			if (power_ret)
+				rga_reset_failed(scheduler, power_ret);
+			spin_unlock_irqrestore(&scheduler->irq_lock, flags);
+			mutex_unlock(&scheduler->job_mutex);
+			if (!power_ret)
+				rga_power_disable(scheduler);
+			return;
+		}
+		scheduler->running_job = NULL;
 
 		spin_unlock_irqrestore(&scheduler->irq_lock, flags);
 
@@ -1059,6 +1099,13 @@ static void rga_request_scheduler_job_abort(struct rga_request *request)
 		if (scheduler->running_job) {
 			if (request->id == scheduler->running_job->request_id) {
 				job = scheduler->running_job;
+				if (scheduler->dma_faulted ||
+				    rga_telemetry_reset(scheduler, -ECANCELED,
+							scheduler->ops->soft_reset)) {
+					job->ret = -ECANCELED;
+					job = NULL;
+					goto unlock_scheduler;
+				}
 				scheduler->running_job = NULL;
 				scheduler->status = RGA_SCHEDULER_ABORT;
 				job->ret = -ECANCELED;
@@ -1070,8 +1117,6 @@ static void rga_request_scheduler_job_abort(struct rga_request *request)
 					scheduler->timer.busy_time +=
 						ktime_us_delta(ktime_get(),
 							       job->timestamp.hw_recode);
-					rga_telemetry_reset(scheduler, -ECANCELED,
-							    scheduler->ops->soft_reset);
 				}
 				job->session->last_active = ktime_get();
 
@@ -1082,6 +1127,7 @@ static void rga_request_scheduler_job_abort(struct rga_request *request)
 			}
 		}
 
+	unlock_scheduler:
 		spin_unlock_irqrestore(&scheduler->irq_lock, flags);
 		if (removed)
 			atomic_sub(removed, &rga_drvdata->telemetry_queue_depth);
@@ -1212,30 +1258,8 @@ void rga_request_session_destroy_abort(struct rga_session *session)
 
 static int rga_request_timeout_query_state(struct rga_request *request)
 {
-	int i;
-	unsigned long flags;
-	struct rga_scheduler_t *scheduler = NULL;
-	struct rga_job *job = NULL;
-
-	for (i = 0; i < rga_drvdata->num_of_scheduler; i++) {
-		scheduler = rga_drvdata->scheduler[i];
-
-		spin_lock_irqsave(&scheduler->irq_lock, flags);
-
-		if (scheduler->running_job) {
-			job = scheduler->running_job;
-
-			if (request->id == job->request_id) {
-				request->ret = rga_job_timeout_query_state(job, request->ret);
-
-				spin_unlock_irqrestore(&scheduler->irq_lock, flags);
-				break;
-			}
-		}
-
-		spin_unlock_irqrestore(&scheduler->irq_lock, flags);
-	}
-
+	/* Cancel queued work too; only completion winning the lock may return zero. */
+	rga_request_release_abort(request, -ETIMEDOUT, false);
 	return request->ret;
 }
 
@@ -1245,7 +1269,7 @@ static int rga_request_wait(struct rga_request *request)
 	int ret;
 
 	left_time = wait_event_timeout(request->finished_wq, request->is_done,
-				       RGA_JOB_TIMEOUT_DELAY * request->task_count);
+			msecs_to_jiffies(RGA_JOB_TIMEOUT_DELAY * request->task_count));
 
 	switch (left_time) {
 	case 0:

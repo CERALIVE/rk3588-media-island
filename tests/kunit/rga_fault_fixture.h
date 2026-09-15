@@ -20,6 +20,7 @@
 #include "../rga3/include/rga_mm.h"
 #include "../rga3/include/rga_common.h"
 #include "rga_fault_provider.inc"
+#include "../rga3/include/rga2_reg_info.h"
 #include "../rga3/rga_test.c"
 
 struct rga_drvdata_t *rga_drvdata;
@@ -34,6 +35,8 @@ struct rga_fault_fixture {
 	int power_error;
 	int starts;
 	int resets;
+	bool reset_stuck;
+	bool reset_at_start;
 	int irqs;
 	int signals;
 	int unmaps;
@@ -57,15 +60,22 @@ int rga_power_disable(struct rga_scheduler_t *scheduler)
 	return 0;
 }
 
+static int fault_soft_reset(struct rga_scheduler_t *scheduler);
+
 static int fault_set_reg(struct rga_job *job, struct rga_scheduler_t *scheduler)
 {
 	fault_fixture->starts++;
+	if (fault_fixture->reset_at_start) {
+		rga_telemetry_reset(scheduler, 0, fault_soft_reset);
+		rga_telemetry_reset(scheduler, -EIO, fault_soft_reset);
+	}
 	return 0;
 }
 
-static void fault_soft_reset(struct rga_scheduler_t *scheduler)
+static int fault_soft_reset(struct rga_scheduler_t *scheduler)
 {
 	fault_fixture->resets++;
+	return fault_fixture->reset_stuck ? -ETIMEDOUT : 0;
 }
 
 static int fault_irq(struct rga_scheduler_t *scheduler)
@@ -105,6 +115,12 @@ static unsigned long fault_copy_from_user(void *dst, const void __user *src, siz
 #define trace_rga_reset(...) do { } while (0)
 #define trace_rga_job_started(...) do { } while (0)
 #define trace_rga_job_timeout(...) do { } while (0)
+#undef rga_read
+#define rga_read(offset, scheduler) ((u32)fault_fixture->reset_stuck)
+#undef rga_write
+#define rga_write(value, offset, scheduler) do { } while (0)
+#define __module_get(module) do { } while (0)
+#define rga_get_core_name(core) "fixture"
 #include "rga_fault_source.inc"
 
 static const struct {

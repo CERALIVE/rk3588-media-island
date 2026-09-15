@@ -927,6 +927,26 @@ static int rga_mm_map_dma_buffer(struct rga_external_buffer *external_buffer,
 		goto unmap_buffer;
 	}
 
+	if (job && scheduler->data->mmu == RGA_MMU &&
+	    (mm_flag & RGA_MEM_UNDER_4G)) {
+		struct rga_dma_buffer *execution = kzalloc(sizeof(*execution), GFP_KERNEL);
+
+		if (!execution) {
+			ret = -ENOMEM;
+			goto unmap_buffer;
+		}
+		ret = rga_mm_map_external_dma_buffer(external_buffer, execution,
+						     scheduler, scheduler->dev);
+		if (ret) {
+			kfree(execution);
+			goto unmap_buffer;
+		}
+		rga_dma_unmap_buf(buffer);
+		kfree(buffer);
+		buffer = execution;
+		map_scheduler = scheduler;
+	}
+
 	internal_buffer->dma_buffer = buffer;
 	internal_buffer->mm_flag = mm_flag;
 	internal_buffer->phys_addr = phys_addr ? phys_addr : 0;
@@ -1845,25 +1865,13 @@ static bool rga_mm_is_need_mmu(struct rga_job *job, struct rga_internal_buffer *
 	/* RK_IOMMU no need to configure enable or not in the driver. */
 	if (job->scheduler->data->mmu == RGA_IOMMU)
 		return false;
-	if (buffer->type == RGA_VIRTUAL_ADDRESS &&
-	    (job->flags & RGA_JOB_RGA2_STAGEABLE_DMA_BUF))
-		return true;
-
-	/*
-	 * High DMA-BUFs and USERPTRs that look physically contiguous still need
-	 * the RGA2 MMU: their direct address is outside the 32-bit aperture and
-	 * the per-job path may replace or remap them below 4G. Raw physical
-	 * imports remain direct-address-only.
-	 */
-	if (buffer->mm_flag & RGA_MEM_PHYSICAL_CONTIGUOUS) {
-		if (!(buffer->mm_flag & RGA_MEM_UNDER_4G) &&
-		    (buffer->type == RGA_DMA_BUFFER ||
-		     buffer->type == RGA_DMA_BUFFER_PTR ||
-		     buffer->type == RGA_VIRTUAL_ADDRESS))
-			return true;
-
+	if (job->flags & RGA_JOB_DEBUG_FAKE_BUFFER)
 		return false;
-	}
+	if (buffer->type == RGA_DMA_BUFFER || buffer->type == RGA_DMA_BUFFER_PTR ||
+	    buffer->type == RGA_VIRTUAL_ADDRESS)
+		return true;
+	if (buffer->mm_flag & RGA_MEM_PHYSICAL_CONTIGUOUS)
+		return false;
 
 	return buffer->mm_flag & RGA_MEM_NEED_USE_IOMMU;
 }
@@ -2349,10 +2357,13 @@ static void rga_mm_put_rga2_bounce(struct rga_job *job,
 
 /*
  * Return the sg table an RGA2 page table for @buffer should be built from,
- * and whether to consume sg_dma_address() (device-usable, possibly bounced
- * below 4G) or sg_phys(). Over-4G buffers that are only mapped for another
- * core get a transient per-job mapping against the RGA2 device here.
+ * using executing-device DMA addresses, never a foreign attachment's PFNs.
+ * High buffers use the bounded stage; low buffers still need an RGA2 map.
  */
+static struct rga_dma_buffer *
+rga_mm_map_job_iommu_buffer(struct rga_job *job, struct rga_job_buffer *job_buf,
+			    struct rga_internal_buffer *origin);
+
 static struct sg_table *rga_mm_get_rga2_sgt(struct rga_job *job,
 					    struct rga_job_buffer *job_buf,
 					    struct rga_internal_buffer *buffer,
@@ -2393,8 +2404,15 @@ static struct sg_table *rga_mm_get_rga2_sgt(struct rga_job *job,
 		return rga_mm_lookup_sgt(buffer);
 	}
 
-	if (buffer->mm_flag & RGA_MEM_UNDER_4G)
-		return rga_mm_lookup_sgt(buffer);
+	if (buffer->mm_flag & RGA_MEM_UNDER_4G) {
+		bounce = rga_mm_map_job_iommu_buffer(job, job_buf, buffer);
+		if (IS_ERR(bounce))
+			return ERR_CAST(bounce);
+		if (!bounce || bounce->map_dev != job->scheduler->dev)
+			return ERR_PTR(-EIO);
+		*use_dma_address = true;
+		return bounce->sgt;
+	}
 	if (job_buf->rga2_bounce_count >= ARRAY_SIZE(job_buf->rga2_bounce))
 		return ERR_PTR(-EOPNOTSUPP);
 
@@ -2722,6 +2740,19 @@ static void rga_mm_release_job_iommu_mappings(struct rga_job_buffer *job_buf)
 					       job_buf->iommu_mapping_count - 1);
 }
 
+static void rga_mm_release_job_buffer_mapping(struct rga_job_buffer *job_buf,
+					     struct rga_internal_buffer *origin)
+{
+	int i;
+
+	for (i = 0; i < job_buf->iommu_mapping_count; i++) {
+		if (job_buf->iommu_mapping[i].origin == origin) {
+			rga_mm_unmap_job_iommu_mapping(job_buf, i);
+			return;
+		}
+	}
+}
+
 static struct rga_dma_buffer *
 rga_mm_job_dma_buffer(struct rga_job_buffer *job_buf,
 		      struct rga_internal_buffer *origin)
@@ -2809,7 +2840,10 @@ rga_mm_map_job_iommu_buffer(struct rga_job *job,
 	int ret;
 	int slot;
 
-	if (job->scheduler->data->mmu != RGA_IOMMU)
+	if (job->scheduler->data->mmu == RGA_MMU &&
+	    (!(origin->mm_flag & RGA_MEM_UNDER_4G) ||
+	     (origin->type == RGA_VIRTUAL_ADDRESS &&
+	      (job->flags & RGA_JOB_RGA2_STAGEABLE_DMA_BUF))))
 		return origin->dma_buffer;
 	if (rga_mm_is_invalid_dma_buffer(origin->dma_buffer))
 		return ERR_PTR(-EINVAL);
@@ -2833,10 +2867,28 @@ rga_mm_map_job_iommu_buffer(struct rga_job *job,
 			ret = -EINVAL;
 			break;
 		}
-		ret = rga_dma_map_buf(origin->dma_buffer->dma_buf, mapping,
-				      DMA_BIDIRECTIONAL, job->scheduler->dev);
+		if (job->scheduler->data->mmu == RGA_MMU)
+			ret = rga_dma_map_buf_pages(origin->dma_buffer->dma_buf, mapping,
+						    DMA_BIDIRECTIONAL, job->scheduler->dev);
+		else
+			ret = rga_dma_map_buf(origin->dma_buffer->dma_buf, mapping,
+					      DMA_BIDIRECTIONAL, job->scheduler->dev);
 		break;
 	case RGA_VIRTUAL_ADDRESS:
+		if (job->scheduler->data->mmu == RGA_MMU) {
+			owned_sgt = rga_alloc_sgt_segment(origin->virt_addr->pages,
+				origin->virt_addr->page_count, 0,
+				(size_t)origin->virt_addr->page_count << PAGE_SHIFT,
+				rga_dma_max_segment_size(job->scheduler->dev), GFP_KERNEL);
+			if (IS_ERR(owned_sgt)) {
+				ret = PTR_ERR(owned_sgt);
+				owned_sgt = NULL;
+				break;
+			}
+			ret = rga_dma_map_sgt_pages(owned_sgt, mapping,
+				DMA_BIDIRECTIONAL, job->scheduler->dev);
+			break;
+		}
 		owned_sgt = rga_mm_alloc_job_virt_sgt(origin, &real_offset);
 		if (IS_ERR(owned_sgt)) {
 			ret = PTR_ERR(owned_sgt);
@@ -2908,7 +2960,8 @@ static int rga_mm_sync_dma_sg_for_device(struct rga_internal_buffer *buffer,
 	if (has_shadow && (dir == DMA_TO_DEVICE || dir == DMA_BIDIRECTIONAL))
 		rga_shadow_copy_to_shadow(buffer->virt_addr);
 
-	if (buffer->mm_flag & RGA_MEM_PHYSICAL_CONTIGUOUS) {
+	if ((buffer->mm_flag & RGA_MEM_PHYSICAL_CONTIGUOUS) &&
+	    buffer->type == RGA_PHYSICAL_ADDRESS) {
 		if (scheduler->data->mmu == RGA_IOMMU) {
 			dma_addr_t iova = dma_buffer->iova + dma_buffer->offset;
 
@@ -2937,7 +2990,7 @@ static int rga_mm_sync_dma_sg_for_device(struct rga_internal_buffer *buffer,
 		}
 
 		dma_sync_sg_for_device(dma_buffer->map_dev, sgt->sgl,
-				       sgt->orig_nents, dir);
+				       sgt->orig_nents, dma_buffer->dir);
 	}
 
 	if (DEBUGGER_EN(TIME))
@@ -2977,7 +3030,8 @@ static int rga_mm_sync_dma_sg_for_cpu(struct rga_internal_buffer *buffer,
 		return -EFAULT;
 	}
 
-	if (buffer->mm_flag & RGA_MEM_PHYSICAL_CONTIGUOUS) {
+	if ((buffer->mm_flag & RGA_MEM_PHYSICAL_CONTIGUOUS) &&
+	    buffer->type == RGA_PHYSICAL_ADDRESS) {
 		if (scheduler->data->mmu == RGA_IOMMU) {
 			dma_addr_t iova = dma_buffer->iova + dma_buffer->offset;
 
@@ -3006,7 +3060,7 @@ static int rga_mm_sync_dma_sg_for_cpu(struct rga_internal_buffer *buffer,
 		}
 
 		dma_sync_sg_for_cpu(dma_buffer->map_dev, sgt->sgl,
-				    sgt->orig_nents, dir);
+				    sgt->orig_nents, dma_buffer->dir);
 	}
 
 	if (has_shadow && (dir == DMA_FROM_DEVICE || dir == DMA_BIDIRECTIONAL))
@@ -3070,12 +3124,18 @@ static int rga_mm_get_buffer_info(struct rga_job *job,
 		break;
 	case RGA_MMU:
 	default:
+		if (job->flags & RGA_JOB_DEBUG_FAKE_BUFFER) {
+			addr = internal_buffer->dma_buffer->dma_addr;
+			break;
+		}
 		if ((internal_buffer->mm_flag & RGA_MEM_PHYSICAL_CONTIGUOUS) &&
-		    ((internal_buffer->mm_flag & RGA_MEM_UNDER_4G) ||
-		     internal_buffer->type == RGA_PHYSICAL_ADDRESS)) {
+		    internal_buffer->type == RGA_PHYSICAL_ADDRESS) {
 			addr = internal_buffer->phys_addr;
 			break;
 		}
+		dma_buffer = rga_mm_map_job_iommu_buffer(job, job_buf, internal_buffer);
+		if (IS_ERR(dma_buffer))
+			return PTR_ERR(dma_buffer);
 
 		switch (internal_buffer->type) {
 		case RGA_DMA_BUFFER:
@@ -3178,6 +3238,7 @@ static int rga_mm_get_buffer(struct rga_mm *mm,
 	return 0;
 
 put_internal_buffer:
+	rga_mm_release_job_buffer_mapping(job_buf, internal_buffer);
 	mutex_lock(&mm->lock);
 	kref_put(&internal_buffer->refcount, rga_mm_kref_release_buffer);
 	mutex_unlock(&mm->lock);
@@ -3205,6 +3266,7 @@ static void rga_mm_put_buffer(struct rga_mm *mm,
 		rga_mm_dump_buffer(internal_buffer);
 	}
 
+	rga_mm_release_job_buffer_mapping(job_buf, internal_buffer);
 	mutex_lock(&mm->lock);
 	kref_put(&internal_buffer->refcount, rga_mm_kref_release_buffer);
 	mutex_unlock(&mm->lock);

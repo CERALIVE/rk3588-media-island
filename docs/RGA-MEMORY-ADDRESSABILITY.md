@@ -9,23 +9,35 @@ state is changed by this work.
 ## Combined source repair
 
 The non-handle RGA2 table ring is removed. Every translated channel, including
-fake-buffer jobs, allocates a private DMA32 table using four-byte PTEs, maps it
+multi-plane jobs, allocates a private DMA32 table using four-byte PTEs, maps it
 for the executing RGA2 device, and owns it until terminal cleanup. One helper
-unmaps/frees the table on completion, cancellation and partial construction
-failure. No consumer cursor or reservation window remains.
+unmaps/frees the table on completion, successful reset and partial construction
+failure before DMA starts. No consumer cursor or reservation window remains.
 
 Legacy fd and USERPTR buffers are retained before core selection. Their physical
 backing classification feeds the same RGA3 preference as imported handles; all
 handle planes are checked and lookup errors propagate. The existing capability
 intersection still governs formats, geometry, operations and explicit core
-masks. Busy compatible RGA3 cores remain eligible for the least-queued choice;
-idle RGA2 does not override that preference. Single-core selection also passes
-through policy rather than bypassing it.
+masks. Busy compatible RGA3 cores remain eligible for the least-queued choice,
+up to 32 queued jobs per core. Saturated admission returns `-EAGAIN`; idle RGA2
+does not override that preference. Single-core selection also passes through
+policy rather than bypassing it. The queue cap is checked again under the
+scheduler lock at insertion. Queued jobs older than 1,000 ms are retired with
+`-ETIMEDOUT` instead of starting. Synchronous wait expiration cancels the whole
+request, including queued jobs, before returning `-ETIMEDOUT`; only a completed
+request that won the cancellation lock may still return success. Hardware/wait
+timeouts use explicit milliseconds, converted to jiffies at the wait boundary.
 
 DMA-BUF classification uses a capable IOMMU attachment, never an exploratory
-RGA2 exporter map. The attachment's actual core owns the retained IOVA. RGA2
-retains the existing low-backing-physical path on this RK3588 topology, or uses
-the job-shared DMA32 stage for high buffers. An absent capable classification
+RGA2 exporter map. The attachment's actual core owns the retained IOVA. Once
+RGA2 is selected, reachable DMA-BUFs and USERPTRs get an RGA2-owned execution
+mapping even when their backing pages are low and contiguous. PTEs use that
+mapping's DMA addresses, not `sg_phys()` or an RGA3 IOVA; cache synchronization
+uses its device and mapping direction. Execution mappings are unmapped before
+the retained imported-buffer reference is released. Raw physical-address imports
+keep their existing direct-address contract; coherent debug buffers use their
+allocation's device DMA address. High buffers use the job-shared DMA32 stage.
+An absent capable classification
 device returns `-ENODEV`; exporter errors are not retried as speculative RGA2
 maps. This deliberately does not introduce an exporter-private page-access API.
 
@@ -98,6 +110,36 @@ hardening check reports `partial clock enable unwinds` as its one failure
 kernel execution and coccinelle were not run: no prepared UML build or `spatch`
 binary was available. The host ioctl-staging check is not a substitute for
 executing KUnit. No hardware command or silicon qualification was performed.
+
+### Review fixes: failed reset is not quiescence
+
+The RGA2 reset poll now returns `-ETIMEDOUT` on failure; both backend reset
+callbacks return status, and the recovery wrapper preserves the result of an
+already-claimed epoch. The per-job initialization reset does not consume an
+error-recovery claim. Error recovery's epoch starts before hardware execution,
+so an interrupt immediately after START cannot inherit the initialization result.
+
+An unsuccessful reset permanently faults that scheduler. Its running job,
+command buffer, PTEs, buffer mappings, pins and power reference remain retained;
+timeout, cancel, shutdown and late interrupts cannot free them or start another
+job on that core. A module reference prevents unload after a failed reset, and
+the platform drivers suppress manual bind/unbind attributes so devres cannot
+withdraw a live DMA device. Recovery is by reboot, not a blind retry or a claim
+that clock gating proves DMA drained. Queued requests can still be cancelled
+and freed, since they never started; unrelated healthy cores remain eligible.
+This intentionally trades retained memory and power on a failed core for safety.
+An asynchronous request on that core may need explicit cancellation; no successful
+completion is fabricated. No `MMU_CTRL0` write or external RGA2 CRU reset was added.
+
+The strengthened `LOW_RGA2_CONTROL` was RED on `f5b2fb06e` with `rga2_maps=0`;
+it now requires a nonzero RGA2 map count. A new KUnit reset-failure test was RED
+on the same source: abort unmapped the PTE and retired the job despite a forced
+`-ETIMEDOUT`. A separate queued-deadline test was RED because the wait returned
+zero and left the request queued. The expanded KUnit suites exercise the actual
+reset poll/wrapper, timeout/cancel/shutdown retention, queue admission/expiry,
+and low-buffer execution mapping with deliberately nonidentity DMA addresses,
+PTE construction, both cache-sync directions and mapping failure. These are
+software boundary fixtures, not cache-coherency or silicon qualification.
 
 ## Decision
 

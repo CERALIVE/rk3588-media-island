@@ -113,7 +113,9 @@ static int run_case(const char *name, phys_addr_t physical, struct rga_job *job)
 	       !!(buffer.mm_flag & RGA_MEM_UNDER_4G));
 	free(buffer.dma_buffer);
 	/* Then: success must not require an avoidable failed device mapping. */
-	return ret != 0 || failed_maps != 0;
+	return ret != 0 || failed_maps != 0 ||
+		(physical < SZ_4G && job->scheduler->data->mmu == RGA_MMU &&
+		 rga2_maps == 0);
 }
 
 int main(void)
@@ -157,8 +159,8 @@ int main(void)
 	low = run_case("LOW_RGA2_CONTROL", UINT64_C(0x40000000), &low_job);
 	high_iommu = run_case("HIGH_RGA3_CONTROL", UINT64_C(0x100000000), &iommu_job);
 	if (low || high_iommu) {
-		puts("INVALID: a production-path control failed");
-		return 2;
+		puts("RED: reachable execution buffer lacks an RGA2-owned map");
+		return 1;
 	}
 	high = run_case("HIGH_RGA2", UINT64_C(0x100000000), &low_job);
 	{

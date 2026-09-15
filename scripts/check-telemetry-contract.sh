@@ -115,8 +115,8 @@ check_sources() {
 	require_text "$mpp/mpp_common.c" 'atomic64_add(task->bytes, &task->session->telemetry.bytes)' || return 1
 	require_text "$rga/rga_job.c" 'atomic64_inc(&job->session->telemetry.tasks)' || return 1
 	require_text "$rga/rga_job.c" 'atomic64_add(job->bytes, &job->session->telemetry.bytes)' || return 1
-	require_text "$rga/rga_job.c" 'void rga_telemetry_reset' || return 1
-	require_text "$rga/include/rga_job.h" 'void rga_telemetry_reset' || return 1
+  require_text "$rga/rga_job.c" 'int rga_telemetry_reset' || return 1
+  require_text "$rga/include/rga_job.h" 'int rga_telemetry_reset' || return 1
 	if grep -R -Fq --include='*.c' 'scheduler->ops->soft_reset(scheduler);' "$rga"; then
 		fail 'RGA reset call bypasses the telemetry wrapper'
 		return 1
@@ -209,7 +209,7 @@ trace_rga_job_started();
 trace_rga_job_done(); trace_rga_job_timeout(); trace_rga_reset();
 atomic64_inc(&job->session->telemetry.tasks);
 atomic64_add(job->bytes, &job->session->telemetry.bytes);
-void rga_telemetry_reset(void) {
+int rga_telemetry_reset(void) {
 atomic64_inc(&scheduler->telemetry.resets);
 trace_rga_reset();
 reset(scheduler);
@@ -217,7 +217,7 @@ reset(scheduler);
 atomic_sub(removed, &rga_drvdata->telemetry_queue_depth);
 EOF
 	mkdir -p "$fixture/drivers/video/rockchip/rga3/include"
-	printf '%s\n' 'void rga_telemetry_reset(void);' >"$fixture/drivers/video/rockchip/rga3/include/rga_job.h"
+  printf '%s\n' 'int rga_telemetry_reset(void);' >"$fixture/drivers/video/rockchip/rga3/include/rga_job.h"
 	printf '%s\n' 'RGA_JOB_STATE_TELEMETRY_ACCOUNTED' >"$fixture/drivers/video/rockchip/rga3/include/rga_drv.h"
 	cat >"$fixture/drivers/video/rockchip/rga3/rga_debugger.c" <<'EOF'
 RGA_TELEMETRY_ROOT_NAME queue_depth busy_ns sessions

@@ -103,7 +103,7 @@
 			"." STR(DRIVER_REVISION_VERSION) STR(DRIVER_PATCH_VERSION))
 
 /* time limit */
-#define RGA_JOB_TIMEOUT_DELAY		HZ
+#define RGA_JOB_TIMEOUT_DELAY		1000 /* milliseconds */
 #define RGA_RESET_TIMEOUT			1000
 
 #define RGA_MAX_SCHEDULER	RGA_HW_SIZE
@@ -338,7 +338,7 @@ struct rga_job_buffer {
 	struct rga_rga2_stage *rga2_stage[3];
 	int rga2_stage_count;
 
-	/* Per-job mappings when an imported handle executes on another RGA3 core. */
+	/* Execution mappings are distinct from the retained classification mapping. */
 	struct {
 		struct rga_internal_buffer *origin;
 		struct rga_dma_buffer *mapping;
@@ -419,7 +419,7 @@ struct rga_backend_ops {
 	int (*set_reg)(struct rga_job *job, struct rga_scheduler_t *scheduler);
 	int (*init_reg)(struct rga_job *job);
 	/* Called with irq_lock held; must not sleep. */
-	void (*soft_reset)(struct rga_scheduler_t *scheduler);
+	int (*soft_reset)(struct rga_scheduler_t *scheduler);
 	int (*read_back_reg)(struct rga_job *job, struct rga_scheduler_t *scheduler);
 	int (*read_status)(struct rga_job *job, struct rga_scheduler_t *scheduler);
 	int (*irq)(struct rga_scheduler_t *scheduler);
@@ -430,6 +430,9 @@ struct rga_timer {
 	u32 busy_time;
 	u32 busy_time_record;
 };
+
+#define RGA_SCHED_QUEUE_LIMIT 32
+#define RGA_QUEUE_TIMEOUT_MS 1000
 
 struct rga_scheduler_t {
 	struct device *dev;
@@ -452,6 +455,9 @@ struct rga_scheduler_t {
 	struct mutex job_mutex;
 	/* Once set at remove, no queued work may start on this scheduler. */
 	bool shutdown;
+	/* Failed reset is fail-stop until reboot: DMA ownership cannot be revoked. */
+	bool dma_faulted;
+	int reset_result;
 	spinlock_t irq_lock;
 	wait_queue_head_t job_done_wq;
 

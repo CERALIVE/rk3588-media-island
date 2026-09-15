@@ -96,7 +96,7 @@ def stage(tree: Path) -> None:
     (tests / "rga_fault_provider.inc").write_text(bus_error[0] + "\n")
     emit(tests / "rga_fault_source.inc", (
         (DRIVERS / "rga3/rga_job.c", (
-            "rga_telemetry_record_busy", "rga_telemetry_reset", "rga_job_run",
+            "rga_telemetry_record_busy", "rga_reset_failed", "rga_telemetry_reset", "rga_job_run",
             "rga_job_timeout_query_state", "rga_job_scheduler_timeout_clean",
         )),
         (DRIVERS / "rga3/rga_iommu.c", (
@@ -104,6 +104,7 @@ def stage(tree: Path) -> None:
             "rga_iommu_test_fault",
         )),
         (DRIVERS / "rga3/rga_debugger.c", ("rga_reset_write",)),
+        (DRIVERS / "rga3/rga2_reg_info.c", ("rga2_soft_reset",)),
     ))
     common = DRIVERS / "mpp/mpp_common.c"
     source = common.read_text()
@@ -139,8 +140,26 @@ def stage(tree: Path) -> None:
         raise DefinitionError("RGA power block", len(power))
     (tests / "runtime_pm_rga_power.inc").write_text(power[0] + "\n")
     emit(tests / "runtime_pm_rga_jobs.inc", ((DRIVERS / "rga3/rga_job.c", (
-        "rga_job_run", "rga_job_next", "rga_request_scheduler_abort",
-        "rga_request_scheduler_job_abort",
+        "rga_reset_failed", "rga_telemetry_reset", "rga_job_run", "rga_job_next", "rga_request_scheduler_abort",
+        "rga_request_scheduler_job_abort", "rga_request_scheduler_shutdown",
+        "rga_request_timeout_query_state",
+        "rga_request_wait",
+        "rga_job_insert_todo_list",
+    )),))
+    memory = DRIVERS / "rga3/rga_mm.c"
+    stage_types = re.findall(r"^struct rga_rga2_stage \{.*?^\};",
+                             memory.read_text(), re.MULTILINE | re.DOTALL)
+    if len(stage_types) != 1:
+        raise DefinitionError("rga_rga2_stage", len(stage_types))
+    (tests / "rga_memory_types.inc").write_text(stage_types[0] + "\n")
+    emit(tests / "rga_memory_source.inc", ((memory, (
+        "rga_mm_is_need_mmu", "rga_mm_emit_page_table_run",
+        "rga_mm_sgt_to_page_table", "rga_mm_buffer_uses_dma_address",
+        "rga_mm_get_rga2_sgt", "rga_mm_find_job_iommu_mapping",
+        "rga_mm_unmap_job_iommu_mapping", "rga_mm_release_job_iommu_mappings",
+        "rga_mm_job_dma_buffer", "rga_mm_map_job_iommu_buffer",
+        "rga_mm_sync_dma_sg_for_device", "rga_mm_sync_dma_sg_for_cpu",
+        "rga_mm_get_buffer_info",
     )),))
     jpeg_source = (DRIVERS / "mpp/mpp_jpgdec.c").read_text()
     jpeg_types = re.findall(

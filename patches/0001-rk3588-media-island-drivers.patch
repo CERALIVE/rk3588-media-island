@@ -35399,10 +35399,10 @@ index 0000000000000000000000000000000000000000..b9fcfa507997d60325220f6edb59a73d
 +#endif
 diff --git a/drivers/video/rockchip/rga3/include/rga_drv.h b/drivers/video/rockchip/rga3/include/rga_drv.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..7cd067c2b058ff60ba5a27abac17aa95fdc2e05a
+index 0000000000000000000000000000000000000000..f0efec5b68f016e38dbfad7dd08ad678f6a94794
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/include/rga_drv.h
-@@ -0,0 +1,614 @@
+@@ -0,0 +1,620 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -35508,7 +35508,7 @@ index 0000000000000000000000000000000000000000..7cd067c2b058ff60ba5a27abac17aa95
 +			"." STR(DRIVER_REVISION_VERSION) STR(DRIVER_PATCH_VERSION))
 +
 +/* time limit */
-+#define RGA_JOB_TIMEOUT_DELAY		HZ
++#define RGA_JOB_TIMEOUT_DELAY		1000 /* milliseconds */
 +#define RGA_RESET_TIMEOUT			1000
 +
 +#define RGA_MAX_SCHEDULER	RGA_HW_SIZE
@@ -35743,7 +35743,7 @@ index 0000000000000000000000000000000000000000..7cd067c2b058ff60ba5a27abac17aa95
 +	struct rga_rga2_stage *rga2_stage[3];
 +	int rga2_stage_count;
 +
-+	/* Per-job mappings when an imported handle executes on another RGA3 core. */
++	/* Execution mappings are distinct from the retained classification mapping. */
 +	struct {
 +		struct rga_internal_buffer *origin;
 +		struct rga_dma_buffer *mapping;
@@ -35824,7 +35824,7 @@ index 0000000000000000000000000000000000000000..7cd067c2b058ff60ba5a27abac17aa95
 +	int (*set_reg)(struct rga_job *job, struct rga_scheduler_t *scheduler);
 +	int (*init_reg)(struct rga_job *job);
 +	/* Called with irq_lock held; must not sleep. */
-+	void (*soft_reset)(struct rga_scheduler_t *scheduler);
++	int (*soft_reset)(struct rga_scheduler_t *scheduler);
 +	int (*read_back_reg)(struct rga_job *job, struct rga_scheduler_t *scheduler);
 +	int (*read_status)(struct rga_job *job, struct rga_scheduler_t *scheduler);
 +	int (*irq)(struct rga_scheduler_t *scheduler);
@@ -35835,6 +35835,9 @@ index 0000000000000000000000000000000000000000..7cd067c2b058ff60ba5a27abac17aa95
 +	u32 busy_time;
 +	u32 busy_time_record;
 +};
++
++#define RGA_SCHED_QUEUE_LIMIT 32
++#define RGA_QUEUE_TIMEOUT_MS 1000
 +
 +struct rga_scheduler_t {
 +	struct device *dev;
@@ -35857,6 +35860,9 @@ index 0000000000000000000000000000000000000000..7cd067c2b058ff60ba5a27abac17aa95
 +	struct mutex job_mutex;
 +	/* Once set at remove, no queued work may start on this scheduler. */
 +	bool shutdown;
++	/* Failed reset is fail-stop until reboot: DMA ownership cannot be revoked. */
++	bool dma_faulted;
++	int reset_result;
 +	spinlock_t irq_lock;
 +	wait_queue_head_t job_done_wq;
 +
@@ -36248,7 +36254,7 @@ index 0000000000000000000000000000000000000000..7a0d79bb369411e30d382572a436bce8
 +#endif
 diff --git a/drivers/video/rockchip/rga3/include/rga_job.h b/drivers/video/rockchip/rga3/include/rga_job.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..d3ac4cc0de0ef9c7a2a214200998f0810ee25871
+index 0000000000000000000000000000000000000000..ff512a835b11f7984d5f487c6b124b689ffdd5a0
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/include/rga_job.h
 @@ -0,0 +1,65 @@
@@ -36280,8 +36286,8 @@ index 0000000000000000000000000000000000000000..d3ac4cc0de0ef9c7a2a214200998f081
 +void rga_job_scheduler_dump_info(struct rga_scheduler_t *scheduler);
 +void rga_job_next(struct rga_scheduler_t *scheduler);
 +struct rga_job *rga_job_done(struct rga_scheduler_t *scheduler);
-+void rga_telemetry_reset(struct rga_scheduler_t *scheduler, int reason,
-+			 void (*reset)(struct rga_scheduler_t *scheduler));
++int rga_telemetry_reset(struct rga_scheduler_t *scheduler, int reason,
++			 int (*reset)(struct rga_scheduler_t *scheduler));
 +int rga_job_commit(struct rga_req *task_list, size_t task_count,
 +		   struct rga_request *request, size_t task_start);
 +int rga_job_mpi_commit(struct rga_req *rga_command_base, struct rga_request *request);
@@ -36697,10 +36703,10 @@ index 0000000000000000000000000000000000000000..68f1d7b57aa07532d589fcc85fd18f5a
 +#endif
 diff --git a/drivers/video/rockchip/rga3/rga2_reg_info.c b/drivers/video/rockchip/rga3/rga2_reg_info.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..a83a046ee04626bf0f35c8c7b41532f74f9658a6
+index 0000000000000000000000000000000000000000..046c5b9fb73ac165a06a1a47ed192ba85aae9171
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga2_reg_info.c
-@@ -0,0 +1,3608 @@
+@@ -0,0 +1,3618 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -39428,7 +39434,7 @@ index 0000000000000000000000000000000000000000..a83a046ee04626bf0f35c8c7b41532f7
 +	}
 +}
 +
-+static void rga2_soft_reset(struct rga_scheduler_t *scheduler)
++static int rga2_soft_reset(struct rga_scheduler_t *scheduler)
 +{
 +	u32 i = 0;
 +	u32 reg;
@@ -39480,16 +39486,23 @@ index 0000000000000000000000000000000000000000..a83a046ee04626bf0f35c8c7b41532f7
 +		rga_write(RGA_IOMMU_CMD_ENABLE_PAGING, RGA_IOMMU_COMMAND, scheduler);
 +	}
 +
-+	if (i == RGA_RESET_TIMEOUT)
++	if (i == RGA_RESET_TIMEOUT) {
 +		rga_fault(scheduler, "%s[%#x] soft reset timeout.\n",
 +			rga_get_core_name(scheduler->core), scheduler->core);
++		return -ETIMEDOUT;
++	}
++	return 0;
 +}
 +
-+static void rga2_soft_reset_print(struct rga_scheduler_t *scheduler)
++static int rga2_soft_reset_print(struct rga_scheduler_t *scheduler)
 +{
-+	rga2_soft_reset(scheduler);
++	int ret = rga2_soft_reset(scheduler);
++
++	if (ret)
++		return ret;
 +	rga_log("%s[%#x] soft reset complete.\n",
 +		rga_get_core_name(scheduler->core), scheduler->core);
++	return 0;
 +}
 +
 +static int rga2_check_param(struct rga_job *job,
@@ -39974,7 +39987,10 @@ index 0000000000000000000000000000000000000000..a83a046ee04626bf0f35c8c7b41532f7
 +		rga_write(0, RGA2_INT, scheduler);
 +		rga_write(0, RGA2_CMD_REG_BASE + RGA2_MODE_CTRL_OFFSET, scheduler);
 +		/* replace auto_rst */
-+		rga_telemetry_reset(scheduler, 0, rga2_soft_reset);
++		if (rga_telemetry_reset(scheduler, 0, rga2_soft_reset)) {
++			spin_unlock_irqrestore(&scheduler->irq_lock, flags);
++			return scheduler->reset_result;
++		}
 +	} else {
 +		sys_ctrl |= m_RGA2_SYS_CTRL_AUTO_RST;
 +	}
@@ -40311,10 +40327,10 @@ index 0000000000000000000000000000000000000000..a83a046ee04626bf0f35c8c7b41532f7
 +};
 diff --git a/drivers/video/rockchip/rga3/rga3_reg_info.c b/drivers/video/rockchip/rga3/rga3_reg_info.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..569ad8fbb3fc08d63a6b650fbc962c1dc8415c40
+index 0000000000000000000000000000000000000000..37f98f426f6d331c2eb9521422d3ea9685ee94f8
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga3_reg_info.c
-@@ -0,0 +1,2403 @@
+@@ -0,0 +1,2404 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -42080,7 +42096,7 @@ index 0000000000000000000000000000000000000000..569ad8fbb3fc08d63a6b650fbc962c1d
 +	}
 +}
 +
-+static void rga3_soft_reset(struct rga_scheduler_t *scheduler)
++static int rga3_soft_reset(struct rga_scheduler_t *scheduler)
 +{
 +	u32 i = 0;
 +	u32 iommu_dte_addr = 0;
@@ -42121,6 +42137,7 @@ index 0000000000000000000000000000000000000000..569ad8fbb3fc08d63a6b650fbc962c1d
 +	else
 +		rga_fault(scheduler, "%s[%#x] soft reset complete.\n",
 +			rga_get_core_name(scheduler->core), scheduler->core);
++	return i == RGA_RESET_TIMEOUT ? -ETIMEDOUT : 0;
 +}
 +
 +static int rga3_scale_check(struct rga_job *job, const struct rga3_req *req)
@@ -46038,10 +46055,10 @@ index 0000000000000000000000000000000000000000..2eabff20024a5b2cea7138a428b2daf7
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_drv.c b/drivers/video/rockchip/rga3/rga_drv.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..ed4c5e99756c848ae64e7378fee9fd83933d12f4
+index 0000000000000000000000000000000000000000..18a71a1e925d23bbf7445fafaf771ce60215f4f3
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_drv.c
-@@ -0,0 +1,2033 @@
+@@ -0,0 +1,2037 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -47856,10 +47873,12 @@ index 0000000000000000000000000000000000000000..ed4c5e99756c848ae64e7378fee9fd83
 +		rga_request_scheduler_shutdown(scheduler);
 +
 +#ifndef RGA_DISABLE_PM
-+	pm_runtime_suspend(&pdev->dev);
-+	device_init_wakeup(&pdev->dev, false);
-+	pm_runtime_disable(&pdev->dev);
-+	pm_runtime_dont_use_autosuspend(&pdev->dev);
++	if (!scheduler || !scheduler->dma_faulted) {
++		pm_runtime_suspend(&pdev->dev);
++		device_init_wakeup(&pdev->dev, false);
++		pm_runtime_disable(&pdev->dev);
++		pm_runtime_dont_use_autosuspend(&pdev->dev);
++	}
 +#endif /* #ifndef RGA_DISABLE_PM */
 +
 +	up_write(&rga_drvdata->rwsem);
@@ -47884,6 +47903,7 @@ index 0000000000000000000000000000000000000000..ed4c5e99756c848ae64e7378fee9fd83
 +	.shutdown = rga_drv_shutdown,
 +	.driver = {
 +		 .name = "rga3",
++		 .suppress_bind_attrs = true,
 +		 .of_match_table = of_match_ptr(rga3_dt_ids),
 +		 },
 +};
@@ -47894,6 +47914,7 @@ index 0000000000000000000000000000000000000000..ed4c5e99756c848ae64e7378fee9fd83
 +	.shutdown = rga_drv_shutdown,
 +	.driver = {
 +		 .name = "rga2",
++		 .suppress_bind_attrs = true,
 +		 .of_match_table = of_match_ptr(rga2_dt_ids),
 +		 },
 +};
@@ -49401,10 +49422,10 @@ index 0000000000000000000000000000000000000000..9c1ca093f9982565c65ed90f1e119a2d
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_job.c b/drivers/video/rockchip/rga3/rga_job.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..c55ef2c9cacc4df2b4dd1298ae472781778f1cd4
+index 0000000000000000000000000000000000000000..c8d76a65f4d96f7cc27fed5a4ef38ceff7b942ee
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_job.c
-@@ -0,0 +1,2098 @@
+@@ -0,0 +1,2122 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -49528,21 +49549,34 @@ index 0000000000000000000000000000000000000000..c55ef2c9cacc4df2b4dd1298ae472781
 +	media_dump_capture(&scheduler->dump, &record);
 +}
 +
-+void rga_telemetry_reset(struct rga_scheduler_t *scheduler, int reason,
-+			 void (*reset)(struct rga_scheduler_t *scheduler))
++static int rga_reset_failed(struct rga_scheduler_t *scheduler, int error)
 +{
-+	if (!reset)
-+		return;
-+	if (!media_recovery_claim(&scheduler->recovery,
++	if (!scheduler->dma_faulted)
++		__module_get(THIS_MODULE);
++	scheduler->dma_faulted = true;
++	scheduler->reset_result = error;
++	return error;
++}
++
++int rga_telemetry_reset(struct rga_scheduler_t *scheduler, int reason,
++			 int (*reset)(struct rga_scheduler_t *scheduler))
++{
++	if (scheduler->dma_faulted)
++		return scheduler->reset_result;
++	/* The per-job initialization reset must not consume error recovery's claim. */
++	if (reason && !media_recovery_claim(&scheduler->recovery,
 +				  atomic64_read(&scheduler->recovery.recovery_epoch)))
-+		return;
++		return scheduler->reset_result;
 +
 +	atomic64_inc(&scheduler->telemetry.resets);
 +	trace_rga_reset(scheduler->core, reason);
 +	if (scheduler->running_job)
 +		rga_dump_job(scheduler, scheduler->running_job);
 +	media_dump_event(&scheduler->dump, MEDIA_RESET, 0, reason);
-+	reset(scheduler);
++	scheduler->reset_result = reset ? reset(scheduler) : -EOPNOTSUPP;
++	if (scheduler->reset_result)
++		return rga_reset_failed(scheduler, scheduler->reset_result);
++	return scheduler->reset_result;
 +}
 +
 +static int rga_job_cleanup(struct rga_job *job)
@@ -49663,6 +49697,7 @@ index 0000000000000000000000000000000000000000..c55ef2c9cacc4df2b4dd1298ae472781
 +		return ret;
 +	}
 +
++	media_recovery_started(&scheduler->recovery);
 +	iommu_fault = rga_iommu_test_prepare(scheduler);
 +	if (iommu_fault || rga_test_irq_timeout() || rga_test_hang_task()) {
 +		/* Keep timeout/cancel ownership, but never start DMA for this shot. */
@@ -49674,21 +49709,22 @@ index 0000000000000000000000000000000000000000..c55ef2c9cacc4df2b4dd1298ae472781
 +	}
 +	if (ret < 0) {
 +		rga_job_err(job, "set reg failed");
-+		rga_power_disable(scheduler);
++		if (!scheduler->dma_faulted)
++			rga_power_disable(scheduler);
 +		return ret;
 +	}
 +
 +	set_bit(RGA_JOB_STATE_RUNNING, &job->state);
 +	job->telemetry_start = ktime_get();
 +	trace_rga_job_started(scheduler->core, job->request_id);
-+	media_recovery_started(&scheduler->recovery);
 +	media_dump_event(&scheduler->dump, MEDIA_STARTED, job->request_id, 0);
 +
 +	if (iommu_fault) {
 +		/* The callback owns irq_lock; job_mutex keeps this job published. */
 +		rga_iommu_test_fault(scheduler);
 +		rga_telemetry_record_busy(scheduler, job, false);
-+		rga_power_disable(scheduler);
++		if (!scheduler->dma_faulted)
++			rga_power_disable(scheduler);
 +		return job->ret;
 +	}
 +
@@ -49705,7 +49741,7 @@ index 0000000000000000000000000000000000000000..c55ef2c9cacc4df2b4dd1298ae472781
 +	mutex_lock(&scheduler->job_mutex);
 +	spin_lock_irqsave(&scheduler->irq_lock, flags);
 +
-+	if (scheduler->shutdown || scheduler->running_job ||
++	if (scheduler->shutdown || scheduler->dma_faulted || scheduler->running_job ||
 +	    list_empty(&scheduler->todo_list)) {
 +		spin_unlock_irqrestore(&scheduler->irq_lock, flags);
 +		mutex_unlock(&scheduler->job_mutex);
@@ -49718,6 +49754,15 @@ index 0000000000000000000000000000000000000000..c55ef2c9cacc4df2b4dd1298ae472781
 +
 +	scheduler->job_count--;
 +	atomic_dec(&rga_drvdata->telemetry_queue_depth);
++	if (ktime_ms_delta(ktime_get(), job->timestamp.insert) >= RGA_QUEUE_TIMEOUT_MS) {
++		job->ret = -ETIMEDOUT;
++		set_bit(RGA_JOB_STATE_INTR_ERR, &job->state);
++		spin_unlock_irqrestore(&scheduler->irq_lock, flags);
++		rga_mm_unmap_job_info(job);
++		mutex_unlock(&scheduler->job_mutex);
++		rga_request_release_signal(scheduler, job);
++		goto next_job;
++	}
 +
 +	scheduler->running_job = job;
 +	set_bit(RGA_JOB_STATE_PREPARE, &job->state);
@@ -49726,6 +49771,12 @@ index 0000000000000000000000000000000000000000..c55ef2c9cacc4df2b4dd1298ae472781
 +	spin_unlock_irqrestore(&scheduler->irq_lock, flags);
 +
 +	ret = rga_job_run(job, scheduler);
++	if (scheduler->dma_faulted) {
++		job->ret = scheduler->reset_result;
++		rga_job_put(job);
++		mutex_unlock(&scheduler->job_mutex);
++		return;
++	}
 +	/* If some error before hw run */
 +	if (ret < 0) {
 +		rga_job_err(job, "some error on rga_job_run before hw start, %s(%d)\n",
@@ -49761,6 +49812,11 @@ index 0000000000000000000000000000000000000000..c55ef2c9cacc4df2b4dd1298ae472781
 +	spin_lock_irqsave(&scheduler->irq_lock, flags);
 +
 +	job = scheduler->running_job;
++	if (scheduler->dma_faulted) {
++		spin_unlock_irqrestore(&scheduler->irq_lock, flags);
++		mutex_unlock(&scheduler->job_mutex);
++		return NULL;
++	}
 +	if (job == NULL) {
 +		rga_err("%s(%#x) running job has been cleanup.\n",
 +			rga_get_core_name(scheduler->core), scheduler->core);
@@ -49868,10 +49924,14 @@ index 0000000000000000000000000000000000000000..c55ef2c9cacc4df2b4dd1298ae472781
 +		trace_rga_job_timeout(scheduler->core, job->request_id);
 +		rga_dump_job(scheduler, job);
 +
-+		scheduler->running_job = NULL;
 +		scheduler->status = RGA_SCHEDULER_ABORT;
-+		rga_telemetry_reset(scheduler, -ETIMEDOUT,
-+				    scheduler->ops->soft_reset);
++		if (rga_telemetry_reset(scheduler, -ETIMEDOUT,
++					scheduler->ops->soft_reset)) {
++			spin_unlock_irqrestore(&scheduler->irq_lock, flags);
++			mutex_unlock(&scheduler->job_mutex);
++			return;
++		}
++		scheduler->running_job = NULL;
 +
 +		spin_unlock_irqrestore(&scheduler->irq_lock, flags);
 +
@@ -49895,10 +49955,15 @@ index 0000000000000000000000000000000000000000..c55ef2c9cacc4df2b4dd1298ae472781
 +
 +	mutex_lock(&scheduler->job_mutex);
 +	spin_lock_irqsave(&scheduler->irq_lock, flags);
-+	if (scheduler->shutdown) {
++	if (scheduler->shutdown || scheduler->dma_faulted) {
 +		spin_unlock_irqrestore(&scheduler->irq_lock, flags);
 +		mutex_unlock(&scheduler->job_mutex);
 +		return -ESHUTDOWN;
++	}
++	if (scheduler->job_count >= RGA_SCHED_QUEUE_LIMIT) {
++		spin_unlock_irqrestore(&scheduler->irq_lock, flags);
++		mutex_unlock(&scheduler->job_mutex);
++		return -EAGAIN;
 +	}
 +
 +	/* priority policy set by userspace */
@@ -50321,7 +50386,6 @@ index 0000000000000000000000000000000000000000..c55ef2c9cacc4df2b4dd1298ae472781
 +{
 +	struct rga_job *job, *job_q;
 +	unsigned long flags;
-+	int power_ret;
 +	int removed = 0;
 +	bool had_running = false;
 +	LIST_HEAD(list_to_free);
@@ -50333,12 +50397,15 @@ index 0000000000000000000000000000000000000000..c55ef2c9cacc4df2b4dd1298ae472781
 +
 +	job = scheduler->running_job;
 +	if (job) {
-+		had_running = true;
 +		rga_telemetry_record_busy(scheduler, job, false);
-+		scheduler->running_job = NULL;
 +		job->ret = -ESHUTDOWN;
 +		set_bit(RGA_JOB_STATE_INTR_ERR, &job->state);
-+		list_add_tail(&job->head, &list_to_free);
++		if (!rga_telemetry_reset(scheduler, -ESHUTDOWN,
++					 scheduler->ops->soft_reset)) {
++			had_running = true;
++			scheduler->running_job = NULL;
++			list_add_tail(&job->head, &list_to_free);
++		}
 +	}
 +
 +	list_for_each_entry_safe(job, job_q, &scheduler->todo_list, head) {
@@ -50354,27 +50421,14 @@ index 0000000000000000000000000000000000000000..c55ef2c9cacc4df2b4dd1298ae472781
 +	spin_unlock_irqrestore(&scheduler->irq_lock, flags);
 +	mutex_unlock(&scheduler->job_mutex);
 +
-+	power_ret = rga_power_enable(scheduler);
-+	if (power_ret) {
-+		rga_err("failed to power core[%d] for shutdown: %d\n",
-+			scheduler->core, power_ret);
-+	} else if (had_running) {
-+		spin_lock_irqsave(&scheduler->irq_lock, flags);
-+		rga_telemetry_reset(scheduler, -ESHUTDOWN,
-+				    scheduler->ops->soft_reset);
-+		spin_unlock_irqrestore(&scheduler->irq_lock, flags);
-+	}
-+
 +	/* No IRQ or restart path owns these jobs after shutdown was published. */
 +	list_for_each_entry_safe(job, job_q, &list_to_free, head) {
 +		rga_mm_unmap_job_info(job);
 +		rga_request_release_signal(scheduler, job);
 +	}
 +
-+	/* Balance the running job and temporary reset power references. */
++	/* A failed reset retains the running job's power reference. */
 +	if (had_running)
-+		rga_power_disable(scheduler);
-+	if (!power_ret)
 +		rga_power_disable(scheduler);
 +}
 +
@@ -50395,13 +50449,20 @@ index 0000000000000000000000000000000000000000..c55ef2c9cacc4df2b4dd1298ae472781
 +	job = scheduler->running_job;
 +	if (job) {
 +		rga_telemetry_record_busy(scheduler, job, false);
-+		scheduler->running_job = NULL;
 +		scheduler->status = RGA_SCHEDULER_ABORT;
 +		job->ret = -ECANCELED;
 +		set_bit(RGA_JOB_STATE_INTR_ERR, &job->state);
-+		if (!power_ret)
-+			rga_telemetry_reset(scheduler, -ECANCELED,
-+					    scheduler->ops->soft_reset);
++		if (power_ret || rga_telemetry_reset(scheduler, -ECANCELED,
++						 scheduler->ops->soft_reset)) {
++			if (power_ret)
++				rga_reset_failed(scheduler, power_ret);
++			spin_unlock_irqrestore(&scheduler->irq_lock, flags);
++			mutex_unlock(&scheduler->job_mutex);
++			if (!power_ret)
++				rga_power_disable(scheduler);
++			return;
++		}
++		scheduler->running_job = NULL;
 +
 +		spin_unlock_irqrestore(&scheduler->irq_lock, flags);
 +
@@ -50466,6 +50527,13 @@ index 0000000000000000000000000000000000000000..c55ef2c9cacc4df2b4dd1298ae472781
 +		if (scheduler->running_job) {
 +			if (request->id == scheduler->running_job->request_id) {
 +				job = scheduler->running_job;
++				if (scheduler->dma_faulted ||
++				    rga_telemetry_reset(scheduler, -ECANCELED,
++							scheduler->ops->soft_reset)) {
++					job->ret = -ECANCELED;
++					job = NULL;
++					goto unlock_scheduler;
++				}
 +				scheduler->running_job = NULL;
 +				scheduler->status = RGA_SCHEDULER_ABORT;
 +				job->ret = -ECANCELED;
@@ -50477,8 +50545,6 @@ index 0000000000000000000000000000000000000000..c55ef2c9cacc4df2b4dd1298ae472781
 +					scheduler->timer.busy_time +=
 +						ktime_us_delta(ktime_get(),
 +							       job->timestamp.hw_recode);
-+					rga_telemetry_reset(scheduler, -ECANCELED,
-+							    scheduler->ops->soft_reset);
 +				}
 +				job->session->last_active = ktime_get();
 +
@@ -50489,6 +50555,7 @@ index 0000000000000000000000000000000000000000..c55ef2c9cacc4df2b4dd1298ae472781
 +			}
 +		}
 +
++	unlock_scheduler:
 +		spin_unlock_irqrestore(&scheduler->irq_lock, flags);
 +		if (removed)
 +			atomic_sub(removed, &rga_drvdata->telemetry_queue_depth);
@@ -50619,30 +50686,8 @@ index 0000000000000000000000000000000000000000..c55ef2c9cacc4df2b4dd1298ae472781
 +
 +static int rga_request_timeout_query_state(struct rga_request *request)
 +{
-+	int i;
-+	unsigned long flags;
-+	struct rga_scheduler_t *scheduler = NULL;
-+	struct rga_job *job = NULL;
-+
-+	for (i = 0; i < rga_drvdata->num_of_scheduler; i++) {
-+		scheduler = rga_drvdata->scheduler[i];
-+
-+		spin_lock_irqsave(&scheduler->irq_lock, flags);
-+
-+		if (scheduler->running_job) {
-+			job = scheduler->running_job;
-+
-+			if (request->id == job->request_id) {
-+				request->ret = rga_job_timeout_query_state(job, request->ret);
-+
-+				spin_unlock_irqrestore(&scheduler->irq_lock, flags);
-+				break;
-+			}
-+		}
-+
-+		spin_unlock_irqrestore(&scheduler->irq_lock, flags);
-+	}
-+
++	/* Cancel queued work too; only completion winning the lock may return zero. */
++	rga_request_release_abort(request, -ETIMEDOUT, false);
 +	return request->ret;
 +}
 +
@@ -50652,7 +50697,7 @@ index 0000000000000000000000000000000000000000..c55ef2c9cacc4df2b4dd1298ae472781
 +	int ret;
 +
 +	left_time = wait_event_timeout(request->finished_wq, request->is_done,
-+				       RGA_JOB_TIMEOUT_DELAY * request->task_count);
++			msecs_to_jiffies(RGA_JOB_TIMEOUT_DELAY * request->task_count));
 +
 +	switch (left_time) {
 +	case 0:
@@ -51505,10 +51550,10 @@ index 0000000000000000000000000000000000000000..c55ef2c9cacc4df2b4dd1298ae472781
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_mm.c b/drivers/video/rockchip/rga3/rga_mm.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..2341227ba26aef366ae6fbf7833c8b67d7d32750
+index 0000000000000000000000000000000000000000..39e6b76481c004377ee6de386491058f38ba9a1e
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_mm.c
-@@ -0,0 +1,4379 @@
+@@ -0,0 +1,4441 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -52438,6 +52483,26 @@ index 0000000000000000000000000000000000000000..2341227ba26aef366ae6fbf7833c8b67
 +		goto unmap_buffer;
 +	}
 +
++	if (job && scheduler->data->mmu == RGA_MMU &&
++	    (mm_flag & RGA_MEM_UNDER_4G)) {
++		struct rga_dma_buffer *execution = kzalloc(sizeof(*execution), GFP_KERNEL);
++
++		if (!execution) {
++			ret = -ENOMEM;
++			goto unmap_buffer;
++		}
++		ret = rga_mm_map_external_dma_buffer(external_buffer, execution,
++						     scheduler, scheduler->dev);
++		if (ret) {
++			kfree(execution);
++			goto unmap_buffer;
++		}
++		rga_dma_unmap_buf(buffer);
++		kfree(buffer);
++		buffer = execution;
++		map_scheduler = scheduler;
++	}
++
 +	internal_buffer->dma_buffer = buffer;
 +	internal_buffer->mm_flag = mm_flag;
 +	internal_buffer->phys_addr = phys_addr ? phys_addr : 0;
@@ -53356,25 +53421,13 @@ index 0000000000000000000000000000000000000000..2341227ba26aef366ae6fbf7833c8b67
 +	/* RK_IOMMU no need to configure enable or not in the driver. */
 +	if (job->scheduler->data->mmu == RGA_IOMMU)
 +		return false;
-+	if (buffer->type == RGA_VIRTUAL_ADDRESS &&
-+	    (job->flags & RGA_JOB_RGA2_STAGEABLE_DMA_BUF))
-+		return true;
-+
-+	/*
-+	 * High DMA-BUFs and USERPTRs that look physically contiguous still need
-+	 * the RGA2 MMU: their direct address is outside the 32-bit aperture and
-+	 * the per-job path may replace or remap them below 4G. Raw physical
-+	 * imports remain direct-address-only.
-+	 */
-+	if (buffer->mm_flag & RGA_MEM_PHYSICAL_CONTIGUOUS) {
-+		if (!(buffer->mm_flag & RGA_MEM_UNDER_4G) &&
-+		    (buffer->type == RGA_DMA_BUFFER ||
-+		     buffer->type == RGA_DMA_BUFFER_PTR ||
-+		     buffer->type == RGA_VIRTUAL_ADDRESS))
-+			return true;
-+
++	if (job->flags & RGA_JOB_DEBUG_FAKE_BUFFER)
 +		return false;
-+	}
++	if (buffer->type == RGA_DMA_BUFFER || buffer->type == RGA_DMA_BUFFER_PTR ||
++	    buffer->type == RGA_VIRTUAL_ADDRESS)
++		return true;
++	if (buffer->mm_flag & RGA_MEM_PHYSICAL_CONTIGUOUS)
++		return false;
 +
 +	return buffer->mm_flag & RGA_MEM_NEED_USE_IOMMU;
 +}
@@ -53860,10 +53913,13 @@ index 0000000000000000000000000000000000000000..2341227ba26aef366ae6fbf7833c8b67
 +
 +/*
 + * Return the sg table an RGA2 page table for @buffer should be built from,
-+ * and whether to consume sg_dma_address() (device-usable, possibly bounced
-+ * below 4G) or sg_phys(). Over-4G buffers that are only mapped for another
-+ * core get a transient per-job mapping against the RGA2 device here.
++ * using executing-device DMA addresses, never a foreign attachment's PFNs.
++ * High buffers use the bounded stage; low buffers still need an RGA2 map.
 + */
++static struct rga_dma_buffer *
++rga_mm_map_job_iommu_buffer(struct rga_job *job, struct rga_job_buffer *job_buf,
++			    struct rga_internal_buffer *origin);
++
 +static struct sg_table *rga_mm_get_rga2_sgt(struct rga_job *job,
 +					    struct rga_job_buffer *job_buf,
 +					    struct rga_internal_buffer *buffer,
@@ -53904,8 +53960,15 @@ index 0000000000000000000000000000000000000000..2341227ba26aef366ae6fbf7833c8b67
 +		return rga_mm_lookup_sgt(buffer);
 +	}
 +
-+	if (buffer->mm_flag & RGA_MEM_UNDER_4G)
-+		return rga_mm_lookup_sgt(buffer);
++	if (buffer->mm_flag & RGA_MEM_UNDER_4G) {
++		bounce = rga_mm_map_job_iommu_buffer(job, job_buf, buffer);
++		if (IS_ERR(bounce))
++			return ERR_CAST(bounce);
++		if (!bounce || bounce->map_dev != job->scheduler->dev)
++			return ERR_PTR(-EIO);
++		*use_dma_address = true;
++		return bounce->sgt;
++	}
 +	if (job_buf->rga2_bounce_count >= ARRAY_SIZE(job_buf->rga2_bounce))
 +		return ERR_PTR(-EOPNOTSUPP);
 +
@@ -54233,6 +54296,19 @@ index 0000000000000000000000000000000000000000..2341227ba26aef366ae6fbf7833c8b67
 +					       job_buf->iommu_mapping_count - 1);
 +}
 +
++static void rga_mm_release_job_buffer_mapping(struct rga_job_buffer *job_buf,
++					     struct rga_internal_buffer *origin)
++{
++	int i;
++
++	for (i = 0; i < job_buf->iommu_mapping_count; i++) {
++		if (job_buf->iommu_mapping[i].origin == origin) {
++			rga_mm_unmap_job_iommu_mapping(job_buf, i);
++			return;
++		}
++	}
++}
++
 +static struct rga_dma_buffer *
 +rga_mm_job_dma_buffer(struct rga_job_buffer *job_buf,
 +		      struct rga_internal_buffer *origin)
@@ -54320,7 +54396,10 @@ index 0000000000000000000000000000000000000000..2341227ba26aef366ae6fbf7833c8b67
 +	int ret;
 +	int slot;
 +
-+	if (job->scheduler->data->mmu != RGA_IOMMU)
++	if (job->scheduler->data->mmu == RGA_MMU &&
++	    (!(origin->mm_flag & RGA_MEM_UNDER_4G) ||
++	     (origin->type == RGA_VIRTUAL_ADDRESS &&
++	      (job->flags & RGA_JOB_RGA2_STAGEABLE_DMA_BUF))))
 +		return origin->dma_buffer;
 +	if (rga_mm_is_invalid_dma_buffer(origin->dma_buffer))
 +		return ERR_PTR(-EINVAL);
@@ -54344,10 +54423,28 @@ index 0000000000000000000000000000000000000000..2341227ba26aef366ae6fbf7833c8b67
 +			ret = -EINVAL;
 +			break;
 +		}
-+		ret = rga_dma_map_buf(origin->dma_buffer->dma_buf, mapping,
-+				      DMA_BIDIRECTIONAL, job->scheduler->dev);
++		if (job->scheduler->data->mmu == RGA_MMU)
++			ret = rga_dma_map_buf_pages(origin->dma_buffer->dma_buf, mapping,
++						    DMA_BIDIRECTIONAL, job->scheduler->dev);
++		else
++			ret = rga_dma_map_buf(origin->dma_buffer->dma_buf, mapping,
++					      DMA_BIDIRECTIONAL, job->scheduler->dev);
 +		break;
 +	case RGA_VIRTUAL_ADDRESS:
++		if (job->scheduler->data->mmu == RGA_MMU) {
++			owned_sgt = rga_alloc_sgt_segment(origin->virt_addr->pages,
++				origin->virt_addr->page_count, 0,
++				(size_t)origin->virt_addr->page_count << PAGE_SHIFT,
++				rga_dma_max_segment_size(job->scheduler->dev), GFP_KERNEL);
++			if (IS_ERR(owned_sgt)) {
++				ret = PTR_ERR(owned_sgt);
++				owned_sgt = NULL;
++				break;
++			}
++			ret = rga_dma_map_sgt_pages(owned_sgt, mapping,
++				DMA_BIDIRECTIONAL, job->scheduler->dev);
++			break;
++		}
 +		owned_sgt = rga_mm_alloc_job_virt_sgt(origin, &real_offset);
 +		if (IS_ERR(owned_sgt)) {
 +			ret = PTR_ERR(owned_sgt);
@@ -54419,7 +54516,8 @@ index 0000000000000000000000000000000000000000..2341227ba26aef366ae6fbf7833c8b67
 +	if (has_shadow && (dir == DMA_TO_DEVICE || dir == DMA_BIDIRECTIONAL))
 +		rga_shadow_copy_to_shadow(buffer->virt_addr);
 +
-+	if (buffer->mm_flag & RGA_MEM_PHYSICAL_CONTIGUOUS) {
++	if ((buffer->mm_flag & RGA_MEM_PHYSICAL_CONTIGUOUS) &&
++	    buffer->type == RGA_PHYSICAL_ADDRESS) {
 +		if (scheduler->data->mmu == RGA_IOMMU) {
 +			dma_addr_t iova = dma_buffer->iova + dma_buffer->offset;
 +
@@ -54448,7 +54546,7 @@ index 0000000000000000000000000000000000000000..2341227ba26aef366ae6fbf7833c8b67
 +		}
 +
 +		dma_sync_sg_for_device(dma_buffer->map_dev, sgt->sgl,
-+				       sgt->orig_nents, dir);
++				       sgt->orig_nents, dma_buffer->dir);
 +	}
 +
 +	if (DEBUGGER_EN(TIME))
@@ -54488,7 +54586,8 @@ index 0000000000000000000000000000000000000000..2341227ba26aef366ae6fbf7833c8b67
 +		return -EFAULT;
 +	}
 +
-+	if (buffer->mm_flag & RGA_MEM_PHYSICAL_CONTIGUOUS) {
++	if ((buffer->mm_flag & RGA_MEM_PHYSICAL_CONTIGUOUS) &&
++	    buffer->type == RGA_PHYSICAL_ADDRESS) {
 +		if (scheduler->data->mmu == RGA_IOMMU) {
 +			dma_addr_t iova = dma_buffer->iova + dma_buffer->offset;
 +
@@ -54517,7 +54616,7 @@ index 0000000000000000000000000000000000000000..2341227ba26aef366ae6fbf7833c8b67
 +		}
 +
 +		dma_sync_sg_for_cpu(dma_buffer->map_dev, sgt->sgl,
-+				    sgt->orig_nents, dir);
++				    sgt->orig_nents, dma_buffer->dir);
 +	}
 +
 +	if (has_shadow && (dir == DMA_FROM_DEVICE || dir == DMA_BIDIRECTIONAL))
@@ -54581,12 +54680,18 @@ index 0000000000000000000000000000000000000000..2341227ba26aef366ae6fbf7833c8b67
 +		break;
 +	case RGA_MMU:
 +	default:
++		if (job->flags & RGA_JOB_DEBUG_FAKE_BUFFER) {
++			addr = internal_buffer->dma_buffer->dma_addr;
++			break;
++		}
 +		if ((internal_buffer->mm_flag & RGA_MEM_PHYSICAL_CONTIGUOUS) &&
-+		    ((internal_buffer->mm_flag & RGA_MEM_UNDER_4G) ||
-+		     internal_buffer->type == RGA_PHYSICAL_ADDRESS)) {
++		    internal_buffer->type == RGA_PHYSICAL_ADDRESS) {
 +			addr = internal_buffer->phys_addr;
 +			break;
 +		}
++		dma_buffer = rga_mm_map_job_iommu_buffer(job, job_buf, internal_buffer);
++		if (IS_ERR(dma_buffer))
++			return PTR_ERR(dma_buffer);
 +
 +		switch (internal_buffer->type) {
 +		case RGA_DMA_BUFFER:
@@ -54689,6 +54794,7 @@ index 0000000000000000000000000000000000000000..2341227ba26aef366ae6fbf7833c8b67
 +	return 0;
 +
 +put_internal_buffer:
++	rga_mm_release_job_buffer_mapping(job_buf, internal_buffer);
 +	mutex_lock(&mm->lock);
 +	kref_put(&internal_buffer->refcount, rga_mm_kref_release_buffer);
 +	mutex_unlock(&mm->lock);
@@ -54716,6 +54822,7 @@ index 0000000000000000000000000000000000000000..2341227ba26aef366ae6fbf7833c8b67
 +		rga_mm_dump_buffer(internal_buffer);
 +	}
 +
++	rga_mm_release_job_buffer_mapping(job_buf, internal_buffer);
 +	mutex_lock(&mm->lock);
 +	kref_put(&internal_buffer->refcount, rga_mm_kref_release_buffer);
 +	mutex_unlock(&mm->lock);
@@ -55890,10 +55997,10 @@ index 0000000000000000000000000000000000000000..2341227ba26aef366ae6fbf7833c8b67
 +}
 diff --git a/drivers/video/rockchip/rga3/rga_policy.c b/drivers/video/rockchip/rga3/rga_policy.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..351decd40262afaec1353cf7e5aa5309171b7db0
+index 0000000000000000000000000000000000000000..8f65a04362a9fd1f5a4a9ca06ef714411040177a
 --- /dev/null
 +++ b/drivers/video/rockchip/rga3/rga_policy.c
-@@ -0,0 +1,582 @@
+@@ -0,0 +1,588 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Copyright (C) Rockchip Electronics Co., Ltd.
@@ -56448,6 +56555,11 @@ index 0000000000000000000000000000000000000000..351decd40262afaec1353cf7e5aa5309
 +
 +		if (optional_cores & scheduler->core) {
 +			spin_lock_irqsave(&scheduler->irq_lock, flags);
++			if (scheduler->shutdown || scheduler->dma_faulted ||
++			    scheduler->job_count >= RGA_SCHED_QUEUE_LIMIT) {
++				spin_unlock_irqrestore(&scheduler->irq_lock, flags);
++				continue;
++			}
 +
 +			if (scheduler->running_job == NULL) {
 +				core = scheduler->core;
@@ -56468,7 +56580,8 @@ index 0000000000000000000000000000000000000000..351decd40262afaec1353cf7e5aa5309
 +		}
 +	}
 +
-+	/* TODO: need consider full load */
++	if (core == RGA_NONE_CORE)
++		return -EAGAIN;
 +	if (DEBUGGER_EN(MSG))
 +		rga_job_log(job, "matched cores = %#x, assign core: %s(%#x)\n",
 +			optional_cores,

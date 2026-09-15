@@ -230,6 +230,14 @@ could hold. This is source repair, not a release or board qualification; the
 H7/conservation causal links remain unproven. Local compilation databases and
 clangd flags are ignored build artifacts, not repository build inputs.
 
+The review follow-up makes reset failure fail-stop: retain the running job's
+memory and power until reboot, with unload/unbind blocked. Reachable RGA2 buffers
+now receive execution-device mappings and DMA-address PTEs rather than borrowing
+RGA3 ownership. Queue admission is bounded, expired queued work cannot start,
+and synchronous timeout cancels queued requests rather than reporting success.
+The strengthened host control and new KUnit lifetime/ownership/deadline cases
+are documented in the same memory-repair note; staging limits remain unchanged.
+
 The [host verification of `465598e26`](docs/verification/rga-host-465598e26.md)
 records 47 executed RGA-related KUnit cases, the Coccinelle findings and triage,
 and the parent comparison proving the MPP hardening checker failure pre-existing.
