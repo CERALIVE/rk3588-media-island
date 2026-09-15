@@ -248,6 +248,12 @@ records 47 executed RGA-related KUnit cases, the Coccinelle findings and triage,
 and the parent comparison proving the MPP hardening checker failure pre-existing.
 It does not waive that failing gate or claim board qualification.
 
+The separate [MPP clock-checker repair](docs/CI.md#3a-mpp-partial-clock-unwind-checker)
+checks the actual unlocked enable/unwind helper and its wrapper's error return.
+Run `python3 scripts/check-mpp-hardening.py` for all 23 source assertions and
+add `--self-test` for the positive/negative mutation controls. The driver unwind
+was correct; this tooling repair changes no driver or generated series.
+
 ## Versioning
 
 CalVer, `YYYY.MINOR.PATCH`, matching the rest of the CeraLive stack. The tag is

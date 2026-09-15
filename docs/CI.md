@@ -253,6 +253,73 @@ questions, and only one of them would have caught this.
 
 ---
 
+## 3a. MPP partial-clock unwind checker
+
+The previously recorded `22 PASS / 1 FAIL` result was a checker defect, not a
+clock-leak finding. Before changing the checker, inspection of
+`drivers/video/rockchip/mpp/mpp_rkvenc2.c` established this failure path:
+
+| Failed enable | Already enabled | Cleanup in `rkvenc_clk_on_unlocked()` |
+|---|---|---|
+| ACLK | none | return the enable error |
+| HCLK | ACLK | `err_hclk` disables ACLK, returns the error |
+| core clock | ACLK, HCLK | `err_core` disables HCLK, falls through to `err_hclk`, returns the error |
+
+`core_clk_enabled` is set only after all three enables succeed. The wrapper
+`rkvenc_clk_on()` calls this helper and returns its status unchanged; the test
+configuration adds locking, not a second unwind. `mpp_clk_safe_enable()` forwards
+`clk_prepare_enable()` errors, and the power-on/probe callers release their PM
+reference when clock enable fails. No driver repair was needed.
+
+The assertion now scopes enable/cleanup checks to `rkvenc_clk_on_unlocked()`;
+the wrapper is checked separately for its call and error return. The original
+core-error-before-HCLK-disable assertion remains, supplemented by the enable
+branches, both cleanup labels, fall-through, and error return. This is a
+whitespace-normalized **source-shape contract**, not a general C control-flow
+analyzer or board proof. A legitimate restructuring of these statements needs a
+corresponding checker and mutation-test update, not a waiver.
+
+```bash
+python3 scripts/check-mpp-hardening.py
+python3 scripts/check-mpp-hardening.py --self-test
+```
+
+The CI tooling loop already runs `--self-test`. Its clock controls first accept
+the production helper, then independently remove HCLK disable, remove ACLK
+disable, redirect the core-error branch past HCLK cleanup, return early on HCLK
+failure, replace the cleanup error with success, bypass the helper in the
+wrapper, and mask the wrapper's error. Finally they accept restored input.
+Mutations are confined to the real clock-on source slice; the identical disable
+calls in `rkvenc_clk_off()` remain present and cannot satisfy the assertion.
+Missing mutation anchors fail rather than silently executing no mutation.
+
+The regression was run before the checker edit: the new self-test rejected
+production/restored input (seven negative controls passed, two positive controls
+failed). After the checker edit, a separate on-disk control removed only the
+HCLK disable at `err_core` in the real driver file. The normal CLI exited 1 with
+`mpp-hardening-all: pass:22 fail:1 total:23`, naming only
+`partial clock enable unwinds`. That line was restored immediately. No RGA
+source, generated series, release tag, or consumer pin is part of this fix.
+
+Restored-source receipt (2026-09-15):
+
+```text
+$ python3 scripts/check-mpp-hardening.py
+mpp-hardening-all: pass:23 fail:0 total:23
+exit=0
+$ python3 scripts/check-mpp-hardening.py --self-test
+mpp-hardening-clock-self-test: pass:9 fail:0 total:9
+mpp-hardening self-test: pass:17 fail:0 total:17
+exit=0
+```
+
+`ruff check scripts/check-mpp-hardening.py` and Python LSP diagnostics were
+clean. The driver/header/integration/generated-series diff was empty after
+restoration. These are tooling-only receipts; they do not claim a fresh kernel
+cross-build, KUnit run, or board qualification.
+
+---
+
 ## 4. `action-pins` is non-blocking, on purpose
 
 An action publishing a new major must not turn an unrelated pull request red.
