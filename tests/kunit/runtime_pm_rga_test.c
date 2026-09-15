@@ -1,6 +1,22 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "runtime_pm_rga_fixture.h"
 
+static void rga_wait_one_second_per_task_test(struct kunit *test)
+{
+	struct pm_rga_fixture *f = test->priv;
+	struct rga_request request = { .is_done = true, .task_count = 1 };
+
+	/* Milliseconds are a fixed contract, not a function of the kernel tick rate. */
+	KUNIT_EXPECT_EQ(test, RGA_JOB_TIMEOUT_DELAY, 1000);
+	KUNIT_EXPECT_EQ(test, rga_request_wait(&request), 0);
+	KUNIT_EXPECT_EQ(test, f->wait_calls, 1);
+	KUNIT_EXPECT_EQ(test, f->wait_timeout, (unsigned long)HZ);
+	request.task_count = 3;
+	KUNIT_EXPECT_EQ(test, rga_request_wait(&request), 0);
+	KUNIT_EXPECT_EQ(test, f->wait_calls, 2);
+	KUNIT_EXPECT_EQ(test, f->wait_timeout, 3UL * HZ);
+}
+
 static void rga_failed_reset_retains_tables_test(struct kunit *test)
 {
 	struct pm_rga_fixture *f = test->priv;
@@ -38,6 +54,8 @@ static void rga_queued_deadline_cancels_test(struct kunit *test)
 	rga_job_next(&f->scheduler);
 	/* When: the wait primitive reports the deadline expired. */
 	KUNIT_EXPECT_EQ(test, rga_request_wait(&request), -ETIMEDOUT);
+	KUNIT_EXPECT_EQ(test, f->wait_calls, 1);
+	KUNIT_EXPECT_EQ(test, f->wait_timeout, (unsigned long)HZ);
 	/* Then: it cannot execute after the caller observes timeout. */
 	KUNIT_EXPECT_TRUE(test, list_empty(&f->scheduler.todo_list));
 	KUNIT_EXPECT_EQ(test, f->retired, 1);
@@ -197,6 +215,7 @@ static void rga_cancel_and_shutdown_retain_failed_reset_test(struct kunit *test)
 }
 
 static struct kunit_case pm_rga_cases[] = {
+	KUNIT_CASE(rga_wait_one_second_per_task_test),
 	KUNIT_CASE(rga_expired_queue_never_starts_test),
 	KUNIT_CASE(rga_queue_admission_limit_test),
 	KUNIT_CASE(rga_cancel_and_shutdown_retain_failed_reset_test),

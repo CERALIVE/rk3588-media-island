@@ -25,6 +25,8 @@ struct pm_rga_fixture {
 	int retired;
 	int reset_error;
 	int unmapped;
+	unsigned long wait_timeout;
+	int wait_calls;
 };
 
 static struct pm_rga_fixture *pm_fixture;
@@ -95,6 +97,13 @@ static void pm_test_unmap(struct rga_job *job)
 
 static void pm_test_release_abort(struct rga_request *request, int error, bool retire);
 
+static long pm_test_wait(bool done, unsigned long timeout)
+{
+	pm_fixture->wait_timeout = timeout;
+	pm_fixture->wait_calls++;
+	return done ? 1 : 0;
+}
+
 #define clk_bulk_prepare_enable pm_test_clocks_enable
 #define clk_bulk_disable_unprepare pm_test_clocks_disable
 #define rga_err(...) do { } while (0)
@@ -113,7 +122,7 @@ static void pm_test_release_abort(struct rga_request *request, int error, bool r
 #define rga_job_get(job) kref_get(&(job)->refcount)
 #define rga_job_put(job) kref_put(&(job)->refcount, pm_test_job_release)
 #undef wait_event_timeout
-#define wait_event_timeout(queue, condition, timeout) ((condition) ? 1 : 0)
+#define wait_event_timeout(queue, condition, timeout) pm_test_wait(condition, timeout)
 #define rga_request_release_abort pm_test_release_abort
 
 #include "runtime_pm_rga_power.inc"
