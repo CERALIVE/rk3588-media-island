@@ -98,6 +98,7 @@ rk3588-media-island/
 | Direct ioctl boundary KUnit, source staging, and coverage limits | [`docs/IOCTL-BOUNDARY-TESTS.md`](docs/IOCTL-BOUNDARY-TESTS.md) |
 | Runtime-PM autosuspend policy and get/put ownership audit | [`docs/RUNTIME-PM-AUDIT.md`](docs/RUNTIME-PM-AUDIT.md) — all eleven nodes, software-only exceptions, and KUnit regressions; no thermal verdict |
 | RGA table ownership, high-memory routing and software regressions | [`docs/RGA-MEMORY-ADDRESSABILITY.md`](docs/RGA-MEMORY-ADDRESSABILITY.md) — job-owned tables, early legacy preparation and bounded staging; source-only, no release or board qualification; H7 causality remains unproven |
+| RGA job ownership between commit publication and completion | [`docs/RGA-JOB-LIFETIME.md`](docs/RGA-JOB-LIFETIME.md) — the committer's own reference across queue publication, and the host sanitizer reproducer that proves it; software ownership only, no DMA/IRQ/PM emulation |
 | Add a compat shim | `drivers/video/rockchip/mpp/compat/` — and add its row to `docs/COMPAT.md`, or the lint refuses the build |
 | Change a device-tree node's owner | `integration/` — and update the `docs/OWNERSHIP.md` row in the same change |
 

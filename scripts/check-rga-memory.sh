@@ -4,6 +4,7 @@ set -euo pipefail
 root=$(realpath -- "$(dirname -- "${BASH_SOURCE[0]}")/..")
 python3 "$root/docs/repro/rga-import-order.py"
 python3 "$root/docs/repro/rga-table-lifetime.py"
+python3 "$root/docs/repro/rga-commit-lifetime.py"
 python3 "$root/docs/repro/rga-routing.py"
 mkdir -p "$root/test-results"
 work=$(mktemp -d "$root/test-results/rga-user-stage.XXXXXX")

@@ -1,0 +1,215 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
+/* Hardware-free lifetime fixture; not a DMA, IRQ or lock implementation test. */
+#include <assert.h>
+#include <errno.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define container_of(p, t, m) ((t *)((char *)(p) - offsetof(t, m)))
+struct list_head { struct list_head *next, *prev; };
+static void list_init(struct list_head *h) { h->next = h->prev = h; }
+static bool list_empty(struct list_head *h) { return h->next == h; }
+static void list_add(struct list_head *n, struct list_head *h)
+{ n->next = h->next; n->prev = h; h->next->prev = n; h->next = n; }
+static void list_add_tail(struct list_head *n, struct list_head *h)
+{ list_add(n, h->prev); }
+static void list_del_init(struct list_head *n)
+{ n->prev->next = n->next; n->next->prev = n->prev; list_init(n); }
+#define list_for_each_entry(p, h, m) \
+	for (struct list_head *cursor = (h)->next; \
+	     cursor != (h) && ((p) = container_of(cursor, __typeof__(*(p)), m), 1); \
+	     cursor = cursor->next)
+struct kref { unsigned int count; };
+static void kref_get(struct kref *r) { assert(r->count); r->count++; }
+static int kref_put(struct kref *r, void (*release)(struct kref *))
+{ assert(r->count); if (--r->count) return 0; release(r); return 1; }
+struct mutex { bool held; };
+struct rga_req { unsigned int handle_flag, core; };
+struct rga_session { int refs, id; struct { uint64_t tasks, bytes; } telemetry; };
+struct rga_request { int refs, id; struct rga_session *session; void *current_mm; };
+struct rga_job;
+struct rga_scheduler_t {
+	struct mutex job_mutex;
+	int irq_lock, core, job_count, power;
+	bool shutdown, dma_faulted;
+	struct list_head todo_list;
+	void *cmd_buf_pool;
+	struct { unsigned int cmd_reg_size; } *data;
+	struct { int (*init_reg)(struct rga_job *); } *ops;
+	int dump;
+};
+struct rga_job {
+	struct list_head head, rga2_stage_list;
+	struct kref refcount;
+	struct rga_session *session;
+	struct rga_request *request;
+	struct rga_scheduler_t *scheduler;
+	struct rga_req *task_list;
+	void *task_buffers, *cmd_buf, *mm;
+	size_t task_count, task_start, bytes;
+	int request_id, priority;
+	unsigned int flags;
+	unsigned long state;
+	struct { uint64_t insert; } timestamp;
+};
+struct rga_pending_request_manager { struct mutex lock; };
+struct driver {
+	struct rga_pending_request_manager *pend_request_manager;
+	int telemetry_queue_depth;
+};
+static struct driver *rga_drvdata;
+static struct rga_scheduler_t scheduler;
+static int freed, allocations, stage, fail_stage;
+static bool complete_at_unlock;
+static unsigned int queued_events, selected_events;
+static int rga_job_cleanup(struct rga_job *job);
+static void rga_job_get(struct rga_job *job);
+static int rga_job_put(struct rga_job *job);
+static void mutex_lock(struct mutex *m) { assert(!m->held); m->held = true; }
+static void finish_queued(void)
+{
+	if (!list_empty(&scheduler.todo_list)) {
+		struct rga_job *job = container_of(scheduler.todo_list.next, struct rga_job, head);
+		rga_job_get(job);
+		list_del_init(&job->head);
+		scheduler.job_count--;
+		rga_drvdata->telemetry_queue_depth--;
+		rga_job_put(job);
+		/* Model the terminal scheduler reference drop, using real cleanup. */
+		rga_job_cleanup(job);
+	}
+}
+static void mutex_unlock(struct mutex *m)
+{
+	assert(m->held);
+	m->held = false;
+	if (m == &scheduler.job_mutex && complete_at_unlock)
+		finish_queued();
+}
+#define spin_lock_irqsave(lock, flags) do { (void)(lock); (flags) = 0; } while (0)
+#define spin_unlock_irqrestore(lock, flags) do { (void)(lock); (void)(flags); } while (0)
+#define RGA_SCHED_QUEUE_LIMIT 32
+#define RGA_SCHED_PRIORITY_DEFAULT 0
+#define RGA_JOB_STATE_PENDING 0
+#define RGA_JOB_DEBUG_FAKE_BUFFER 32
+#define MEDIA_QUEUED 5
+#define MEDIA_SELECTED 6
+#define WARN_ON_ONCE(condition) assert(!(condition))
+#define array_size(a, b) ((a) * (b))
+#define IS_ERR(p) ((uintptr_t)(p) >= (uintptr_t)-4095)
+#define PTR_ERR(p) ((int)(intptr_t)(p))
+#define rga_job_err(...) ((void)0)
+#define rga_err(...) ((void)0)
+static uint64_t ktime_get(void) { return 1; }
+static void set_bit(unsigned int n, unsigned long *p) { *p |= 1UL << n; }
+static void atomic_inc(int *p) { ++*p; }
+static void atomic64_inc(uint64_t *p) { ++*p; }
+static void atomic64_add(uint64_t n, uint64_t *p) { *p += n; }
+static void rga_session_put(struct rga_session *s) { assert(s->refs > 1); s->refs--; }
+static void rga_request_get(struct rga_request *r) { r->refs++; }
+static void rga_request_put(struct rga_request *r) { assert(r->refs > 1); r->refs--; }
+static void kvfree(void *p) { free(p); }
+static void kfree(void *p) { freed++; free(p); }
+static void rga_dma_free(void *p) { free(p); }
+static void rga_dma_buf_pool_free(void *pool, void *p) { (void)pool; free(p); }
+static int fail_here(void) { return ++stage == fail_stage ? -EIO : 0; }
+static struct rga_job *rga_job_alloc(struct rga_req *tasks, size_t count,
+				      struct rga_session *session)
+{
+	struct rga_job *job = calloc(1, sizeof(*job));
+	assert(job);
+	allocations++;
+	job->refcount.count = 1;
+	job->session = session;
+	session->refs++;
+	list_init(&job->head);
+	list_init(&job->rga2_stage_list);
+	job->task_list = malloc(count * sizeof(*tasks));
+	assert(job->task_list);
+	memcpy(job->task_list, tasks, count * sizeof(*tasks));
+	job->task_count = count;
+	return job;
+}
+static int rga_job_judgment_support_core(struct rga_job *j, struct rga_req *r)
+{ (void)j; (void)r; return 0; }
+static int rga_mm_prepare_job_info(struct rga_job *j) { (void)j; return fail_here(); }
+static struct rga_scheduler_t *rga_job_schedule(struct rga_job *j)
+{ j->scheduler = &scheduler; return &scheduler; }
+static int rga_job_validate(struct rga_job *j) { (void)j; return fail_here(); }
+static int rga_power_enable(struct rga_scheduler_t *s)
+{ int ret = fail_here(); if (!ret) s->power++; return ret; }
+static void rga_power_disable(struct rga_scheduler_t *s) { assert(s->power > 0); s->power--; }
+static void *rga_dma_buf_pool_alloc(void *pool)
+{ (void)pool; return fail_here() ? NULL : malloc(8); }
+static void *rga_dma_alloc_coherent(struct rga_scheduler_t *s, size_t bytes)
+{ (void)s; return fail_here() ? NULL : malloc(bytes); }
+static int rga_mm_map_job_info(struct rga_job *j) { (void)j; return fail_here(); }
+static void rga_mm_unmap_job_info(struct rga_job *j) { (void)j; }
+static int init_reg(struct rga_job *j) { (void)j; return fail_here(); }
+static void rga_job_next(struct rga_scheduler_t *s) { (void)s; }
+static void trace_rga_req_queued(int session, int request, size_t count)
+{ assert(session == 7 && request == 42 && count > 0); }
+static void trace_rga_core_selected(int request, int core, unsigned int mask)
+{ assert(request == 42 && core == 1 && mask == 1); }
+static void media_dump_event(int *dump, int event, int request, int ret)
+{
+	(void)dump;
+	assert(request == 42 && ret == 0);
+	if (event == MEDIA_QUEUED) queued_events++;
+	if (event == MEDIA_SELECTED) selected_events++;
+}
+
+/* PRODUCTION_FUNCTIONS */
+
+int main(int argc, char **argv)
+{
+	assert(argc == 2);
+	int mode = atoi(argv[1]);
+	struct rga_pending_request_manager manager = {0};
+	struct driver driver = { .pend_request_manager = &manager };
+	struct rga_session session = { .refs = 1, .id = 7 };
+	struct rga_request request = { .refs = 1, .id = 42, .session = &session };
+	struct rga_req tasks[2] = {{ .core = 1 }, { .core = 1 }};
+	typeof(*scheduler.data) data = { .cmd_reg_size = 2 };
+	typeof(*scheduler.ops) ops = { .init_reg = init_reg };
+	int initial_count = mode == 2 ? RGA_SCHED_QUEUE_LIMIT : 0;
+	int ret;
+
+	/* Given: a live request; modes force retirement or admission/prep errors. */
+	rga_drvdata = &driver;
+	scheduler.data = &data;
+	scheduler.ops = &ops;
+	scheduler.core = 1;
+	scheduler.job_count = initial_count;
+	scheduler.shutdown = mode == 3;
+	scheduler.dma_faulted = mode == 4;
+	list_init(&scheduler.todo_list);
+	complete_at_unlock = mode == 0 || mode == 5;
+	if (mode >= 10) fail_stage = mode - 9;
+
+	/* When: run byte-preserved production commit and publication functions. */
+	ret = rga_job_commit(tasks, mode == 5 ? 2 : 1, &request, 0);
+
+	/* Then: successful telemetry is safe; all ownership is balanced exactly once. */
+	if (mode == 0 || mode == 1 || mode == 5) {
+		assert(ret == 0);
+		assert(queued_events == 1 && selected_events == 1);
+		assert(session.telemetry.tasks == 1);
+		assert(session.telemetry.bytes == (mode == 5 ? 2 : 1) * sizeof(tasks[0]));
+		if (mode == 1) assert(freed == 0);
+	} else {
+		assert(ret < 0);
+		assert(queued_events == 0 && selected_events == 0);
+	}
+	finish_queued();
+	assert(allocations == 1 && freed == 1);
+	assert(session.refs == 1 && request.refs == 1);
+	assert(scheduler.power == 0 && scheduler.job_count == initial_count);
+	assert(driver.telemetry_queue_depth == 0);
+	printf("PASS mode=%d exactly-one-free refs-balanced\n", mode);
+	return 0;
+}
