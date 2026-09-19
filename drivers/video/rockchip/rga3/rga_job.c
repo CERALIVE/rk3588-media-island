@@ -538,6 +538,9 @@ static int rga_job_insert_todo_list(struct rga_job *job)
 		return -EAGAIN;
 	}
 
+	/* Completion may retire the queue reference as soon as we unlock. */
+	rga_job_get(job);
+
 	/* priority policy set by userspace */
 	if (list_empty(&scheduler->todo_list)
 		|| (job->priority == RGA_SCHED_PRIORITY_DEFAULT)) {
@@ -706,6 +709,8 @@ int rga_job_commit(struct rga_req *task_list, size_t task_count,
 	rga_job_next(scheduler);
 
 	rga_power_disable(scheduler);
+	/* Keep allocation ownership through every post-publication job access. */
+	rga_job_put(job);
 
 	return 0;
 
@@ -719,7 +724,7 @@ err_free_job:
 	if (job->task_buffers)
 		rga_mm_unmap_job_info(job);
 free_job:
-	rga_job_free(job);
+	rga_job_put(job);
 
 	return ret;
 }
