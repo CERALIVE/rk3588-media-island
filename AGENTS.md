@@ -105,8 +105,8 @@ rk3588-media-island/
 ## KEY FACTS
 
 **Shipped reality, recorded 2026-09-21: the island is on a booted production
-slot, not only in a pinned series.** Five releases exist (`v2026.9.1` through
-`v2026.9.5`). `rk3588-kernel-patches` PR #25 (`6996f96bc883f637ddac11f81871a256632f3f48`)
+slot, not only in a pinned series.** Six tags exist, `v2026.9.0` through
+`v2026.9.5`. `rk3588-kernel-patches` PR #25 (`6996f96bc883f637ddac11f81871a256632f3f48`)
 carries the `v2026.9.5` asset byte-preserved in its `island/` lane (source commit
 `836db612`, asset sha256 `364c4afd…`), and `image-building-pipeline` master pins
 that commit as `patches_commit`. On 2026-09-21 the Rock 5B+ and the Orange Pi 5+
