@@ -12,7 +12,7 @@ released as a `git am` mailbox series.
 | **Boards** | Radxa Rock 5B+, Orange Pi 5+ |
 | **Release artifact** | a generated `git am` series, plus its `.sha256` — no `.deb`, no kernel, no image |
 | **Versioning** | CalVer, `YYYY.MINOR.PATCH` |
-| **Status** | **MPP + RGA OWNERSHIP INTEGRATED IN SOURCE.** The complete donor/97-member replay, audited vendor backlog, mainline API port, three-core RGA ownership flip, generated series, and fail-closed RGA validation are present and CI-gated. Release `v2026.9.1` remains the latest published tag; no image or board carries the new RGA flip yet. |
+| **Status** | **MPP + RGA OWNERSHIP INTEGRATED IN SOURCE.** The complete donor/97-member replay, audited vendor backlog, mainline API port, three-core RGA ownership flip, generated series, and fail-closed RGA validation are present and CI-gated. Latest published tag `v2026.9.5`; both bench boards booted an image whose kernel carries it (`patches_commit 6996f96b`) from a production slot on 2026-09-21. See `AGENTS.md` KEY FACTS for what that boot does and does not prove. |
 
 ## Why this is a source repository and not a patch repository
 
