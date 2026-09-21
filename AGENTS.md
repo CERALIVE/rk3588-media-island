@@ -104,6 +104,23 @@ rk3588-media-island/
 
 ## KEY FACTS
 
+**Shipped reality, recorded 2026-09-21: the island is on a booted production
+slot, not only in a pinned series.** Five releases exist (`v2026.9.1` through
+`v2026.9.5`). `rk3588-kernel-patches` PR #25 (`6996f96bc883f637ddac11f81871a256632f3f48`)
+carries the `v2026.9.5` asset byte-preserved in its `island/` lane (source commit
+`836db612`, asset sha256 `364c4afd…`), and `image-building-pipeline` master pins
+that commit as `patches_commit`. On 2026-09-21 the Rock 5B+ and the Orange Pi 5+
+each promoted the image built from that pin to RAUC slot A, booted
+`linux-image-7.2.0-ceralive-rk3588 7.2.0-ceralive1` from it with `systemctl
+--failed` empty and `ceralive-healthcheck.service` self-marking the slot good with
+the current boot's own `boot-id`, and kept the previous production payload on slot
+B as the rollback. So the island's `rk_vcodec` owns the encoder, both decoders and
+`jpegd`, and `multi_rga` owns RGA3 core0/core1 and RGA2, on the kernel both bench
+boards run today. What that boot does NOT prove is unchanged: every fault-matrix,
+probe, soak and composition row keeps the verdict its own ledger records, and the
+board rule below ("every board result names its board, kernel build and island
+tag") is exactly why a clean boot is a boot receipt and not a tick.
+
 **RGA reset failure is fail-stop, not successful cancellation.** Backend reset
 status gates cleanup; an unsuccessful reset retains the running job's mappings,
 tables, command buffer and power reference until reboot. The failed core admits
