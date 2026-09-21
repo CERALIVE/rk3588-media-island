@@ -15,7 +15,7 @@
  *
  *     open  /dev/mpp_service            (fallback /dev/mpp-service)
  *     ioctl MPP_CMD_PROBE_HW_SUPPORT    -> u32 bitmap of present clients
- *     ioctl MPP_CMD_QUERY_CMD_SUPPORT   -> MppServiceCmdCap
+ *     ioctl MPP_CMD_QUERY_CMD_SUPPORT   -> once PER COMMAND BASE, u32 in/out
  *     per client, on a FRESH fd:
  *       ioctl MPP_CMD_INIT_CLIENT_TYPE  -> binds this session to one client
  *       ioctl MPP_CMD_QUERY_HW_ID       -> u32 hardware id
@@ -79,6 +79,31 @@ static const struct client_row kClients[] = {
 	{ "RKVENC2", MPP_CLIENT_RKVENC, 1u << MPP_CLIENT_RKVENC },
 };
 
+struct cmd_base_row {
+	const char *name;
+	uint32_t base;
+};
+
+/*
+ * QUERY_CMD_SUPPORT is a per-base query, not a struct transfer: one ioctl
+ * carries one u32 — the command base — which the service overwrites in place
+ * with that base's BUTT value (mpp_common.c, `mpp_get_cmd_butt`). So
+ * MppServiceCmdCap is assembled on THIS side from five replies and never
+ * crosses the boundary. The struct form this probe used to send is malformed
+ * and correctly earns EINVAL: `__mpp_process_request`'s size gate admits only
+ * the legacy zero-size discovery form or exactly `sizeof(u32)`. Order and
+ * form both follow libmpp's `check_mpp_service_cap`
+ * (rockchip-linux/mpp osal/driver/mpp_service.c), which walks the reply
+ * fields by the same index.
+ */
+static const struct cmd_base_row kCmdBases[] = {
+	{ "query", MPP_CMD_QUERY_BASE },
+	{ "init", MPP_CMD_INIT_BASE },
+	{ "send", MPP_CMD_SEND_BASE },
+	{ "poll", MPP_CMD_POLL_BASE },
+	{ "ctrl", MPP_CMD_CONTROL_BASE },
+};
+
 /* mpp_cfg — one MPP_IOC_CFG_V1 round trip. Returns 0 or -1 with errno set. */
 static int mpp_cfg(int fd, uint32_t cmd, uint32_t size, void *data)
 {
@@ -92,6 +117,49 @@ static int mpp_cfg(int fd, uint32_t cmd, uint32_t size, void *data)
 	req.data_ptr = (uint64_t)(uintptr_t)data;
 
 	return ioctl(fd, MPP_IOC_CFG_V1, &req);
+}
+
+/*
+ * libmpp reads the capability flag off procfs rather than from an ioctl, so
+ * this probe reports the same source instead of inventing a second one.
+ */
+static bool service_advertises_cmd_support(void)
+{
+	return access("/proc/mpp_service/supports-cmd", F_OK) == 0 ||
+	       access("/proc/mpp_service/support_cmd", F_OK) == 0;
+}
+
+static int query_cmd_support(int fd, struct mpp_service_cmd_cap *cap)
+{
+	uint32_t butt[sizeof(kCmdBases) / sizeof(kCmdBases[0])];
+	int refused = 0;
+	size_t i;
+
+	memset(cap, 0, sizeof(*cap));
+	memset(butt, 0, sizeof(butt));
+	cap->support_cmd = service_advertises_cmd_support() ? 1u : 0u;
+
+	for (i = 0; i < sizeof(kCmdBases) / sizeof(kCmdBases[0]); i++) {
+		uint32_t value = kCmdBases[i].base;
+
+		if (mpp_cfg(fd, MPP_CMD_QUERY_CMD_SUPPORT, sizeof(value),
+			    &value) != 0) {
+			printf("query_cmd_support.%s=error base=0x%03x errno=%d (%s)\n",
+			       kCmdBases[i].name, kCmdBases[i].base, errno,
+			       strerror(errno));
+			refused++;
+			continue;
+		}
+		butt[i] = value;
+	}
+
+	cap->query_cmd = butt[0];
+	cap->init_cmd = butt[1];
+	cap->send_cmd = butt[2];
+	cap->poll_cmd = butt[3];
+	cap->ctrl_cmd = butt[4];
+
+	return refused == 0 ? 0 : -1;
 }
 
 /*
@@ -236,6 +304,34 @@ static int self_test(void)
 	}
 	printf("request_encoding=ok\n");
 
+	/*
+	 * The regression lock for the defect this probe shipped with: a
+	 * capability query must encode ONE u32, never the 24-byte reply
+	 * struct, and it must ask every base MppServiceCmdCap reports.
+	 */
+	if (sizeof(kCmdBases) / sizeof(kCmdBases[0]) != 5u ||
+	    kCmdBases[0].base != 0x000u || kCmdBases[1].base != 0x100u ||
+	    kCmdBases[2].base != 0x200u || kCmdBases[3].base != 0x300u ||
+	    kCmdBases[4].base != 0x400u) {
+		fprintf(stderr, "FAIL: command-base table is wrong\n");
+		return EXIT_FAIL;
+	}
+	memset(&req, 0, sizeof(req));
+	req.cmd = MPP_CMD_QUERY_CMD_SUPPORT;
+	req.flags = MPP_FLAGS_LAST_MSG;
+	req.size = sizeof(uint32_t);
+	req.data_ptr = (uint64_t)(uintptr_t)&probe_payload;
+	if (req.size != 4u || req.size == sizeof(struct mpp_service_cmd_cap)) {
+		fprintf(stderr,
+			"FAIL: cmd-support query must carry one u32\n");
+		return EXIT_FAIL;
+	}
+	for (i = 0; i < sizeof(kCmdBases) / sizeof(kCmdBases[0]); i++)
+		printf("cmd_base.%s=0x%03x\n", kCmdBases[i].name,
+		       kCmdBases[i].base);
+	printf("cmd_support_query=per-base-u32 bases=%zu\n",
+	       sizeof(kCmdBases) / sizeof(kCmdBases[0]));
+
 	/* Both directions, or the expectation check proves nothing. */
 	if (!hw_support_matches(ISLAND_HW_SUPPORT, ISLAND_HW_SUPPORT) ||
 	    hw_support_matches(ISLAND_HW_SUPPORT, ISLAND_HW_SUPPORT ^ 1u) ||
@@ -337,8 +433,7 @@ int main(int argc, char **argv)
 		printf("expect_bits=exact bitmap=0x%08x\n", hw_support);
 	}
 
-	memset(&cap, 0, sizeof(cap));
-	if (mpp_cfg(fd, MPP_CMD_QUERY_CMD_SUPPORT, sizeof(cap), &cap) == 0)
+	if (query_cmd_support(fd, &cap) == 0)
 		printf("query_cmd_support=ok support=0x%08x query=0x%08x "
 		       "init=0x%08x send=0x%08x poll=0x%08x ctrl=0x%08x\n",
 		       cap.support_cmd, cap.query_cmd, cap.init_cmd,
