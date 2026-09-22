@@ -33,6 +33,7 @@ accepts the earlier Phase-0 layout for retained historical runs.
 | `rkvenc-fault-campaign.sh` | do the canonical malformed ioctls keep their exact errno while the known BASE-only harness case stays honestly red? | todo 9 |
 | `fault-matrix.sh --driver island\|auto` | do the sixteen fault rows leave the device recovered, with the armed one-shot consumed exactly once and the healthy session's throughput intact? All island telemetry assertions remain required | island fault recovery / the 16-row matrix |
 | `fault-controls-probe.sh` | do the five fault controls no matrix row consumes actually fire, exactly once, with their documented errno and a recovering device? The island seam is required; `--row idle-iommu-fault` is the separate, explicit-only idle experiment | island fault coverage / the five non-matrix controls |
+| `soak.sh` | does a long media session hold every slope rule — RSS, slab, dma-buf objects, IOMMU mappings, fd count, thread count, fps, drops and the per-core split — or exactly which rule failed, with the CSV retained? | todo 35 / Phase 11 long-duration soaks |
 | `run-baseline.sh` | all five, written into the baseline document and the ledger | 3(a)–(e) |
 
 ---

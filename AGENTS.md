@@ -90,6 +90,7 @@ rk3588-media-island/
 | Run the 16-row island fault matrix on a board | `tests/board/fault-matrix.sh --driver island` — `--self-test` scores committed island fixtures and still prints `16 MPP rows registered` |
 | Run the separate four-row RGA fault matrix | `tests/board/fault-matrix.sh --driver island-rga --probe-rga <binary>` — default-off `ROCKCHIP_RGA_CERALIVE_TEST`; host-tested source, **not board-qualified**. Contract and limits in `docs/FAULT-SEAM-CONTRACT.md`. |
 | Prove the five controls no matrix row consumes, or the explicit-only idle-window row | `tests/board/fault-controls-probe.sh` (`--row all` is the five; `--row idle-iommu-fault` is the separate experiment) |
+| Run a long-duration media soak and score its slope rules | `tests/board/soak.sh` — 60 s sampling into a CSV, then one literal verdict; `--self-test` scores committed fixtures on a dev host |
 | Read what those drills actually measured on silicon | [`docs/FAULT-CAMPAIGN.md`](docs/FAULT-CAMPAIGN.md) → "Fault-seam contract and the 2026-09 campaigns" |
 | Understand which licence branch applies to a file | [`LICENSE.md`](LICENSE.md) |
 | Build the modules | [`README.md`](README.md) → "Building the modules" |

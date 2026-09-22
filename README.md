@@ -187,6 +187,7 @@ use of a shared clamp before narrowing a resource-sized span to `u32`.
 | every gate's `--self-test` | CI, no hardware | each gate refuses a mutated tree AND accepts a correct one |
 | `tests/board/fault-matrix.sh` | a real Rock 5B+ or Orange Pi 5+ | the sixteen fault rows recover the device, consume the armed one-shot exactly once, and leave a healthy session's throughput intact — via `--driver island` |
 | `tests/board/fault-controls-probe.sh` | a real Rock 5B+ or Orange Pi 5+ | the five controls no matrix row consumes fire exactly once with their documented errno; `--row idle-iommu-fault` is the separate, explicit-only idle experiment |
+| `tests/board/soak.sh` | a real Rock 5B+ or Orange Pi 5+ | a long media session holds its nine slope rules — RSS, slab, dma-buf objects, IOMMU mappings, fd count, thread count, fps, drops and the per-core split — or the one failing rule and the retained CSV that proves it; `--self-test` scores committed fixtures on a dev host and is not board proof |
 | module contract | CI, source + built modules | every OF table is exported, the compiled aliases exist, and the hard-IRQ-only RKVENC2 path never uses `IRQF_ONESHOT` |
 | telemetry contract | CI + KUnit | tracepoint call sites and ordering, debugfs counters and session snapshots, static-key definitions, and the frozen MPP formatters remain intact |
 | `tests/dt/` | CI, built DTBs | both supported boards carry sole island MPP compatibles and every MPP client bypasses the unavailable BSP PMU-idle request; RGA remains mainline-owned |
