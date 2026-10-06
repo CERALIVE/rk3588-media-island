@@ -21,6 +21,7 @@
 **Checklist**
 
 - [ ] Docs updated in the same change (AGENTS.md, README, `docs/`) — see CONTRIBUTING "What must land together"
+- [ ] User docs (Rule G): no user-visible change, OR ceralive-docs PR <link> updates English and Spanish, plus ceralive-website PR <link> if a landing claim changed
 - [ ] Compat shim or external symbol change carries its `docs/COMPAT.md` row
 - [ ] Device-tree owner change carries its `docs/OWNERSHIP.md` row
 - [ ] New or changed file under `drivers/` or `include/uapi/` carries its `docs/PROVENANCE.md` row

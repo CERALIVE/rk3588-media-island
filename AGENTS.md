@@ -1,371 +1,96 @@
 # rk3588-media-island
 
-## ROLE IN THE GROUP
+Parent: [workspace rules](https://github.com/CERALIVE/ceralive/blob/master/AGENTS.md).
 
-Holds the CeraLive **RK3588 multimedia island** as maintained kernel source: the
-Rockchip MPP service with exactly three compiled clients (`RKVENC2`, `RKVDEC2`,
-`JPGDEC`), the `multi_rga` 2D engine driver, the UAPI headers they publish, and
-the `integration/` build-hook, IOMMU-provider and MPP device-tree patches they
-need. The applied RGA3-pair and RGA2 ownership hunks form one reversible
-device-tree flip; all three nodes now carry sole `multi_rga` compatibles.
+<!-- workspace-hard-rules:begin -->
+## Workspace hard rules (identical in every CeraLive AGENTS.md)
+- Commits and PRs carry the human author only: no Co-authored-by, no AI attribution.
+- Start from the updated canonical branch; rebase to update; never `reset --hard` or discard others' work.
+- One focused PR per repo, opened against CERALIVE/<repo>; the root policy PR merges first.
+- A repo is self-contained: no path above its root; consume @ceralive packages from the registry, never link:/file:.
+- Never delete, skip or weaken a test; every behavior change ships with a test.
+- A user-visible change updates docs.ceralive.tv in English and Spanish (es-419), and any ceralive.tv claim it touches, in the same release.
+- AGENTS.md holds rules and routing only, within budget; contracts and history live in docs/agents/.
+- Full canon: https://github.com/CERALIVE/ceralive/blob/master/AGENTS.md
+<!-- workspace-hard-rules:end -->
 
-It is **not a patch repository**. Its release artifact is a **generated** `git am`
-mailbox series; the source is the truth and the series is an output.
+## ROLE
 
-Produces **no `.deb`**, no kernel and no image artifact. It is therefore **NOT in
-the device image `REPOS` array** and not in `fetch-debs.sh`. It does carry a root
-`versions.yaml` entry — unlike the two RK3588 patch repositories — because it cuts
-releases whose tag the consumer's lane names.
-
-Relates to:
-
-- **`rk3588-kernel-patches/` — the SOLE consumer.** It ingests this repository's
-  release asset byte-preserved into an `island/` lane. Nothing else consumes the
-  island directly.
-- **`image-building-pipeline/` — the INDIRECT consumer.** It never sees this
-  repository. It pins the consumer's commit through a single
-  `kernel_source.patches_commit`, exactly as it did before the island existed.
-- `cerastream/` — the streaming engine that ends up driving this silicon through
-  GStreamer and librga. It consumes the island's behaviour, never its source.
-
-A kernel change therefore costs **three merges**: island tag → consumer
-`island/` lane bump → image `patches_commit` bump. Never plan a driver fix as a
-single pull request.
+Maintained REAL SOURCE for the RK3588 MPP service (RKVENC2, RKVDEC2, JPGDEC) and `multi_rga`.
+Ships a generated `git am` mailbox series, consumed byte-preserved by `rk3588-kernel-patches`' `island/` lane.
+Produces no `.deb`, kernel or image; never belongs in device `REPOS`.
 
 ## STRUCTURE
 
+| Path | Purpose |
+|---|---|
+| `drivers/` | Maintained MPP and RGA kernel source |
+| `include/` | Published UAPI headers |
+| `integration/` | Build/provider/device-tree patches |
+| `configs/` | Island kernel configuration fragment |
+| `patches/` | Generated mailbox output |
+| `scripts/` | Generators and independent contract checkers |
+| `tests/` | Host fixtures, probes, KUnit and hardware drills |
+| `docs/` | Ownership, provenance, ABI, qualification and archived contracts |
+
+## COMMANDS
+
+```bash
+shellcheck -S style -e SC1091 -x tests/board/*.sh tests/board/lib/*.sh scripts/*.sh
+bash scripts/check-rga-memory.sh
+for script in tests/board/*.sh tests/dt/*.sh; do bash "$script" --self-test || exit; done
+for tool in scripts/{build-series,verify-series-parity,check-compat-shims,check-dt-ownership,check-mpp-hardening,check-modernization,check-upstream-freshness}.py; do python3 "$tool" --self-test || exit; done
+for script in scripts/{check-action-pins,check-module-contract,check-telemetry-contract,check-fault-seam-contract,vendor-backlog}.sh; do bash "$script" --self-test || exit; done
+bash scripts/check-module-contract.sh
+bash scripts/check-telemetry-contract.sh
+bash scripts/check-fault-seam-contract.sh
+python3 scripts/build-series.py --check
+python3 scripts/verify-series-parity.py
+python3 scripts/check-compat-shims.py
+python3 scripts/check-dt-ownership.py
+python3 -m unittest discover -s tests/uapi -v
+make -C tests/board CROSS_COMPILE=aarch64-linux-gnu- clean all
+make -C tests/board selftest
 ```
-rk3588-media-island/
-├── kernel-pin.env               # MIRROR of rk3588-kernel-patches' kernel coordinate
-├── drivers/video/rockchip/
-│   ├── mpp/                     # MPP service + RKVENC2/RKVDEC2/JPGDEC
-│   │   └── compat/              # compat shims NEST HERE — there is no root-level compat/
-│   └── rga3/                    # multi_rga
-├── include/uapi/linux/          # UAPI headers the drivers publish
-├── integration/                 # applied patches: build hooks, providers, MPP DT ownership
-│   └── pending/                 # linted but unshipped RGA2/RGA3 ownership flips
-├── patches/                     # GENERATED series — never hand-edited
-├── scripts/                     # series generation, provenance, lint tooling
-│   ├── build-series.py          # drivers/ + integration/ -> patches/ ; --check byte-compares
-│   ├── verify-series-parity.py  # the SECOND, independent opinion — never imports the generator
-│   ├── check-compat-shims.py    # shim-lint: the docs/COMPAT.md 5-step specification
-│   ├── check-dt-ownership.py    # dt-ownership-lint: the one-compatible rule
-│   ├── check-upstream-freshness.py  # the issue-only watch's comparison
-│   └── check-action-pins.sh     # every `uses:` against gh api releases/latest
-├── tests/
-│   ├── board/                   # hardware-gated drills, probes and fixtures
-│   ├── kunit/                   # in-kernel unit tests
-│   └── fuzz/                    # UAPI fuzz targets
-└── docs/
-    ├── COMPAT.md                # shim + external-symbol inventory; ALSO the shim-lint input
-    ├── KEEP-STUB.md             # deliberate stubs and their reopening conditions
-    ├── OWNERSHIP.md             # silicon ownership table; ALSO the dt-ownership-lint input
-    ├── REFERENCES.md            # every pinned coordinate
-    ├── PROVENANCE.md            # per-file import ledger
-    ├── VENDOR-BACKLOG.md        # exhaustive post-donor vendor PICK/SKIP ledger
-    ├── UPSTREAM-STATUS.md       # mainline movement; the issue-only watch
-    ├── TELEMETRY.md             # tracefs/debugfs schemas + frozen proc formats
-    └── BOARD-QUALIFICATION.md   # what real hardware must demonstrate
-```
+
+Full PR gate: `.github/workflows/ci.yml`; kernel cross-build, KUnit and static analysis require the pinned kernel tree.
+Host fixtures and sanitizer regressions are not board qualification. See the CI contract before running those lanes.
 
 ## WHERE TO LOOK
 
-| Task | Location |
-|------|----------|
-| Find out what a CI job asserts, or why one is currently vacuous | [`docs/CI.md`](docs/CI.md) |
-| Regenerate the series after changing `drivers/` or `integration/` | `scripts/build-series.py` — then `--check` and `scripts/verify-series-parity.py` |
-| Change the target kernel | **Not here.** Bump [`rk3588-kernel-patches/kernel-pin.env`](https://github.com/CERALIVE/rk3588-kernel-patches/blob/main/kernel-pin.env) first, then mirror it into [`kernel-pin.env`](kernel-pin.env) |
-| Decide which driver owns a silicon block | [`docs/OWNERSHIP.md`](docs/OWNERSHIP.md) |
-| Classify an external symbol the drivers call | [`docs/COMPAT.md`](docs/COMPAT.md) |
-| Find where a source file came from | [`docs/PROVENANCE.md`](docs/PROVENANCE.md) |
-| Audit Rockchip fixes after the donor snapshot | [`docs/VENDOR-BACKLOG.md`](docs/VENDOR-BACKLOG.md) and `scripts/vendor-backlog.sh --check` |
-| Look up a pinned upstream SHA | [`docs/REFERENCES.md`](docs/REFERENCES.md) |
-| See whether mainline has caught up on a block | [`docs/UPSTREAM-STATUS.md`](docs/UPSTREAM-STATUS.md) |
-| Know what a board must demonstrate before a tick | [`docs/BOARD-QUALIFICATION.md`](docs/BOARD-QUALIFICATION.md) |
-| Orange Pi merged PR #150 candidate evidence (OTA/ownership pass, HDMI converter failure, incomplete recovery/benchmark qualification) | [`docs/qualification/orange-pi-98f9f198-2026-09-06.md`](docs/qualification/orange-pi-98f9f198-2026-09-06.md); ten-class inventory in `tests/board/usb-matrix.yaml` |
-| Orange Pi round 3 / PR #152 candidate (installed RGA factories, real-capture benchmarks and component recovery; UI admission still fails) | [`docs/qualification/orange-pi-1f56ca03-round3-2026-09-06.md`](docs/qualification/orange-pi-1f56ca03-round3-2026-09-06.md); prior microphone evidence is retained in `tests/board/usb-matrix.yaml` |
-| RGA probe version-return / raster-mode regressions and their hardware limits | [`tests/board/README.md`](tests/board/README.md) — `make -C tests/board selftest` includes intercepted-ioctl regressions |
-| Measure forced-IDR latency | `tests/board/idr-latency.sh` — local engine IPC requester plus offline NAL/PTS scorer; collector and same-host clock requirements in [`tests/board/README.md`](tests/board/README.md#forced-idr-measurement). Self-test is not board proof. |
-| Look up a fault control, its counter, its errno, its call site or the row that consumes it | [`docs/FAULT-SEAM-CONTRACT.md`](docs/FAULT-SEAM-CONTRACT.md) — the authoritative table, plus the `T4` vocabulary every ledger cell is written in |
-| Run the 16-row island fault matrix on a board | `tests/board/fault-matrix.sh --driver island` — `--self-test` scores committed island fixtures and still prints `16 MPP rows registered` |
-| Run the separate four-row RGA fault matrix | `tests/board/fault-matrix.sh --driver island-rga --probe-rga <binary>` — default-off `ROCKCHIP_RGA_CERALIVE_TEST`; host-tested source, **not board-qualified**. Contract and limits in `docs/FAULT-SEAM-CONTRACT.md`. |
-| Prove the five controls no matrix row consumes, or the explicit-only idle-window row | `tests/board/fault-controls-probe.sh` (`--row all` is the five; `--row idle-iommu-fault` is the separate experiment) |
-| Run a long-duration media soak and score its slope rules | `tests/board/soak.sh` — 60 s sampling into a CSV, then one literal verdict; `--self-test` scores committed fixtures on a dev host |
-| Read what those drills actually measured on silicon | [`docs/FAULT-CAMPAIGN.md`](docs/FAULT-CAMPAIGN.md) → "Fault-seam contract and the 2026-09 campaigns" |
-| Understand which licence branch applies to a file | [`LICENSE.md`](LICENSE.md) |
-| Build the modules | [`README.md`](README.md) → "Building the modules" |
-| MPP static-analysis dispositions and instrumented KUnit coverage | [`docs/HARDENING-FINDINGS.md`](docs/HARDENING-FINDINGS.md) — helper tests are not silicon validation |
-| Linux 7.2 modernization and proof boundaries | [`docs/MODERNIZATION.md`](docs/MODERNIZATION.md) |
-| Direct ioctl boundary KUnit, source staging, and coverage limits | [`docs/IOCTL-BOUNDARY-TESTS.md`](docs/IOCTL-BOUNDARY-TESTS.md) |
-| Runtime-PM autosuspend policy and get/put ownership audit | [`docs/RUNTIME-PM-AUDIT.md`](docs/RUNTIME-PM-AUDIT.md) — all eleven nodes, software-only exceptions, and KUnit regressions; no thermal verdict |
-| RGA table ownership, high-memory routing and software regressions | [`docs/RGA-MEMORY-ADDRESSABILITY.md`](docs/RGA-MEMORY-ADDRESSABILITY.md) — job-owned tables, early legacy preparation and bounded staging; source-only, no release or board qualification; H7 causality remains unproven |
-| RGA job ownership between commit publication and completion | [`docs/RGA-JOB-LIFETIME.md`](docs/RGA-JOB-LIFETIME.md) — the committer's own reference across queue publication, and the host sanitizer reproducer that proves it; software ownership only, no DMA/IRQ/PM emulation |
-| Add a compat shim | `drivers/video/rockchip/mpp/compat/` — and add its row to `docs/COMPAT.md`, or the lint refuses the build |
-| Change a device-tree node's owner | `integration/` — and update the `docs/OWNERSHIP.md` row in the same change |
+| Code path or task | Contract |
+|---|---|
+| Before changing anything else here, open docs/agents/README.md and read the contract for the subsystem you touch | [docs/agents/README.md](docs/agents/README.md) |
+| Repository identity | [overview](docs/agents/overview.md) |
+| Source scope, consumers and three-merge release chain | [role in the group](docs/agents/role-in-the-group.md) |
+| Directory and script inventory | [structure](docs/agents/structure.md) |
+| Subsystem docs, board harnesses, provenance and licences | [where to look](docs/agents/where-to-look.md) |
+| MPP/RGA lifetime, ioctl, telemetry, ownership, compat and board safety | [key facts](docs/agents/key-facts.md) |
+| Remotes, PR target and integration history | [PR targeting](docs/agents/pr-targeting.md) |
+| Workflows, fixtures, kernel pin, static analysis and KUnit | [CI](docs/agents/ci.md) |
+| Driver/client scope, ABI, DT, licence, release numbering and deployment restrictions | [anti-patterns](docs/agents/anti-patterns.md) |
 
-## KEY FACTS
+The archived blanket depth prohibition is superseded by the workspace's dated bit-depth policy; independent FBC/AFBC and AV1 restrictions remain.
 
-**Shipped reality, recorded 2026-09-21: the island is on a booted production
-slot, not only in a pinned series.** Six tags exist, `v2026.9.0` through
-`v2026.9.5`. `rk3588-kernel-patches` PR #25 (`6996f96bc883f637ddac11f81871a256632f3f48`)
-carries the `v2026.9.5` asset byte-preserved in its `island/` lane (source commit
-`836db612`, asset sha256 `364c4afd…`), and `image-building-pipeline` master pins
-that commit as `patches_commit`. On 2026-09-21 the Rock 5B+ and the Orange Pi 5+
-each promoted the image built from that pin to RAUC slot A, booted
-`linux-image-7.2.0-ceralive-rk3588 7.2.0-ceralive1` from it with `systemctl
---failed` empty and `ceralive-healthcheck.service` self-marking the slot good with
-the current boot's own `boot-id`, and kept the previous production payload on slot
-B as the rollback. So the island's `rk_vcodec` owns the encoder, both decoders and
-`jpegd`, and `multi_rga` owns RGA3 core0/core1 and RGA2, on the kernel both bench
-boards run today. What that boot does NOT prove is unchanged: every fault-matrix,
-probe, soak and composition row keeps the verdict its own ledger records, and the
-board rule below ("every board result names its board, kernel build and island
-tag") is exactly why a clean boot is a boot receipt and not a tick.
+## HARD RULES
 
-**RGA reset failure is fail-stop, not successful cancellation.** Backend reset
-status gates cleanup; an unsuccessful reset retains the running job's mappings,
-tables, command buffer and power reference until reboot. The failed core admits
-no new work; module pinning and suppressed bind/unbind attributes preserve its
-device lifetime. Low DMA-BUF/USERPTR execution on RGA2 requires an RGA2-owned
-mapping and DMA-address PTEs, even below 4 GiB. Per-core queues cap at 32 jobs,
-expire before start at 1,000 ms, and synchronous timeout cancels queued work.
-Details and software proof limits: [`docs/RGA-MEMORY-ADDRESSABILITY.md`](docs/RGA-MEMORY-ADDRESSABILITY.md).
-The timing and low-USERPTR KUnit fixtures are mutation-checked: prior-epoch
-claims, literal 1,000 ms and captured wait jiffies, and nonidentity execution
-DMA PTEs. See [`docs/verification/rga-round2-regression-locks.md`](docs/verification/rga-round2-regression-locks.md)
-for individual RED/restored-GREEN receipts; production source was unchanged.
-
-**MPP core debugfs follows the device lifetime.** `mpp_dev_remove()` drains
-per-core counter readers before devres frees their client context. Telemetry
-probe-error unwind removes clients before their parent debugfs tree; the
-module-static fault counters have a separate lifetime. The carried regression
-suite is `tests/kunit/mpp_debugfs_test.c`; see `docs/TELEMETRY.md`.
-
-**RGA fault injection is independent and default-off.** Four one-shot controls in
-`rga3/rga_test.{c,h}` mirror the MPP atomic/debugfs pattern without changing MPP.
-Timeout and hang suppress START; IOMMU injection calls the real callback without
-invalid DMA; reset failure changes only the debugger write result after abort.
-KUnit compiles the controls and byte-preserved driver functions with hardware
-fixtures, plus config-off stubs. The separate `island-rga` harness requires an
-isolated RGA device and reports absent busy/mapping counters as GAPs. No production
-fragment enables it and no board result is claimed. The rewrite remains deferred.
-
-**MPP discovery has a narrow legacy scalar shape.** HW_SUPPORT and CMD_SUPPORT
-accept size/offset/flags all zero and still access one checked user `u32`.
-Other scalar commands require size four; unsupported clients and wrong-hardware
-register ranges remain rejected. This is an ioctl compatibility fix, separate
-from idle-fault instrumentation. See `docs/IOCTL-BOUNDARY-TESTS.md`.
-
-**Idle IOMMU instrumentation is test-only and not board-qualified.** The optional
-`inject_iommu_fault_idle_ms` control owns delayed work in each encoder's device
-context, serializes enqueue with disable, cancels before teardown/system sleep,
-and records PM status at callback time without resuming the device. Its probe is
-explicitly `fault-controls-probe.sh --row idle-iommu-fault`, never a matrix row
-or part of the five-control `--row all` sweep. See `docs/FAULT-CAMPAIGN.md` for
-the direct-callback boundary and current proof limits.
-
-**The maintained fault seam has a written contract.** [`docs/FAULT-SEAM-CONTRACT.md`](docs/FAULT-SEAM-CONTRACT.md)
-is the authoritative table: nine controls plus the `target_session_pid`
-selector, each one's consumed counter, injected effect, errno and island call sites, the harness row that consumes it, the sixteen matrix rows, and the
-`T4` literals a ledger cell may carry. Two of its findings drive everything
-downstream — the matrix arms only FOUR controls, because
-`rkvenc-invalid-ioctl --all-malformed` skips `session-allocation-failure`
-(`NOT-IN-MATRIX`), and the other five had never been board-proven on the island
-at all, which is why `fault-controls-probe.sh` exists.
-
-**Matrix verdicts follow final journal validation, never precede it.** Both
-captures check command status, and both journal screens distinguish a match
-from no-match and scanner failure. `journal-capture` / `journal-scan` fail closed
-and stop the campaign even if the available text looks clean; a later successful
-capture cannot erase an earlier I/O failure. Host campaign regressions run on
-the island fixtures. See the T4 reason contract and `tests/board/README.md`.
-
-**`kernel-pin.env` is a MIRROR, not a decision.** Its four `KERNEL_*` values are
-byte-identical to `rk3588-kernel-patches/kernel-pin.env`, and a `pin-equality` CI
-job proves it against the consumer at its pinned commit. Bumping the kernel is a
-change to the consumer repository first; this file follows. A hand-edit here is a
-red build, and that is the whole point — a modules-only cross-compile proves
-nothing if it ran against a kernel the device never boots.
-
-**`patches/` is generated. Editing it by hand is a bug, and CI catches it.**
-The series generator regenerates from `drivers/` plus `integration/` into a temp
-directory and byte-compares. Change the source, then regenerate — never the other
-way round. An independent parity checker exists as a second opinion and must not
-import the generator: a checker sharing the producer's code proves only that the
-producer agrees with itself.
-
-**Ownership is a device-tree `compatible` string, and never a Kconfig
-dependency.** Every island-owned node carries exactly ONE `compatible`, matched
-by exactly ONE driver. Mainline `rkvdec` and `rockchip-rga` stay BUILT alongside
-the island so each silicon handover is reversible by a device-tree change and
-A/B-able with `driver_override`. `CONFIG_VIDEO_ROCKCHIP_RGA` joins the image's
-forbidden list only at the RGA flip, once no node is left for it to bind. The
-mechanism, and why load order makes the alternative non-deterministic, is
-[`docs/OWNERSHIP.md`](docs/OWNERSHIP.md).
-
-**`docs/COMPAT.md` and `docs/OWNERSHIP.md` are machine inputs, not just prose.**
-`shim-lint` parses COMPAT's table for every symbol classed `REAL-DEPENDENCY` and
-fails if a compat header gives one a body — a stub returning `0`, `false`, `NULL`,
-`ERR_PTR(...)`, `-ENODEV`, or an empty `void` body all fail. It also rejects any
-`<soc/rockchip/*.h>` include and any new `rockchip_*` symbol absent from the
-table, so source growth fails closed until its semantics are classified.
-`dt-ownership-lint` reads OWNERSHIP the same way. Editing either table changes
-what compiles; treat them as code.
-
-**A compile can never succeed by silently replacing a REAL-DEPENDENCY with a
-stub.** That invariant is the reason both halves of the shim gate exist: the lint
-catches a stub with a body, and the link catches a declaration with no provider.
-Neither alone is sufficient.
-
-**Compat shims nest at `drivers/video/rockchip/mpp/compat/`.** That is where the
-upstream Makefile consumes them. There is **no** root-level `compat/` directory,
-and creating one moves the headers out from under both the build and the lint.
-
-**Every board result names its board, kernel build and island tag.** A result
-that cannot say which bytes it exercised is not a result. The RAUC precondition
-(other slot confirmed good, attempt budget at least one, candidate-slot journal
-captured **before** any reboot) is mandatory before any board deploy: the island
-rides inside `linux-image`, so a broken kernel auto-rolls-back and takes its
-evidence with it.
-
-## PR TARGETING
-
-**This repository is NOT a fork.** It has no upstream parent on GitHub, so
-`gh pr create` defaults its base correctly — unlike the sibling
-`rk3588-kernel-patches`, which is a fork and has historically defaulted to the
-wrong repository. That difference is a reason to be careful rather than relaxed:
-the habit that protects the sibling is the habit that keeps this one right too.
-
-Always be explicit anyway:
-
-```bash
-gh pr create --repo CERALIVE/rk3588-media-island --base main
-gh pr view <n> --json url -q .url   # MUST be https://github.com/CERALIVE/rk3588-media-island/...
-```
-
-Keep **only** `origin` (CERALIVE) attached at rest. The vendor and forward-port
-trees this repository imports from are cited by URL and SHA in
-[`docs/REFERENCES.md`](docs/REFERENCES.md); if one ever needs fetching, add it
-transiently under a descriptive name — **never** as `upstream` — fetch with an
-explicit refspec, pin-verify the SHA, and remove it before any push or PR.
-
-One integration branch per release, one PR from it. Commits on that branch stay
-individually meaningful, because provenance and review history are the reason this
-is a source repository instead of a patch file.
-
-## CI
-
-All workflows follow the CeraLive CI/CD canon: a `concurrency` block on every
-workflow (`cancel-in-progress: true` for PR gates, `false` for release);
-`push` constrained to `branches:` and `tags:` because a `pull_request` trigger
-exists; top-level `permissions: contents: read`; every `uses:` pinned to the
-latest stable major; the kernel clone and `ccache` cached; nothing published
-without the gates having run first.
-
-Three workflows: `ci.yml` (the PR gate), `release.yml` (`workflow_dispatch`, with
-`publish` defaulting to **false**), and `upstream-watch.yml` (scheduled,
-issue-only). Per-job detail, the mutation transcripts, and the honest list of
-remaining deferred inputs live in [`docs/CI.md`](docs/CI.md).
-
-**MPP partial-clock unwind is checked at the unlocked helper, not its wrapper.**
-`scripts/check-mpp-hardening.py` inspects `rkvenc_clk_on_unlocked()` and the
-wrapper's call/return chain. Its self-test accepts production source and rejects
-seven clock-path mutations; the normal gate retains all 23 assertions. This is a
-source-shape regression check, not hardware clock validation. See
-[`docs/CI.md`](docs/CI.md#3a-mpp-partial-clock-unwind-checker).
-
-| Job | Asserts |
-|-----|---------|
-| `shellcheck` | Every tracked shell script lints clean at `-S style` (only `SC1091` excluded) |
-| `self-tests` | Every board harness and every CI tool passes its own scored fixtures; module and telemetry contracts check maintained source and mutation fixtures, including MPP dual-core and RGA lifecycle traces |
-| `series-integrity` | `patches/` regenerates byte-identically from `drivers/` + `integration/`, verified again by an independent parity checker |
-| `shim-lint` | No compat header gives a `REAL-DEPENDENCY` symbol a body; no unclassified `<soc/rockchip/*.h>` include or `rockchip_*` symbol exists |
-| `dt-ownership-lint` | Applied MPP and RGA nodes are checked for one compatible, one island match and no pinned-mainline collision |
-| `uapi-parity` | Every `MPP_CMD_*` / `MPP_IOC_*` value and the `mpp_request` layout match the pinned vendor header and the userspace that consumes them |
-| `board-probes` | The three C probes cross-build for aarch64 with `-Werror`, and their host build passes its own self-tests |
-| `action-pins` | Every `uses:` is at the current latest major. **Non-blocking** — an action's release cadence must not redden an unrelated PR |
-| `pin` | Nothing — it *reads* the coordinates out of `kernel-pin.env` and emits them as job outputs |
-| `pin-equality` | The four mirrored `KERNEL_*` values equal the consumer's |
-| `cross-compile-modules` | Both pinned kernel objects resolve; the tree configures the way the device is configured; `vmlinux` supplies provider symbols, `modules_prepare` supplies the module linker script, and `vmlinux.symvers` is exposed as the `Module.symvers` external modpost requires; the two arm64 modules link with `-Werror` and expose their required OF aliases; both supported board DTBs build and pass `tests/dt/check-dtb-ownership.sh`; no island `compatible` collides with a mainline `of_match_table` |
-| `kunit` | Builds the MPP request-boundary, fault/lifecycle, session-teardown, DMA policy, fence, RGA request-validation, capability, telemetry-format, direct ioctl, and runtime-PM ownership suites against the pinned tree |
-| `static-analysis` | sparse with findings promoted to errors plus coccinelle over every selected island object; smatch remains conditional on a suitable runner package |
-| `upstream-watch` | Nothing — it opens or updates ONE issue and never edits a pin or dispatches a build |
-
-**`shellcheck` and `self-tests` are two jobs because they answer two questions.**
-Shellcheck cannot see an ERE bracket expression containing a literal `\t` — valid
-shell, valid regex, and it matches a backslash and a `t` rather than a tab. That
-defect shipped once here. Reintroducing it leaves shellcheck green and turns the
-harness self-test red; the transcript is [`docs/CI.md`](docs/CI.md) §3.
-
-**The source-dependent gates are live.** Series integrity reconstructs 87 source
-files and eight applied integration payloads, shim/UAPI checks inspect the imported
-surface, sparse checks every selected object, and cross-compile asserts exactly
-`rk_vcodec.ko` plus `rga_multicore.ko` and rejects either module if its compiled OF aliases
-are absent. The source-side half also rejects a device match table that is not
-published and an `IRQF_ONESHOT` hard-IRQ request with no threaded handler. DT ownership is also live: the MPP nodes ship,
-both board DTBs are inspected, and the applied RGA3/RGA2 hunks are verified as
-one complete ownership flip.
-
-**Telemetry is part of the production island contract.** The island fragment
-forces MPP procfs and the RGA procfs debugger on. Module init fails rather than
-silently succeeding when either required root cannot be created, and
-`tests/board/probe-telemetry.sh` checks the operator-facing files. Production
-also enables debugfs for cumulative per-core and per-session counters. Tracefs
-events use Linux tracepoint static keys, so disabled tracing executes only the
-patched unlikely branch. The production fragment selects the event tracer but
-keeps the function tracer off; CI asserts the hidden `TRACING`, `EVENT_TRACING`,
-and `TRACEPOINTS` closure survives Kconfig resolution. Each live session exposes one fdinfo-style
-`stats` snapshot. `/proc/mpp_service` and `/proc/rkrga/load` remain the
-stable compatibility surfaces; their exact contract is [`docs/TELEMETRY.md`](docs/TELEMETRY.md).
-
-**No workflow restates a pinned coordinate.** The kernel tag is read from
-`kernel-pin.env`; a literal tag anywhere in `.github/` is a regression, because a
-pin bump would otherwise leave CI proving the series against a kernel nobody ships
-— green, which is the worst kind of failure.
-
-## ANTI-PATTERNS
-
-- Don't compile a fourth MPP client. Exactly `RKVENC2`, `RKVDEC2` and `JPGDEC`
-  are built; `IEP2`, `VDPP`, `VEPU*`, `JPGENC`, `RKVDEC` v1 and `RKVENC` v1 stay
-  `=n`, and no runtime capability table may advertise a client that is not both
-  compiled and probed
-- Don't add AV1 encode or decode. `av1d` stays driverless from the island's side
-  and `ROCKCHIP_MPP_AV1DEC` stays `=n`
-- Don't add 10-bit anywhere — P010, NV15 and FBC/AFBC included — even though the
-  vendor `multi_rga` supports them
-- Don't add a new DTB or overlay FILE. The platform device-tree prune is a
-  verified allowlist; the island ships in-tree `rk3588-base.dtsi` and board-DTS
-  hunks only
-- Don't add a Kconfig mutual exclusion (`depends on !VIDEO_ROCKCHIP_VDEC`,
-  `!VIDEO_ROCKCHIP_RGA`). Exclusivity is the one-`compatible` rule plus a CI
-  lint; keeping the mainline drivers built is what makes every flip reversible
-- Don't give an island-owned node two `compatible` strings. Which driver wins is
-  module load order, which is not a design
-- Don't hand-edit `patches/` — regenerate from `drivers/` and `integration/`
-- Don't make the parity checker import the series generator; it is deliberately
-  the second, independent opinion
-- Don't hand-edit `kernel-pin.env`'s four mirrored `KERNEL_*` values, and don't
-  restate a pinned coordinate in a workflow
-- Don't create a root-level `compat/` directory; shims nest under
-  `drivers/video/rockchip/mpp/compat/`
-- Don't give a `REAL-DEPENDENCY` symbol a stub body in a compat header, and don't
-  add a `<soc/rockchip/*.h>` include or a new `rockchip_*` symbol without its
-  `docs/COMPAT.md` row
-- Don't claim upstream-submission status, assert the MIT branch of the inherited
-  licence, relicense a file, rewrite an SPDX identifier, or copy upstream prose
-  and evidence — cite it by URL and SHA
-- Don't reference a path above this repository's root from any tracked file, and
-  don't add a sibling `link:` or `file:` dependency. CI clones the kernel by URL
-  and never reads a sibling checkout
-- Don't add a `Co-authored-by:` trailer or any AI/tool attribution to any commit.
-  This is a **public** repository and the rule is absolute
-- Don't ship a separate `.deb` for the island, and don't add this repository to
-  the device image `REPOS` array. It rides inside `linux-image` as `=m`
-- Don't renumber the consumer's `SERIES_TOTAL`, reuse a retired ordinal, close an
-  ordinal gap, or `git rm` one of its source-lane patches. The `island/` lane is a
-  member of that series and inherits its numbering discipline
-- Don't put compile evidence in `rk3588-kernel-patches`. That repository's scope
-  is patch application only; the island's CI and the image dry-runs are where
-  build claims live
-- Don't deploy to a board without the RAUC precondition and a pre-reboot journal
-  capture, and don't tick a qualification leg without a pasted transcript
+- Maintain REAL SOURCE: MPP has only RKVENC2/RKVDEC2/JPGDEC; capability tables advertise only compiled and probed clients. AV1 stays off.
+- Release a generated `git am` series; `rk3588-kernel-patches`' `island/` lane is the sole, byte-preserving consumer. No `.deb` or `REPOS` entry.
+- A kernel change costs three merges: island tag -> `island/` lane bump -> image `patches_commit` bump -> image build.
+- Each DT node has exactly one `compatible`, matched by exactly one driver; ownership is DT, never module load order.
+- No Kconfig mutual exclusion: never add `depends on !VIDEO_ROCKCHIP_VDEC` or `!VIDEO_ROCKCHIP_RGA`; mainline drivers stay built.
+- Island-member provenance names the island tag, commit and asset digest; the independent verifier must not import the generator.
+- Never hand-edit `patches/`; change maintained source, then generate and independently verify the series.
+- `kernel-pin.env` mirrors the consumer's four `KERNEL_*` values. Change the consumer first; never restate kernel pins in workflows.
+- Shims nest in `drivers/video/rockchip/mpp/compat/`; never stub REAL-DEPENDENCY symbols. Classify additions in `docs/COMPAT.md`.
+- `docs/COMPAT.md` and `docs/OWNERSHIP.md` are machine inputs; update ownership rows with DT changes and retain lint plus link gates.
+- No new DTB or overlay files; use in-tree DTS hunks. No consumer ordinal reuse, gap closure, renumbering or source-patch deletion.
+- Preserve UAPI and frozen proc formats; telemetry root creation fails closed. Consult ioctl, lifetime and telemetry contracts before edits.
+- RGA reset failure is fail-stop: retain mappings and power until reboot, admit no new work, and preserve device lifetime.
+- Test-only fault controls remain default-off; host fixtures never establish silicon qualification.
+- Before board deploy: other RAUC slot good, attempt budget >=1, candidate journal captured before reboot; paste qualification transcripts.
+- Every board result names board, kernel build and island tag; validate final journals before matrix verdicts, failing closed on I/O errors.
+- CalVer tags are `vYYYY.M.N`; release canonical main only after gates pass. Published tags and assets are immutable.
+- Never relicense, rewrite SPDX, assert inherited MIT licensing or upstream-submission status; cite upstream evidence by URL and SHA.
+- Keep build evidence here and in image dry-runs, not in the patch-application consumer. Follow the routed proof boundaries.
+- Keep only CERALIVE origin at rest; use one meaningful integration branch and PR per release, targeting CERALIVE with base main.
