@@ -58,10 +58,9 @@ Host fixtures and sanitizer regressions are not board qualification. See the CI 
 
 ## WHERE TO LOOK
 
-Before changing anything else here, open [docs/agents/README.md](docs/agents/README.md) and read the contract for the subsystem you touch.
-
 | Code path or task | Contract |
 |---|---|
+| Before changing anything else here, open docs/agents/README.md and read the contract for the subsystem you touch | [docs/agents/README.md](docs/agents/README.md) |
 | Repository identity | [overview](docs/agents/overview.md) |
 | Source scope, consumers and three-merge release chain | [role in the group](docs/agents/role-in-the-group.md) |
 | Directory and script inventory | [structure](docs/agents/structure.md) |
