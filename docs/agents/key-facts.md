@@ -82,7 +82,10 @@ byte-identical to `rk3588-kernel-patches/kernel-pin.env`, and a `pin-equality` C
 job proves it against the consumer at its pinned commit. Bumping the kernel is a
 change to the consumer repository first; this file follows. A hand-edit here is a
 red build, and that is the whole point — a modules-only cross-compile proves
-nothing if it ran against a kernel the device never boots.
+nothing if it ran against a kernel the device never boots. On `release/linux-7.4`
+the four values are `v7.4-rc2` and `pin-equality` reads them from the consumer's
+`rebase/v7.4` (`CONSUMER_PIN_REF`); `main` stays on `v7.2` and reads consumer
+`main`. The bump is recorded in [`docs/REBASE-v7.4.md`](../REBASE-v7.4.md).
 
 **`patches/` is generated. Editing it by hand is a bug, and CI catches it.**
 The series generator regenerates from `drivers/` plus `integration/` into a temp

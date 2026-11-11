@@ -13,7 +13,7 @@ target, and a moving target makes every claim in this repository unfalsifiable.
 | Forward-port patch record — the 6.18 series, its README, its licence policy | `yisding/rock-5b-ysp` | `ca3da04280c48c004e522c15f31862bf88a2d1b9` |
 | Realized maintained series — the branch tip the patch record exports from | `yisding/linux-rock5b` | `e7ff978398825b63ddcb13e0572d77564034c1e2` |
 | Historical comparison only — NOT an import source | `armbian/linux-rockchip` (`rk-6.1-rkr5.1`) | `fd9f82366e235b8afbdf516765210e97d24dce93` |
-| Mainline replacement baseline | Linux `v7.2` | `8d3ae59288f1e7d58d76558a6ee96d533bc5019f` |
+| Mainline replacement baseline | Linux `v7.4-rc2` | `7475ea8b58616b33c04afb976cf0fbaad9dd63fb` |
 
 ## Vendor media-watch baselines
 
@@ -59,10 +59,14 @@ four values are byte-identical to the consumer repository's.
 
 | Field | Value |
 |---|---|
-| `KERNEL_TAG` | `v7.2` |
-| `KERNEL_TAG_OBJECT` | `237a1c39e8dfd3e1c6f1f023eea37a48ec04cc63` (annotated tag object, tagged 2026-08-16) |
-| `KERNEL_COMMIT` | `8d3ae59288f1e7d58d76558a6ee96d533bc5019f` (`v7.2^{commit}`) |
-| `KERNEL_MIRROR` | `https://github.com/gregkh/linux.git` |
+| `KERNEL_TAG` | `v7.4-rc2` |
+| `KERNEL_TAG_OBJECT` | `fd9230005e85472b81c1c7c16afe93dd878996b1` (annotated tag object, tagged 2026-11-08) |
+| `KERNEL_COMMIT` | `7475ea8b58616b33c04afb976cf0fbaad9dd63fb` (`v7.4-rc2^{commit}`) |
+| `KERNEL_MIRROR` | `https://github.com/torvalds/linux.git` |
+
+These are the `release/linux-7.4` values, mirrored from the consumer's
+`rebase/v7.4`. Island `main` still mirrors `v7.2`. The rebase ledger is
+[`REBASE-v7.4.md`](REBASE-v7.4.md).
 
 Both the tag object and the peeled commit are pinned, and both are asserted. A
 peeled commit alone cannot detect a tag object that was re-created — re-signed,

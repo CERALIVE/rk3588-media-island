@@ -12,6 +12,7 @@
 | Find where a source file came from | [`docs/PROVENANCE.md`](../PROVENANCE.md) |
 | Audit Rockchip fixes after the donor snapshot | [`docs/VENDOR-BACKLOG.md`](../VENDOR-BACKLOG.md) and `scripts/vendor-backlog.sh --check` |
 | Look up a pinned upstream SHA | [`docs/REFERENCES.md`](../REFERENCES.md) |
+| What the `v7.2` to `v7.4-rc2` bump changed, the 7.3/7.4 behaviour audit and what is still unproven | [`docs/REBASE-v7.4.md`](../REBASE-v7.4.md) |
 | See whether mainline has caught up on a block | [`docs/UPSTREAM-STATUS.md`](../UPSTREAM-STATUS.md) |
 | Know what a board must demonstrate before a tick | [`docs/BOARD-QUALIFICATION.md`](../BOARD-QUALIFICATION.md) |
 | Orange Pi merged PR #150 candidate evidence (OTA/ownership pass, HDMI converter failure, incomplete recovery/benchmark qualification) | [`docs/qualification/orange-pi-98f9f198-2026-09-06.md`](../qualification/orange-pi-98f9f198-2026-09-06.md); ten-class inventory in `tests/board/usb-matrix.yaml` |

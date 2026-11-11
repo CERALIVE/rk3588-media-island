@@ -1,7 +1,7 @@
 # Upstream status — what mainline is doing to the ground under this island
 
-**Status: vendor backlog current through 2026-09-02; the pinned Linux 7.2
-hand-back baseline was checked on 2026-09-03.** The vendor media-path watch is
+**Status: vendor backlog current through 2026-09-02; the per-subsystem rows were
+refreshed against the `v7.4-rc2` candidate on 2026-11-11.** The vendor media-path watch is
 live. Hardware acceptance remains a later board-gate concern; the table below
 records the source-level migration baseline, not a claim that any island release
 has run on a board.
@@ -50,11 +50,18 @@ That is why the migration targets below are live options rather than aspirations
 
 | Subsystem | Island driver | Mainline counterpart | Mainline status | Precondition for handing it back | Last checked |
 |---|---|---|---|---|---|
-| RKVENC2 encode | `mpp` (`ROCKCHIP_MPP_RKVENC2`) | none | Linux 7.2 has no in-tree RK3588 VEPU580 encoder counterpart; the existing board encoder path is the prior Rockchip-ported service, not a mainline driver. | A maintained in-tree RK3588 encoder must bind the VEPU580 nodes and pass the island's H.265-first H.264/H.265 control, recovery and board qualification matrix. | 2026-09-03 |
-| RKVDEC2 decode | `mpp` (`ROCKCHIP_MPP_RKVDEC2`) | `rkvdec` (`CONFIG_VIDEO_ROCKCHIP_VDEC`) | Linux 7.2 contains an in-tree driver matching `rockchip,rk3588-vdec`; it stays built as the migration target, but the release-1 DT hunk gives `vdec0/1` the sole island compatible. | The mainline path must meet the RKVDEC2 H.264/H.265/VP9 capability and recovery evidence, then pass the same board decode and zero-copy matrix before a compatible flip. | 2026-09-03 |
-| JPEG decode | `mpp` (`ROCKCHIP_MPP_JPGDEC`) | none | Linux 7.2 has no in-tree RK3588 `jpegd` counterpart. | A maintained mainline JPEG-decoder driver must bind `jpegd` and pass the MJPEG decode, DMA-BUF and recovery qualification rows. | 2026-09-03 |
-| RGA3 #0/#1 | `multi_rga` | `rockchip-rga` (`CONFIG_VIDEO_ROCKCHIP_RGA`) | Linux 7.2's `rockchip-rga` matches `rockchip,rk3588-rga3`; the Phase-0 board probe found core0 bound while core1 was skipped for missing multi-core support. The island's RGA handover is still pending. | Mainline must bind both RGA3 cores and demonstrate scheduling, operation coverage and the required userspace/DMA-BUF interface on the board matrix. | 2026-09-03 |
-| RGA2E | `multi_rga` | `rockchip-rga` | Linux 7.2's `rockchip-rga` owns the mainline RGA2 node today; no island RGA compatible is applied in release 1. | Mainline must meet the combined RGA2/RGA3 scheduler, fail-closed validation and `/dev/rga` userspace-interface requirements before the pending island handover could be reversed. | 2026-09-03 |
+| RKVENC2 encode | `mpp` (`ROCKCHIP_MPP_RKVENC2`) | none | Still none in `v7.4-rc2`. VEPU580 H.264 is work in progress through Mesa and the Vulkan Video API, so it will look quite different from today's V4L2 codec drivers (https://lore.kernel.org/r/082e1141c38205222a91abf13b1a97d9a00e117a.camel@collabora.com/); H.265 has no posting. | A maintained in-tree RK3588 encoder must bind the VEPU580 nodes and pass the island's H.265-first H.264/H.265 control, recovery and board qualification matrix. | 2026-11-11 |
+| RKVDEC2 decode | `mpp` (`ROCKCHIP_MPP_RKVDEC2`) | `rkvdec` (`CONFIG_VIDEO_ROCKCHIP_VDEC`) | `rkvdec` matches `rockchip,rk3588-vdec` and decodes VDPU381 H.264/H.265 since 7.0-rc1. Multi-core H.264/H.265 is at PATCHv2 (https://lore.kernel.org/r/20260810-rkvdec-multicore-v2-0-986f89d22cdc@collabora.com/) and VP9 at PATCHv1 (https://lore.kernel.org/r/20260726-b4-add-rkvdec2-vp9-vdpu381-v1-0-180fb2d1f10c@gmail.com/). It stays built as the migration target; the island DT hunk still gives `vdec0/1` the sole island compatible. | The mainline path must meet the RKVDEC2 H.264/H.265/VP9 capability and recovery evidence, then pass the same board decode and zero-copy matrix before a compatible flip. | 2026-11-11 |
+| JPEG decode | `mpp` (`ROCKCHIP_MPP_JPGDEC`) | none | Still none in `v7.4-rc2`. A VDPU720 JPEG decoder is at PATCHv7 (https://lore.kernel.org/r/20261022-rockchip-jpegdec-v7-0-3fd7dd55f408@pengutronix.de/). DT collision risk: if it merges with a node at the island `jpegd` address, the island DT hunk must swap that node's compatible instead of adding a node. | A maintained mainline JPEG-decoder driver must bind `jpegd` and pass the MJPEG decode, DMA-BUF and recovery qualification rows. | 2026-11-11 |
+| RGA3 #0/#1 | `multi_rga` | `rockchip-rga` (`CONFIG_VIDEO_ROCKCHIP_RGA`) | `rockchip-rga` matches `rockchip,rk3588-rga3` since 7.2-rc1, still single-core in `v7.4-rc2`; multi-core support is at PATCHv2 (https://lore.kernel.org/r/20260916-spu-rga3multicore-v2-0-23aa2cb74e61@pengutronix.de/). The Phase-0 board probe found core0 bound while core1 was skipped for missing multi-core support. | Mainline must bind both RGA3 cores and demonstrate scheduling, operation coverage and the required userspace/DMA-BUF interface on the board matrix. | 2026-11-11 |
+| RGA2E | `multi_rga` | `rockchip-rga` | Mainline drives the RK3588 RGA2 node since 6.12-rc1; in this tree the island's `integration/0021` gives that node the sole island compatible. | Mainline must meet the combined RGA2/RGA3 scheduler, fail-closed validation and `/dev/rga` userspace-interface requirements before the island handover could be reversed. | 2026-11-11 |
+
+Sources for the 2026-11-11 rows: the `v7.4-rc2` tree's driver match tables, and
+the Collabora RK3588 mainline status notes at commit
+`d2c919f36ba497204ef9ed05aaccb2f3d0859aee`
+(https://gitlab.collabora.com/hardware-enablement/rockchip-3588/notes). That table
+lags git on HDMI-RX items, so treat it as a pointer to postings, not as the
+merge record.
 
 The two RGA rows and the RKVDEC2 row are the ones with a real counterpart, and
 therefore the ones the watch actually has something to report on. The two rows

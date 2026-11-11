@@ -38,8 +38,9 @@ what that list exists for.
 
 ## Ownership table
 
-Mainline node references are to `rk3588-base.dtsi` in the pinned v7.2 tree (see
-[`../kernel-pin.env`](../kernel-pin.env)).
+Mainline node references are to `rk3588-base.dtsi` in the pinned v7.4-rc2 tree (see
+[`../kernel-pin.env`](../kernel-pin.env)). The cited line ranges are byte-identical
+to v7.2's.
 
 The **island node label(s)** column is the lint's machine input; **applied-in**
 records the release boundary that changes ownership. The label column exists
@@ -49,7 +50,7 @@ inferring one out of the Mechanism prose would be a guess dressed as a check. A
 row that owns no node carries `—`, which is a statement rather than an omission:
 it says this silicon is deliberately left to mainline.
 
-| Silicon | Mainline node (v7.2 `rk3588-base.dtsi`) | Island node label(s) | Final owner | applied-in | Mechanism |
+| Silicon | Mainline node (v7.4-rc2 `rk3588-base.dtsi`) | Island node label(s) | Final owner | applied-in | Mechanism |
 |---|---|---|---|---|---|
 | RKVENC2 #0/#1 + CCU | none | `mpp_srv`, `rkvenc_ccu`, `rkvenc0`, `rkvenc1` | island `mpp` (`ROCKCHIP_MPP_RKVENC2`) | `v2026.9.0` | `integration/0010` adds `mpp_srv`, `rkvenc_ccu`, `rkvenc0/1` and their IOMMUs, replacing the existing `rk3588-kernel-patches` `0001` hunk byte-for-byte in intent |
 | RKVDEC2 #0/#1 + CCU | `vdec0` / `vdec1`, `rockchip,rk3588-vdec` (`:1400-1462`) | `vdec0`, `vdec1`, `rkvdec_ccu` | island `mpp` (`ROCKCHIP_MPP_RKVDEC2`) | `v2026.9.0` | `integration/0011` swaps `compatible` to `rockchip,rkv-decoder-v2` as the sole entry and adds `rkvdec_ccu` plus vendor properties. Resource 0 combines mainline's function/cache span, resource 1 remains `link`, and v7.2's physical addresses are retained because that is the layout the imported probe consumes. Upstream `rkvdec` stays BUILT (`CONFIG_VIDEO_ROCKCHIP_VDEC=m`) but matches no node — a recorded migration target and a one-line rollback |
