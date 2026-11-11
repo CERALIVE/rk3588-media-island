@@ -28,6 +28,20 @@ if [[ "${1:-}" == --self-test ]]; then
       failures=$((failures + 1))
     fi
   done
+  workflow="$(dirname "${BASH_SOURCE[0]}")/../.github/workflows/release.yml"
+  for action in create edit; do
+    command="$(awk -v action="$action" '
+      $0 ~ "gh release " action " " { capture = 1 }
+      capture { print; if ($0 !~ /\\$/) exit }
+    ' "$workflow")"
+    if [[ "$command" =~ (^|[[:space:]])--prerelease([[:space:]]|$) &&
+          "$command" =~ (^|[[:space:]])--latest=false([[:space:]]|$) ]]; then
+      printf 'PASS: release %s is a pre-release and never Latest\n' "$action"
+    else
+      printf 'FAIL: release %s must set --prerelease --latest=false\n' "$action" >&2
+      failures=$((failures + 1))
+    fi
+  done
   [[ "$failures" == 0 ]]
 else
   check_ref "${GITHUB_REF:-}"

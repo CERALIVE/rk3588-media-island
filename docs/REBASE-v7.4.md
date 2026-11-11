@@ -205,12 +205,15 @@ This ledger records no compile result and no green CI run yet.
 On this branch only, `release.yml` releases from `refs/heads/release/linux-7.4`
 and nothing else. This is a dated owner exception (2026-11-10). The ref decision
 lives in `scripts/check-release-ref.sh`, with a self-test. Both the draft
-creation and the publication carry `--latest=false`, so a 7.4-line release can
-never become "Latest" over the 7.2 line. A main-merge guard in
+creation and the publication carry `--prerelease --latest=false`, so 7.4-line
+releases are GitHub pre-releases and never become "Latest" over the 7.2 line.
+The pre-release marker is branch-scoped. A main-merge guard in
 `.github/workflows/release-ref.yml` fails a push to `main` or a PR targeting
 `main` unless the script accepts exactly `refs/heads/main`.
 
-At cutover, revert to main-only or keep the flow deliberately. The reverting PR
+When this line becomes main at cutover, drop `--prerelease` together with
+`--latest=false` and the other branch-scoped release rules, and update the
+release flag self-test expectations. The reverting PR
 must either keep `scripts/check-release-ref.sh` accepting exactly
 `refs/heads/main` (updating its self-test expectations), or remove the guard
 together with the script and its CI and release self-test calls. Removing the

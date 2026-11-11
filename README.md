@@ -44,8 +44,10 @@ island tag  ──▶  rk3588-kernel-patches `island/` lane bump
 ```
 
 1. **Island release.** On this branch, the dated owner exception permits an
-   owner-approved dispatch only from `release/linux-7.4`, with `--latest=false`
-   at draft creation and publication; canonical `main` keeps its own flow.
+   owner-approved dispatch only from `release/linux-7.4`, with
+   `--prerelease --latest=false` at draft creation and publication. These
+   pre-release and non-Latest rules are branch-scoped; drop them with the other
+   branch release rules when this line becomes `main`.
    See [the release and cutover contract](docs/CI.md#7-releaseyml). The dispatch
    regenerates the series from source, byte-compares it against the checked-in
    `patches/`, then atomically claims the requested tag and publishes the

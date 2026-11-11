@@ -17,11 +17,15 @@ remaining deferred inputs live in [`docs/CI.md`](../CI.md).
 
 **Owner exception (2026-11-10), this branch only.** Release dispatches accept
 exactly `refs/heads/release/linux-7.4` and prove ancestry against that branch.
-Draft creation and publication both set `--latest=false`. CalVer and all gates
-remain required. Before cutover to main, revert the release flow to main-only;
+Draft creation and publication both set `--prerelease --latest=false`, so this
+line publishes GitHub pre-releases and never replaces Latest. The pre-release
+marker is branch-scoped. CalVer and all gates remain required. When this line
+becomes main, drop both flags with the other branch-scoped release rules and
+update the release flag self-test expectations. Revert the release flow to
+main-only;
 keep `scripts/check-release-ref.sh` accepting exactly `refs/heads/main`, or remove
 the main-merge guard together with the script. See the cutover note in
-[`docs/CI.md`](../CI.md#7-releaseyml) and the forthcoming `docs/REBASE-v7.4.md`.
+[`docs/CI.md`](../CI.md#7-releaseyml) and [`docs/REBASE-v7.4.md`](../REBASE-v7.4.md).
 
 **MPP partial-clock unwind is checked at the unlocked helper, not its wrapper.**
 `scripts/check-mpp-hardening.py` inspects `rkvenc_clk_on_unlocked()` and the

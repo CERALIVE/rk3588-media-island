@@ -611,19 +611,24 @@ refuses — never its input. A `push: tags:` trigger would invert that.
 
 **Owner exception (2026-11-10), scoped to `refs/heads/release/linux-7.4`.**
 This branch may release while canonical `main` stays unchanged. Both draft
-creation and publication set `--latest=false`, so a release from this line never
-replaces the current Latest release. Release notes record the source branch and
-the kernel tag and commit sourced from `kernel-pin.env`.
+creation and publication set `--prerelease --latest=false`: 7.4-line releases
+are GitHub pre-releases and never replace the current Latest release. Both flags
+are supported together by the runner's gh 2.103.3; pre-releases cannot be Latest.
+This marker is branch-scoped. Release notes record the source branch and the
+kernel tag and commit sourced from `kernel-pin.env`.
 
 The `release-ref.yml` CI workflow's `self-tests` job runs the ref script's five
-cases, accepting this exact branch and rejecting main, a suffix lookalike, a tag
-and the next kernel line. It also checks a main push or a PR whose base is main:
-the ref script must accept `refs/heads/main`, so merging this branch's release
+ref cases, accepting this exact branch and rejecting main, a suffix lookalike, a
+tag and the next kernel line, plus assertions that both release commands set
+the pre-release and non-Latest flags. It also checks a main push or a PR whose
+base is main: the ref script must accept `refs/heads/main`, so merging this branch's release
 policy unchanged fails before cutover. The guard runs on every PR and filtered
 branch push.
 
 **Cutover runbook note.** The reverting PR must restore the main-only release
-flow and keep `scripts/check-release-ref.sh` accepting exactly
+flow, drop `--prerelease` together with `--latest=false` and the other
+branch-scoped release rules, update the release flag self-test expectations,
+and keep `scripts/check-release-ref.sh` accepting exactly
 `refs/heads/main` (updating its self-test expectations accordingly), or remove
 the main-merge guard together with the script and its CI/release self-test calls.
 Do not remove the script alone. Carry this instruction into `docs/REBASE-v7.4.md`
