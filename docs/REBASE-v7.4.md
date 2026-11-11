@@ -107,6 +107,17 @@ maps; the `devm_kzalloc_obj()` allocations stay as upstream wrote them.
 The other integration patches (`0001`, `0003`, `0010` to `0012`, `0020`,
 `0021`) apply to `v7.4-rc2` unchanged.
 
+## Gate-forced harness fix
+
+| File and hunk | Failure and root cause | Fix and assertion changes |
+|---|---|---|
+| `tests/board/fault-matrix.sh`, `st_wedge_unreapable()` sentinel | Hosted Ubuntu image `20261101.186.1` carries ShellCheck `0.11.0`, which reports SC2329 for the `wait()` sentinel inside a subshell; local `0.10.0` passes. The stub must remain: it detects an unsafe wait if `healthy_stop()` regresses on an unreapable child. A reduced example still reports SC2329 with a direct call in that subshell. | Extend the existing declaration-local SC2317 annotation with SC2329 and explain its regression-sentinel purpose. The exception covers only this deliberately uncalled function. Every wedge, retained-PID and no-wait assertion is byte-unchanged; mutation of `healthy_stop()` to wait on the wedged PID must still fail. No workflow severity, global exclusions or production source changes. |
+
+This gate failure is inherited from `main` (the sentinel dates to `51be4f3`).
+Deleting the stub would remove the no-wait regression check. Adding a direct
+positive control does not cure the analyzer's subshell limitation. The narrowly
+scoped annotation preserves both the regression check and the unchanged gate.
+
 ## Behaviour audit of the 7.3/7.4 upstream changes
 
 Compile-green is not behaviour-green, so every upstream change on a path the

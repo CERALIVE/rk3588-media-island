@@ -710,8 +710,8 @@ st_wedge_unreapable() {
 		HEALTHY_KILL_POLLS=2
 		kill() { return 0; }
 		sleep() { :; }
-		# Dead by design: this leg asserts the body never runs.
-		# shellcheck disable=SC2317
+		# Dead by design: healthy_stop must never reach this regression sentinel.
+		# shellcheck disable=SC2317,SC2329
 		wait() { printf 'WAIT-INVOKED\n'; return 0; }
 		healthy_stop
 		printf 'rc=%s retained=%s\n' "$?" "${HEALTHY_PID:-EMPTY}"
