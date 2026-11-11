@@ -9,10 +9,19 @@ exists; top-level `permissions: contents: read`; every `uses:` pinned to the
 latest stable major; the kernel clone and `ccache` cached; nothing published
 without the gates having run first.
 
-Three workflows: `ci.yml` (the PR gate), `release.yml` (`workflow_dispatch`, with
-`publish` defaulting to **false**), and `upstream-watch.yml` (scheduled,
-issue-only). Per-job detail, the mutation transcripts, and the honest list of
+Four workflows: `ci.yml` (the PR gate), `release-ref.yml` (release ref self-tests
+and the main-merge guard), `release.yml` (`workflow_dispatch`, with `publish`
+defaulting to **false**), and `upstream-watch.yml` (scheduled, issue-only).
+Per-job detail, the mutation transcripts, and the honest list of
 remaining deferred inputs live in [`docs/CI.md`](../CI.md).
+
+**Owner exception (2026-11-10), this branch only.** Release dispatches accept
+exactly `refs/heads/release/linux-7.4` and prove ancestry against that branch.
+Draft creation and publication both set `--latest=false`. CalVer and all gates
+remain required. Before cutover to main, revert the release flow to main-only;
+keep `scripts/check-release-ref.sh` accepting exactly `refs/heads/main`, or remove
+the main-merge guard together with the script. See the cutover note in
+[`docs/CI.md`](../CI.md#7-releaseyml) and the forthcoming `docs/REBASE-v7.4.md`.
 
 **MPP partial-clock unwind is checked at the unlocked helper, not its wrapper.**
 `scripts/check-mpp-hardening.py` inspects `rkvenc_clk_on_unlocked()` and the

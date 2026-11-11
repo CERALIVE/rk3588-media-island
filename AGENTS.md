@@ -90,7 +90,7 @@ The archived blanket depth prohibition is superseded by the workspace's dated bi
 - Test-only fault controls remain default-off; host fixtures never establish silicon qualification.
 - Before board deploy: other RAUC slot good, attempt budget >=1, candidate journal captured before reboot; paste qualification transcripts.
 - Every board result names board, kernel build and island tag; validate final journals before matrix verdicts, failing closed on I/O errors.
-- CalVer tags are `vYYYY.M.N`; release canonical main only after gates pass. Published tags and assets are immutable.
+- CalVer tags are `vYYYY.M.N`; release canonical main only after gates pass. Owner exception (2026-11-10): this branch releases only `refs/heads/release/linux-7.4`, never Latest. Published tags and assets are immutable.
 - Never relicense, rewrite SPDX, assert inherited MIT licensing or upstream-submission status; cite upstream evidence by URL and SHA.
 - Keep build evidence here and in image dry-runs, not in the patch-application consumer. Follow the routed proof boundaries.
-- Keep only CERALIVE origin at rest; use one meaningful integration branch and PR per release, targeting CERALIVE with base main.
+- Keep only CERALIVE origin at rest; use one meaningful integration branch and PR per release, targeting CERALIVE with base main. Owner exception (2026-11-10): `refs/heads/release/linux-7.4` is pushed and released without a PR; main stays unchanged.

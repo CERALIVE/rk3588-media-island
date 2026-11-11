@@ -1,0 +1,31 @@
+name: release ref
+
+on:
+  pull_request:
+  push:
+    branches: [main, "release/**"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  self-tests:
+    name: release ref self-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Release ref self-tests
+        run: bash scripts/check-release-ref.sh --self-test
+
+      - name: Require the main-only release policy at cutover
+        # revert to main-only or keep deliberately at cutover; see docs/REBASE-v7.4.md
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/heads/main || "${GITHUB_BASE_REF:-}" == main ]]; then
+            GITHUB_REF=refs/heads/main bash scripts/check-release-ref.sh
+          fi

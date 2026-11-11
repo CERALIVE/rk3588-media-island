@@ -25,3 +25,10 @@ One integration branch per release, one PR from it. Commits on that branch stay
 individually meaningful, because provenance and review history are the reason this
 is a source repository instead of a patch file.
 
+**Owner exception (2026-11-10), scoped to `refs/heads/release/linux-7.4`.**
+This preparation branch is pushed and may release without a PR while canonical
+`main` stays on its current kernel. Its releases are never Latest. At cutover,
+restore the main-only release flow and retain a main-only
+`scripts/check-release-ref.sh`, or remove the main-merge guard and script
+together; see [`docs/CI.md`](../CI.md#7-releaseyml).
+

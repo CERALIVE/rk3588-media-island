@@ -42,17 +42,12 @@ jobs:
       sha: ${{ steps.resolve.outputs.sha }}
       tag: ${{ steps.resolve.outputs.tag }}
     steps:
-      - name: Refuse any ref except canonical main
-        run: |
-          set -euo pipefail
-          [ "${GITHUB_REF}" = "refs/heads/main" ] || {
-            echo "::error::release dispatched from ${GITHUB_REF}; only refs/heads/main releases"
-            exit 1
-          }
-
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      - name: Refuse any ref except release/linux-7.4
+        run: bash scripts/check-release-ref.sh
 
       - name: Validate the version and resolve the commit
         id: resolve
@@ -68,9 +63,9 @@ jobs:
             exit 1
           }
           sha="$(git rev-parse HEAD)"
-          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-          git merge-base --is-ancestor "$sha" origin/main || {
-            echo "::error::$sha is not reachable from origin/main"
+          git fetch --no-tags origin +refs/heads/release/linux-7.4:refs/remotes/origin/release/linux-7.4
+          git merge-base --is-ancestor "$sha" origin/release/linux-7.4 || {
+            echo "::error::$sha is not reachable from origin/release/linux-7.4"
             exit 1
           }
           {
@@ -115,6 +110,7 @@ jobs:
             python3 "$tool" --self-test
           done
           bash scripts/check-action-pins.sh --self-test
+          bash scripts/check-release-ref.sh --self-test
 
       - name: Series integrity, both opinions
         run: |
@@ -260,6 +256,7 @@ jobs:
           DIGEST: ${{ needs.build-series.outputs.sha256 }}
         run: |
           set -euo pipefail
+          source kernel-pin.env
           patches=$(find patches -name '*.patch' | wc -l)
           cat > dist/NOTES.md <<EOF
           ## rk3588-media-island ${TAG}
@@ -275,8 +272,9 @@ jobs:
           |---|---|
           | Series | \`${ASSET}\` (${patches} patch(es)) |
           | SHA-256 | \`${DIGEST}\` |
-          | Source commit | \`${SOURCE_SHA}\` on canonical \`main\` |
-          | Target kernel | see \`kernel-pin.env\` — mirrored, never decided here |
+          | Source commit | \`${SOURCE_SHA}\` on \`release/linux-7.4\` |
+          | Kernel tag | \`${KERNEL_TAG}\` from \`kernel-pin.env\` |
+          | Kernel commit | \`${KERNEL_COMMIT}\` from \`kernel-pin.env\` |
 
           ### How this becomes a kernel change
           Three merges, not one: this tag → the \`rk3588-kernel-patches\`
@@ -300,6 +298,7 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --draft \
+            --latest=false \
             --title "rk3588-media-island $TAG" \
             --notes-file dist/NOTES.md \
             "dist/${ASSET}" "dist/${ASSET}.sha256"
@@ -329,7 +328,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.release-source.outputs.tag }}
-        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
 
       - name: Re-verify the tag after publication
         env:

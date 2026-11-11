@@ -1,6 +1,6 @@
 # CI — what each gate asserts, and what it does not yet
 
-Three workflows, following the CeraLive CI/CD canon: a `concurrency` block on
+Four workflows, following the CeraLive CI/CD canon: a `concurrency` block on
 every one (`cancel-in-progress: true` for the PR gate, `false` for release and
 the watch); `push` constrained to `branches:` because a `pull_request` trigger
 exists; top-level `permissions: contents: read` with per-job escalation only
@@ -604,10 +604,30 @@ refuses — never its input. A `push: tags:` trigger would invert that.
 
 | Stage | What it does |
 |---|---|
-| `release-source` | refuses any ref but `refs/heads/main`, validates the CalVer shape, resolves ONE commit and proves it reachable from `origin/main` |
+| `release-source` | refuses any ref but `refs/heads/release/linux-7.4` through `scripts/check-release-ref.sh`, validates the CalVer shape, resolves ONE commit and proves it reachable from `origin/release/linux-7.4` |
 | `gates` | re-runs lint, self-tests, both series opinions, both lints and UAPI parity **against that exact commit** |
 | `build-series` | regenerates and byte-compares, then packs a deterministic tar (`--sort=name`, no owner, fixed mtime) plus its `.sha256`, verifies the checksum from the packed bytes, and uploads them as a workflow artifact |
 | `publish` | *only when `publish: true`* — refuses an occupied release or tag, claims the tag atomically via the create-reference API, re-verifies it after fetch, creates a **draft**, downloads every asset back and byte-compares it, publishes, then re-verifies the tag once more |
+
+**Owner exception (2026-11-10), scoped to `refs/heads/release/linux-7.4`.**
+This branch may release while canonical `main` stays unchanged. Both draft
+creation and publication set `--latest=false`, so a release from this line never
+replaces the current Latest release. Release notes record the source branch and
+the kernel tag and commit sourced from `kernel-pin.env`.
+
+The `release-ref.yml` CI workflow's `self-tests` job runs the ref script's five
+cases, accepting this exact branch and rejecting main, a suffix lookalike, a tag
+and the next kernel line. It also checks a main push or a PR whose base is main:
+the ref script must accept `refs/heads/main`, so merging this branch's release
+policy unchanged fails before cutover. The guard runs on every PR and filtered
+branch push.
+
+**Cutover runbook note.** The reverting PR must restore the main-only release
+flow and keep `scripts/check-release-ref.sh` accepting exactly
+`refs/heads/main` (updating its self-test expectations accordingly), or remove
+the main-merge guard together with the script and its CI/release self-test calls.
+Do not remove the script alone. Carry this instruction into `docs/REBASE-v7.4.md`
+and the consumer's cutover runbook.
 
 **Validation mode stops after `build-series`.** With `publish: false` everything
 above runs — the gates, the regeneration, the byte-compare, the checksum, the

@@ -43,7 +43,10 @@ island tag  ──▶  rk3588-kernel-patches `island/` lane bump
                           ──▶  image build  ──▶  device
 ```
 
-1. **Island release.** An owner-approved dispatch from canonical `main`
+1. **Island release.** On this branch, the dated owner exception permits an
+   owner-approved dispatch only from `release/linux-7.4`, with `--latest=false`
+   at draft creation and publication; canonical `main` keeps its own flow.
+   See [the release and cutover contract](docs/CI.md#7-releaseyml). The dispatch
    regenerates the series from source, byte-compares it against the checked-in
    `patches/`, then atomically claims the requested tag and publishes the
    immutable release asset with its checksum. The workflow has no tag trigger:
