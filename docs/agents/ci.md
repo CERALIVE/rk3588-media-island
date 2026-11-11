@@ -32,7 +32,7 @@ source-shape regression check, not hardware clock validation. See
 | `board-probes` | The three C probes cross-build for aarch64 with `-Werror`, and their host build passes its own self-tests |
 | `action-pins` | Every `uses:` is at the current latest major. **Non-blocking** — an action's release cadence must not redden an unrelated PR |
 | `pin` | Nothing — it *reads* the coordinates out of `kernel-pin.env` and emits them as job outputs |
-| `pin-equality` | The four mirrored `KERNEL_*` values equal the consumer's |
+| `pin-equality` | The four mirrored `KERNEL_*` values equal the consumer's at `CONSUMER_PIN_REF` (default `main`); `scripts/check-pin-source-ref.sh` requires `main` on main and PRs targeting main, and runs five self-test cases |
 | `cross-compile-modules` | Both pinned kernel objects resolve; the tree configures the way the device is configured; `vmlinux` supplies provider symbols, `modules_prepare` supplies the module linker script, and `vmlinux.symvers` is exposed as the `Module.symvers` external modpost requires; the two arm64 modules link with `-Werror` and expose their required OF aliases; both supported board DTBs build and pass `tests/dt/check-dtb-ownership.sh`; no island `compatible` collides with a mainline `of_match_table` |
 | `kunit` | Builds the MPP request-boundary, fault/lifecycle, session-teardown, DMA policy, fence, RGA request-validation, capability, telemetry-format, direct ioctl, and runtime-PM ownership suites against the pinned tree |
 | `static-analysis` | sparse with findings promoted to errors plus coccinelle over every selected island object; smatch remains conditional on a suitable runner package |

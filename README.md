@@ -8,7 +8,7 @@ released as a `git am` mailbox series.
 |---|---|
 | **What it holds** | `drivers/video/rockchip/mpp/` and `drivers/video/rockchip/rga3/`, the UAPI headers they publish, and the `integration/` patches to mainline files they need |
 | **MPP clients compiled** | `RKVENC2`, `RKVDEC2`, `JPGDEC` — those three and no others |
-| **Target kernel** | `v7.2` (`8d3ae59288f1e7d58d76558a6ee96d533bc5019f`), mirrored from [`kernel-pin.env`](kernel-pin.env) |
+| **Target kernel** | `v7.4-rc2` (`7475ea8b58616b33c04afb976cf0fbaad9dd63fb`), mirrored from consumer `rebase/v7.4` through [`kernel-pin.env`](kernel-pin.env); this branch prepares 7.4 while production stays on 7.2 |
 | **Boards** | Radxa Rock 5B+, Orange Pi 5+ |
 | **Release artifact** | a generated `git am` series, plus its `.sha256` — no `.deb`, no kernel, no image |
 | **Versioning** | CalVer, `YYYY.MINOR.PATCH` |

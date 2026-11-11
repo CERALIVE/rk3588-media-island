@@ -47,12 +47,19 @@ remain unchanged. See `FAULT-SEAM-CONTRACT.md` for the bounded claims.
 | `board-probes` | the three C probes cross-build for aarch64 with `-Werror`, and their host build passes its own self-tests |
 | `action-pins` | every `uses:` is at the current latest major. **Non-blocking** — see §4 |
 | `pin` | nothing — it *reads* the coordinates out of `kernel-pin.env` and emits them |
-| `pin-equality` | the four mirrored `KERNEL_*` values equal the consumer repository's |
+| `pin-equality` | the four mirrored `KERNEL_*` values equal the consumer repository's at `CONSUMER_PIN_REF` (default `main`); main and PRs targeting main require `main` |
 | `cross-compile-modules` | the pinned tag resolves to both pinned objects; the tree configures the way the device is configured; `vmlinux` supplies provider symbols, `modules_prepare` supplies the final-link script, and configured `vmlinux.symvers` is exposed under the `Module.symvers` filename external modpost reads; exactly `rk_vcodec.ko` and `rga_multicore.ko` link with `-Werror` and publish the OF aliases needed for module autoload; both board DTBs build and pass the ownership/skip-PMU checker; no island `compatible` collides with a mainline `of_match_table` |
 | `kunit` | every suite in `tests/kunit/` passes against the pinned kernel; direct ioctl and runtime-PM suites stage byte-preserved production bodies with `tests/kunit/stage_ioctl.py`; the latter use real runtime-PM fixture devices and mutation-check RGA probe policy; CI also asserts the telemetry symbol resolved `=y` and the telemetry session-format case appeared in the run |
 | `static-analysis` | sparse inspects every selected composite object with findings promoted to errors, followed by coccinelle over both island directories; the plan's conditional smatch arm is not enabled without a suitable runner package |
 
 ### The kernel job, in the order it does things
+
+`kernel-pin.env` selects the consumer branch with the island-local
+`CONSUMER_PIN_REF`; an absent key defaults to `main`. Before fetching that
+ref's pin, `scripts/check-pin-source-ref.sh` rejects any other consumer ref on
+`refs/heads/main` or a PR whose base is `main`. Its `--self-test` runs in the
+`self-tests` job and covers main, candidate release branches, PRs targeting main,
+and the absent-key default. The four-value equality comparison is unchanged.
 
 The `self-tests` job also runs `scripts/check-fault-seam-contract.sh` normally
 and with `--self-test`. The standalone checker compares both maintained board

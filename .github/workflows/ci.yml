@@ -150,6 +150,8 @@ jobs:
           bash scripts/check-telemetry-contract.sh --self-test || rc=1
           bash scripts/check-fault-seam-contract.sh || rc=1
           bash scripts/check-fault-seam-contract.sh --self-test || rc=1
+          printf '=== scripts/check-pin-source-ref.sh --self-test ===\n'
+          bash scripts/check-pin-source-ref.sh --self-test || rc=1
           printf '=== scripts/vendor-backlog.sh --self-test ===\n'
           bash scripts/vendor-backlog.sh --self-test || rc=1
           exit "$rc"
@@ -313,17 +315,23 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: The mirrored block equals the consumer's
+      - name: Require the canonical consumer ref for main
+        id: pin-source
         run: |
           set -euo pipefail
-          # docs/REFERENCES.md records the consumer commit as "not yet pinned"
-          # until the island/ lane is created. Until it is, the comparison runs
-          # against the consumer's canonical branch head -- which is still a
-          # real gate on a hand-edit here, and which correctly goes red if the
-          # consumer moves the kernel first, because this file is meant to
-          # follow it.
+          source kernel-pin.env
+          export CONSUMER_PIN_REF="${CONSUMER_PIN_REF:-main}"
+          bash scripts/check-pin-source-ref.sh
+          echo "consumer_ref=$CONSUMER_PIN_REF" >> "$GITHUB_OUTPUT"
+
+      - name: The mirrored block equals the consumer's
+        env:
+          CONSUMER_PIN_REF: ${{ steps.pin-source.outputs.consumer_ref }}
+        run: |
+          set -euo pipefail
+          # Candidate branches follow a named consumer ref; main follows main.
           curl -fsSL \
-            https://raw.githubusercontent.com/CERALIVE/rk3588-kernel-patches/main/kernel-pin.env \
+            "https://raw.githubusercontent.com/CERALIVE/rk3588-kernel-patches/${CONSUMER_PIN_REF}/kernel-pin.env" \
             -o consumer-kernel-pin.env
 
           mirrored() {
