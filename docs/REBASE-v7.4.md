@@ -186,8 +186,7 @@ Not tasks, just things to look at on the next bump:
 
 ## Compile and CI receipts
 
-Recorded 2026-11-12. Every run below is attempt 1, and all of its jobs
-concluded **success**.
+Recorded 2026-11-12.
 
 - Full-series kernel compile on `v7.4-rc2`: the consumer built `Image`, all
   modules and both board DTBs twice, once with island members substituted from
@@ -198,22 +197,35 @@ concluded **success**.
   section. That section also lists two production image configuration
   findings. They're image follow-ups owned by the consumer, not series compile
   failures.
-- Island gate run at `8cdbdcb37119`: `ci` run
-  [42986538493](https://github.com/CERALIVE/rk3588-media-island/actions/runs/42986538493),
-  15 jobs.
-- Island gate run at `be51bf100a13`, the release commit: `ci` run
-  [43118836877](https://github.com/CERALIVE/rk3588-media-island/actions/runs/43118836877),
-  15 jobs, and `release ref` run
-  [43118836879](https://github.com/CERALIVE/rk3588-media-island/actions/runs/43118836879),
-  1 job.
-- Earlier pushes to this branch, kept for traceability: `ci` run
-  [42971229300](https://github.com/CERALIVE/rk3588-media-island/actions/runs/42971229300)
-  at `b4d430db10a1` and
-  [42974784069](https://github.com/CERALIVE/rk3588-media-island/actions/runs/42974784069)
-  at `8e8fe11f4206` both concluded **failure**. In the second, `shellcheck`
-  reported SC2329 at `tests/board/fault-matrix.sh:715`, a file this branch
-  doesn't touch, and `static analysis` failed while installing its
-  dependencies. Neither is a pass.
+Island push runs on this branch, as `gh run view` reported them on 2026-11-12.
+Each one is attempt 1. Only a run whose conclusion reads **success** is a pass;
+the red runs stay listed for traceability. The two `release` dispatches are in
+[Release flow on this branch](#release-flow-on-this-branch).
+
+| Run | Workflow | Commit | Conclusion | Jobs |
+|---|---|---|---|---|
+| [42971229300](https://github.com/CERALIVE/rk3588-media-island/actions/runs/42971229300) | `ci` | `b4d430db10a1` | **failure** | 11 success, 4 failure: `shellcheck` (SC2329), `cross-compile modules` and `static analysis` (`integration/0002` didn't apply at `drivers/iommu/rockchip-iommu.c:125`), `CI summary` |
+| [42974135711](https://github.com/CERALIVE/rk3588-media-island/actions/runs/42974135711) | `ci` | `2b932c412b77` | **cancelled** | 11 success, 2 failure (`shellcheck` with SC2329, `CI summary`), 2 cancelled (`static analysis`, `cross-compile modules`) |
+| [42974784112](https://github.com/CERALIVE/rk3588-media-island/actions/runs/42974784112) | `release ref` | `8e8fe11f4206` | success | 1 success |
+| [42974784069](https://github.com/CERALIVE/rk3588-media-island/actions/runs/42974784069) | `ci` | `8e8fe11f4206` | **failure** | 12 success, 3 failure: `shellcheck` (SC2329), `static analysis` (dependency install exited 128), `CI summary` |
+| [42978337529](https://github.com/CERALIVE/rk3588-media-island/actions/runs/42978337529) | `release ref` | `7c0ec1e8a687` | success | 1 success |
+| [42978337402](https://github.com/CERALIVE/rk3588-media-island/actions/runs/42978337402) | `ci` | `7c0ec1e8a687` | **failure** | 12 success, 3 failure: `shellcheck` (SC2329), `static analysis` (dependency install exited 128), `CI summary` |
+| [42980524400](https://github.com/CERALIVE/rk3588-media-island/actions/runs/42980524400) | `release ref` | `a9dd8eb08204` | success | 1 success |
+| [42980524397](https://github.com/CERALIVE/rk3588-media-island/actions/runs/42980524397) | `ci` | `a9dd8eb08204` | **failure** | 13 success, 2 failure: `shellcheck` (SC2329), `CI summary` |
+| [42986538482](https://github.com/CERALIVE/rk3588-media-island/actions/runs/42986538482) | `release ref` | `8cdbdcb37119` | success | 1 success |
+| [42986538493](https://github.com/CERALIVE/rk3588-media-island/actions/runs/42986538493) | `ci` | `8cdbdcb37119` | success | 15 success |
+| [43118836879](https://github.com/CERALIVE/rk3588-media-island/actions/runs/43118836879) | `release ref` | `be51bf100a13` | success | 1 success |
+| [43118836877](https://github.com/CERALIVE/rk3588-media-island/actions/runs/43118836877) | `ci` | `be51bf100a13` | success | 15 success |
+| [43149500244](https://github.com/CERALIVE/rk3588-media-island/actions/runs/43149500244) | `release ref` | `2828aa808d81` | success | 1 success |
+| [43149500231](https://github.com/CERALIVE/rk3588-media-island/actions/runs/43149500231) | `ci` | `2828aa808d81` | success | 15 success |
+
+The five red `ci` runs, from `b4d430db10a1` through `a9dd8eb08204`, each
+report SC2329 at `tests/board/fault-matrix.sh:715`. That's the inherited
+sentinel described in [Gate-forced harness fix](#gate-forced-harness-fix), in
+a file those commits don't touch. `8cdbdcb37119` adds the annotation, and the
+first green `ci` run is at that commit. `be51bf100a13` is the commit
+`v2026.11.0` was released from. `2828aa808d81` is a docs-only commit after
+the release.
 
 ## Release flow on this branch
 
@@ -253,12 +265,17 @@ downstream inventory live in the consumer's ledger,
 [`docs/REBASE-v7.4-rc2.md` on `rebase/v7.4`](https://github.com/CERALIVE/rk3588-kernel-patches/blob/rebase/v7.4/docs/REBASE-v7.4-rc2.md).
 That file is keyed to the kernel tag, so an rc refresh renames it (to
 `docs/REBASE-v7.4.md` at `v7.4` final). Until cutover, island `main` stays
-releasable for emergency 7.2 fixes. One catch on that path: island `main`'s
-`shellcheck` gate fails under the hosted ShellCheck `0.11.0` (SC2329) until it
-carries the declaration-scoped annotation from `8cdbdcb` in
-`tests/board/fault-matrix.sh` (see
-[Gate-forced harness fix](#gate-forced-harness-fix)), so a 7.2 fix PR or
-release from `main` must carry it first.
+releasable for emergency 7.2 fixes. One catch on that path. The hosted
+`shellcheck` job failed with SC2329 at `tests/board/fault-matrix.sh:715` on
+this branch at `b4d430db10a1` (run 42971229300, runner image `ubuntu-26.04`
+`20261101.186.1`) and again at `a9dd8eb08204` (run 42980524397). Island
+`main`'s copy of that file is byte-identical to the one that failed at
+`b4d430db10a1` (both are blob `d639fcdf5bc7`), so a `main` CI run is expected
+to fail the same way. That's an inference, not an observation: no CI run on
+`main` has shown it, and `main`'s last `ci` run, 37414313027 on 2026-10-06,
+used the older `ubuntu-24.04` image. A 7.2 fix PR or release from `main` must
+first carry the declaration-scoped annotation from `8cdbdcb` (see
+[Gate-forced harness fix](#gate-forced-harness-fix)).
 
 ## Proof boundary
 
