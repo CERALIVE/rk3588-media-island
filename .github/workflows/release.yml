@@ -58,10 +58,7 @@ jobs:
           # CalVer, YYYY.MINOR.PATCH, matching the rest of the CeraLive stack.
           # A pre-release or build-metadata suffix fails closed here rather than
           # producing a tag the consumer's island/ lane cannot name.
-          printf '%s' "$VERSION" | grep -qE '^[0-9]{4}\.[0-9]+\.[0-9]+$' || {
-            echo "::error::version '$VERSION' is not CalVer YYYY.MINOR.PATCH"
-            exit 1
-          }
+          bash scripts/check-release-version.sh
           sha="$(git rev-parse HEAD)"
           git fetch --no-tags origin +refs/heads/release/linux-7.4:refs/remotes/origin/release/linux-7.4
           git merge-base --is-ancestor "$sha" origin/release/linux-7.4 || {
@@ -111,6 +108,7 @@ jobs:
           done
           bash scripts/check-action-pins.sh --self-test
           bash scripts/check-release-ref.sh --self-test
+          bash scripts/check-release-version.sh --self-test
 
       - name: Series integrity, both opinions
         run: |

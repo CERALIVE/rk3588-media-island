@@ -22,6 +22,9 @@ jobs:
       - name: Release ref self-tests
         run: bash scripts/check-release-ref.sh --self-test
 
+      - name: Release version self-tests
+        run: bash scripts/check-release-version.sh --self-test
+
       - name: Require the main-only release policy at cutover
         # revert to main-only or keep deliberately at cutover; see docs/REBASE-v7.4.md
         run: |

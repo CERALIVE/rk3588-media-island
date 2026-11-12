@@ -609,6 +609,13 @@ refuses — never its input. A `push: tags:` trigger would invert that.
 | `build-series` | regenerates and byte-compares, then packs a deterministic tar (`--sort=name`, no owner, fixed mtime) plus its `.sha256`, verifies the checksum from the packed bytes, and uploads them as a workflow artifact |
 | `publish` | *only when `publish: true`* — refuses an occupied release or tag, claims the tag atomically via the create-reference API, re-verifies it after fetch, creates a **draft**, downloads every asset back and byte-compares it, publishes, then re-verifies the tag once more |
 
+**Release-flow hardening (2026-11-12).** `scripts/check-release-version.sh`
+checks the whole CalVer value and explicitly rejects newlines and carriage
+returns before any release output is written, preventing injected `sha=` or
+`tag=` lines. Its self-test runs in `ci.yml`, `release-ref.yml` and the release
+gates. `main` has the same line-wise validation flaw until this branch merges
+at cutover; retain this hardening when restoring the main-only release flow.
+
 **Owner exception (2026-11-10), scoped to `refs/heads/release/linux-7.4`.**
 This branch may release while canonical `main` stays unchanged. Both draft
 creation and publication set `--prerelease --latest=false`: 7.4-line releases

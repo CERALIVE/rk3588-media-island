@@ -258,6 +258,13 @@ claimed the tag and published. Both are attempt 1. The asset
 [`rk3588-media-island-v2026.11.0.mbox.tar`](https://github.com/CERALIVE/rk3588-media-island/releases/tag/v2026.11.0)
 has SHA-256 `9837d111db63f02c577eef8f05041e586a72c0ecce2713591bfe044278152343`.
 
+**Release-flow hardening (2026-11-12).** The release version validator now
+checks the whole CalVer value and explicitly rejects newlines and carriage
+returns before writing any release outputs, closing the injected `sha=` and
+`tag=` line bypass. Regression self-tests cover these inputs. `main` retains
+the same line-wise validation flaw until this branch merges at cutover; keep
+the hardening when restoring the main-only release flow.
+
 ## Cutover and the 7.2 policy
 
 The cutover runbook, the rc-to-final refresh, the deferred 7.2 policy and the

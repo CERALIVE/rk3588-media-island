@@ -152,6 +152,8 @@ jobs:
           bash scripts/check-fault-seam-contract.sh --self-test || rc=1
           printf '=== scripts/check-pin-source-ref.sh --self-test ===\n'
           bash scripts/check-pin-source-ref.sh --self-test || rc=1
+          printf '=== scripts/check-release-version.sh --self-test ===\n'
+          bash scripts/check-release-version.sh --self-test || rc=1
           printf '=== scripts/vendor-backlog.sh --self-test ===\n'
           bash scripts/vendor-backlog.sh --self-test || rc=1
           exit "$rc"
