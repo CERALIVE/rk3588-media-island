@@ -5,10 +5,11 @@ nine-member series from Linux `v7.2` to the `v7.4-rc2` candidate changed, why,
 and what is still unproven. The work lives on `release/linux-7.4`. Island
 `main` stays on `v7.2` and keeps releasing for production until cutover.
 
-Recorded 2026-11-11. **No board validation is claimed.** Nothing in this file is
-a compile, CI or hardware result unless it names the receipt that proves it, and
-the full-series compile, the green gate run and the 7.4-line release are still
-pending (see [Proof boundary](#proof-boundary)).
+Recorded 2026-11-11; receipts added 2026-11-12. **No board validation is
+claimed.** Nothing in this file is a compile, CI or hardware result unless it
+names the receipt that proves it. The full-series compile, the green gate run
+and the 7.4-line pre-release `v2026.11.0` now have receipts. Two-board
+qualification is still open (see [Proof boundary](#proof-boundary)).
 
 ## Base coordinates
 
@@ -185,12 +186,26 @@ Not tasks, just things to look at on the next bump:
 
 ## Compile and CI receipts
 
-This ledger records no compile result and no green CI run yet.
+Recorded 2026-11-12. Every run below is attempt 1, and all of its jobs
+concluded **success**.
 
-- The full kernel compile with this branch's series substituted into the
-  consumer series is pending.
-- The island gate run (every `ci.yml` job locally, then a green GitHub `ci` run
-  at the pushed head) is pending. Its run URL is added here when it lands.
+- Full-series kernel compile on `v7.4-rc2`: the consumer built `Image`, all
+  modules and both board DTBs twice, once with island members substituted from
+  `b4d430db10a1` and once through its real island lane, which carries the
+  published `v2026.11.0` asset. Both `make` runs exited `0`. The receipts and
+  log SHA-256 values are in the consumer ledger's
+  [Compile evidence](https://github.com/CERALIVE/rk3588-kernel-patches/blob/rebase/v7.4/docs/REBASE-v7.4-rc2.md#compile-evidence)
+  section. That section also lists two production image configuration
+  findings. They're image follow-ups owned by the consumer, not series compile
+  failures.
+- Island gate run at `8cdbdcb37119`: `ci` run
+  [42986538493](https://github.com/CERALIVE/rk3588-media-island/actions/runs/42986538493),
+  15 jobs.
+- Island gate run at `be51bf100a13`, the release commit: `ci` run
+  [43118836877](https://github.com/CERALIVE/rk3588-media-island/actions/runs/43118836877),
+  15 jobs, and `release ref` run
+  [43118836879](https://github.com/CERALIVE/rk3588-media-island/actions/runs/43118836879),
+  1 job.
 - Earlier pushes to this branch, kept for traceability: `ci` run
   [42971229300](https://github.com/CERALIVE/rk3588-media-island/actions/runs/42971229300)
   at `b4d430db10a1` and
@@ -220,8 +235,16 @@ together with the script and its CI and release self-test calls. Removing the
 script alone breaks the guard. The same PR restores `CONSUMER_PIN_REF="main"`,
 which `scripts/check-pin-source-ref.sh` requires on `main`.
 
-The 7.4-line island release itself is not published. It needs the owner's
-explicit go-ahead.
+The owner approved the 7.4-line release, and `v2026.11.0` was published on
+2026-11-12 as a GitHub pre-release. "Latest" stays on the 7.2-line
+`v2026.9.5`. The tag is lightweight and points directly at
+`be51bf100a1335ceb783689b13d045e896117c80`. A validate-only `release` dispatch,
+run [43127267984](https://github.com/CERALIVE/rk3588-media-island/actions/runs/43127267984),
+built the asset and skipped publication. The publishing dispatch, run
+[43127956089](https://github.com/CERALIVE/rk3588-media-island/actions/runs/43127956089),
+claimed the tag and published. Both are attempt 1. The asset
+[`rk3588-media-island-v2026.11.0.mbox.tar`](https://github.com/CERALIVE/rk3588-media-island/releases/tag/v2026.11.0)
+has SHA-256 `9837d111db63f02c577eef8f05041e586a72c0ecce2713591bfe044278152343`.
 
 ## Cutover and the 7.2 policy
 
@@ -230,19 +253,25 @@ downstream inventory live in the consumer's ledger,
 [`docs/REBASE-v7.4-rc2.md` on `rebase/v7.4`](https://github.com/CERALIVE/rk3588-kernel-patches/blob/rebase/v7.4/docs/REBASE-v7.4-rc2.md).
 That file is keyed to the kernel tag, so an rc refresh renames it (to
 `docs/REBASE-v7.4.md` at `v7.4` final). Until cutover, island `main` stays
-releasable for emergency 7.2 fixes.
+releasable for emergency 7.2 fixes. One catch on that path: island `main`'s
+`shellcheck` gate fails under the hosted ShellCheck `0.11.0` (SC2329) until it
+carries the declaration-scoped annotation from `8cdbdcb` in
+`tests/board/fault-matrix.sh` (see
+[Gate-forced harness fix](#gate-forced-harness-fix)), so a 7.2 fix PR or
+release from `main` must carry it first.
 
 ## Proof boundary
 
 Done and evidenced: the re-anchor, the member probe above, the pin mirror and
-consumer-ref selector, the branch-scoped release flow, the source audit.
+consumer-ref selector, the branch-scoped release flow, the source audit, the
+full-series kernel compile on `v7.4-rc2` and the green GitHub gate runs (see
+[Compile and CI receipts](#compile-and-ci-receipts)), and the `v2026.11.0`
+pre-release (see [Release flow on this branch](#release-flow-on-this-branch)).
 
-Pending:
+Still open:
 
-- the full-series kernel compile on `v7.4-rc2`;
-- the island gate run, local and on GitHub, at a green head;
-- the 7.4-line island release (owner-gated);
-- two-board qualification at cutover, including row a above.
+- two-board qualification at cutover, including row a above;
+- the consumer's two image configuration follow-ups.
 
 No board validation is claimed. The row a acknowledgement stays
 needs-board-proof.
