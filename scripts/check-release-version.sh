@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0-only
 set -euo pipefail
+export LC_ALL=C
 
 check_version() {
   if [[ -z "$1" || "$1" == *$'\n'* || "$1" == *$'\r'* ||
-        ! "$1" =~ ^[0-9]{4}\.[0-9]+\.[0-9]+$ ]]; then
+        ! "$1" =~ ^[0123456789]{4}\.[0123456789]+\.[0123456789]+$ ]]; then
     printf '::error::version must be a single-line CalVer YYYY.MINOR.PATCH with no leading v or suffix\n' >&2
     return 1
   fi
@@ -12,9 +13,13 @@ check_version() {
 
 if [[ "${1:-}" == --self-test ]]; then
   failures=0
+  # UTF-8 bytes keep the Unicode fixtures intact under the C locale.
   for version in \
     2026.11.0 \
     2026.9.5 \
+    $'\xd9\xa2\xd9\xa0\xd9\xa2\xd9\xa6.11.0' \
+    $'\xef\xbc\x92\xef\xbc\x90\xef\xbc\x92\xef\xbc\x96.11.0' \
+    $'2026.11.\xc2\xb2' \
     $'2026.11.0\ntag=vNOT-CALVER' \
     $'2026.11.0\nsha=8cdbdcb371197849b4ab25ee231a24b5f56bc2fe' \
     $'2026.11.0\n' \

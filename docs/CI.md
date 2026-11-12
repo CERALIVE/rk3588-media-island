@@ -610,7 +610,7 @@ refuses — never its input. A `push: tags:` trigger would invert that.
 | `publish` | *only when `publish: true`* — refuses an occupied release or tag, claims the tag atomically via the create-reference API, re-verifies it after fetch, creates a **draft**, downloads every asset back and byte-compares it, publishes, then re-verifies the tag once more |
 
 **Release-flow hardening (2026-11-12).** `scripts/check-release-version.sh`
-checks the whole CalVer value and explicitly rejects newlines and carriage
+checks the whole ASCII CalVer value in the C locale and rejects newlines and carriage
 returns before any release output is written, preventing injected `sha=` or
 `tag=` lines. Its self-test runs in `ci.yml`, `release-ref.yml` and the release
 gates. `main` has the same line-wise validation flaw until this branch merges
@@ -652,9 +652,13 @@ The tar is deterministic because the consumer's `island/` lane records the
 asset's digest. Two runs of one commit producing two digests would make that
 record unverifiable.
 
-**Not exercised in this change.** No release has been dispatched in either mode.
-The workflow is written and reviewed; it has not run. `ci.yml` has, which is a
-different claim — see §9.
+**Release dispatch history (2026-11-12).** The 7.4-line flow was dispatched
+twice: validate-only run
+[43127267984](https://github.com/CERALIVE/rk3588-media-island/actions/runs/43127267984),
+then publishing run
+[43127956089](https://github.com/CERALIVE/rk3588-media-island/actions/runs/43127956089)
+for the `v2026.11.0` pre-release, both attempt 1. Those runs predate this
+version-validation hardening and do not verify this increment.
 
 ---
 
@@ -741,5 +745,6 @@ hold while the module build is skipped.
 4. **Integration patches are context-sensitive.** They apply with verbose
    `git apply`; there is no fuzzy re-anchor layer. A Linux pin change that moves
    a hunk is intentionally a red build and an explicit source update.
-5. **`release.yml` has never been dispatched**, in either validation or publish
-   mode. Its implementation is reviewed, but no release claim is made here.
+5. **Release execution is evidenced.** On 2026-11-12 the 7.4-line `release.yml`
+   was dispatched twice: validate-only run `43127267984`, then publishing run
+   `43127956089` for `v2026.11.0`, both attempt 1 (see §7).
